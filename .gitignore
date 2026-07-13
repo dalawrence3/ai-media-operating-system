@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Virtual environment
+.venv/
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+
+# Environment / secrets
+.env
+
+# Data (introduced in later phases)
+*.db
+*.sqlite3
+
+# Generated media (introduced in later phases)
+/output/
+/media/
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
