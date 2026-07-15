@@ -2,6 +2,117 @@
 
 ---
 
+## Phase 2: Strict extra-field rejection for AI output schemas
+
+**Decision:** All Pydantic schemas used to validate machine-consumed AI
+provider responses must set `model_config = ConfigDict(extra="forbid")`.
+Unexpected fields must raise a validation error.
+
+**Reasoning:** AI providers can add fields to responses at any time. Without
+`extra="forbid"`, schema drift is silent — the application keeps running
+while the data contract degrades. Strict rejection surfaces the breakage
+immediately, making it debuggable and auditable. Human-facing models (Phase
+1 CLI inputs, etc.) are not affected unless there is a specific reason.
+
+---
+
+## Phase 2: Unknown production model cost must not be silently zero
+
+**Decision:** `PricingRegistry.estimate_cost` raises `UnknownModelPricingError`
+for any model that is not the built-in fake provider and is not in the
+registry. `record_ai_call` catches this and stores `estimated_cost_usd = NULL`
+with a warning log entry. The three cost states in `ai_calls` are:
+- `estimated_cost_usd = 0.0` — explicitly free (fake/test provider)
+- `estimated_cost_usd > 0.0` — calculated from registry pricing
+- `estimated_cost_usd IS NULL` (with `status = 'success'`) — unknown; model
+  not in registry
+
+**Reasoning:** Silently reporting `$0` for an unknown production model masks
+real spend. The distinction between "free by design" and "cost unknown" must
+be unambiguous in the DB and in log output. No code path should present an
+unknown production model as free.
+
+---
+
+## Phase 2: Provider abstraction via Protocol (not ABC)
+
+**Decision:** `AIProvider` is a `@runtime_checkable Protocol` rather than an
+abstract base class.
+
+**Reasoning:** Protocol lets `FakeProvider` and `ClaudeProvider` satisfy the
+interface without inheriting from a shared base. This keeps the fake provider
+completely self-contained and avoids coupling test infrastructure to the
+production class hierarchy. `isinstance` checks still work at runtime via
+`@runtime_checkable`.
+
+---
+
+## Phase 2: TOML prompt files, not Python strings
+
+**Decision:** Prompts are stored as versioned `.toml` files under
+`src/app/ai/prompts/<name>/v<version>.toml`, not as Python string constants.
+
+**Reasoning:** Separating prompt text from Python code makes prompt iteration
+visible in git diffs, keeps prompt history in version control, and allows
+non-developer editing without touching source. TOML gives structured
+metadata (name, version, description) with validation on load.
+
+---
+
+## Phase 2: Injected client for ClaudeProvider test isolation
+
+**Decision:** `ClaudeProvider.__init__` accepts an optional `client` parameter.
+Tests pass a `MagicMock()` directly; the production path instantiates
+`anthropic.Anthropic()`.
+
+**Reasoning:** Avoids patching the `anthropic` module at import time. The
+mock is explicit, type-safe, and scoped to the test — no global state is
+modified. This was preferred over `unittest.mock.patch` which is fragile
+against import path changes.
+
+---
+
+## Phase 2: No live API calls in any automated test
+
+**Decision:** All tests run without contacting Anthropic or any external
+service. `ClaudeProvider` tests use an injected mock client. `FakeProvider`
+is deterministic. No test requires `ACE_ANTHROPIC_API_KEY` to be set.
+
+**Reasoning:** Live API calls in tests introduce flakiness (rate limits,
+network latency, cost, key rotation), make CI non-reproducible, and risk
+leaking credentials. The boundary between the application and the Anthropic
+SDK is tested via mock; SDK behaviour is tested by the SDK's own suite.
+
+---
+
+## Phase 2: Pricing registry with version + effective date
+
+**Decision:** The built-in pricing table carries `registry_version` and
+`effective_date` fields and can be overridden via `ACE_AI_PRICING_FILE`
+(path to a JSON file with the same schema).
+
+**Reasoning:** Model pricing changes frequently. Hardcoding values without
+version metadata makes it impossible to audit when a cost estimate was
+computed. The file-override mechanism lets operators update pricing without
+a code deploy. `fake`-prefix models always return $0 so tests never
+accidentally charge.
+
+---
+
+## Phase 2: Retry policy — retryable vs non-retryable errors
+
+**Decision:** Only `RateLimitError` and `TransientProviderError` (5xx) are
+retried. `MissingCredentialsError`, `RequestTimeoutError`, and
+`ProviderUnavailableError` (connection errors) are not retried.
+
+**Reasoning:** Rate limits and transient server errors are expected to
+resolve with back-off. Credential errors will never resolve by waiting.
+Timeouts and connection errors could resolve, but retrying them
+automatically risks doubling latency on already-slow requests — callers
+should decide. This boundary is explicit and testable.
+
+---
+
 ## Product direction: YouTube Content Operating System
 
 **Decision:** Redesign the product as a YouTube-first content operating

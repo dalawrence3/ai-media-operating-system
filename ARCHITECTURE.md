@@ -25,16 +25,22 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 1 complete)
+## Current state (Phase 2 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (integer `schema_version` table).
+- Versioned schema (SCHEMA_VERSION=2): `topics`, `sources`, `scripts`,
+  `runs`, `ai_calls`.
 - Four domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
-- Typer CLI with `topics`, `sources`, `scripts`, `runs` subcommand groups
-  and diagnostic `version`, `doctor` commands.
+- Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai` subcommand
+  groups and diagnostic `version`, `doctor` commands.
 - Stdlib structured logging via `ACE_LOG_LEVEL`.
+- `src/app/ai/` package: provider-independent LLM abstraction (`AIProvider`
+  Protocol), `FakeProvider` (deterministic, no API calls), `ClaudeProvider`
+  (Anthropic SDK, injected client for testing), versioned TOML prompt
+  registry, structured output validation via Pydantic, bounded retry with
+  injectable sleep, token/cost tracking, `ai_calls` DB table.
 
 ## Package layout (target — populated phase by phase)
 
@@ -49,13 +55,17 @@ src/app/
 │   ├── logging.py
 │   ├── models.py
 │   └── repository.py
-├── llm/                      # Phase 2: LLM abstraction
-│   ├── provider.py           # LLMProvider protocol
-│   ├── claude.py             # ClaudeProvider (Anthropic SDK)
-│   ├── mock.py               # MockProvider for tests
-│   ├── registry.py           # Prompt registry and versioning
-│   ├── cost.py               # Token and cost tracking
-│   └── prompts/              # Named, versioned prompt template files
+├── ai/                       # Phase 2: LLM abstraction (implemented)
+│   ├── errors.py             # Typed exception hierarchy
+│   ├── provider.py           # AIProvider Protocol + AIRequest/AIResponse dataclasses
+│   ├── fake.py               # FakeProvider (deterministic, no API)
+│   ├── claude.py             # ClaudeProvider (Anthropic SDK, injectable client)
+│   ├── registry.py           # PromptRegistry — versioned TOML prompt loading
+│   ├── schemas.py            # Pydantic output schemas (EchoOutput for demo)
+│   ├── pricing.py            # Versioned pricing registry, cost estimation
+│   ├── retry.py              # Bounded retry with injectable sleep
+│   ├── usage.py              # record_ai_call() → ai_calls table
+│   └── prompts/              # Named, versioned prompt template files (TOML)
 ├── intelligence/             # Phase 3: YouTube opportunity intelligence
 │   ├── channel.py            # Channel and niche configuration
 │   ├── youtube_client.py     # YouTube Data API v3 wrapper

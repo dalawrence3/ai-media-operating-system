@@ -13,6 +13,14 @@
   Typer CLI with `topics`, `sources`, `scripts`, `runs` subcommands;
   structured logging; configuration module. 63 tests pass.
 
+- **Phase 2: AI Foundation** — Provider-independent LLM abstraction
+  (`src/app/ai/`); `FakeProvider` (deterministic); `ClaudeProvider`
+  (Anthropic SDK, injectable client for test isolation); versioned TOML
+  prompt registry; structured output via Pydantic; bounded retry with
+  injectable sleep; token/cost tracking with configurable pricing registry;
+  `ai_calls` DB table (SCHEMA_VERSION 2); CLI: `ace ai prompts list/show`,
+  `ace ai demo`; no live API calls in any test. 149 tests pass.
+
 ---
 
 ## Roadmap
@@ -23,10 +31,9 @@ risks, definition of done, demonstrable capability, and what waits.
 
 ---
 
-### Phase 2 — AI Foundation
+### Phase 3 — YouTube Opportunity Intelligence
 
-**Objective:** Establish the LLM integration layer that all content-generation
-phases depend on.
+*(next phase — formerly Phase 2 in old numbering)*
 
 **Business value:** Enables script generation, critique, and metadata
 production in later phases. Getting the abstraction right here avoids

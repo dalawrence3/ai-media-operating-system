@@ -9,10 +9,11 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Increment this when the schema changes; migration logic lives in _migrate().
-SCHEMA_VERSION = 1
+# Increment when the schema changes; add a migration branch in _migrate().
+SCHEMA_VERSION = 2
 
-_DDL = """
+# Phase 1 DDL — topics, sources, scripts, runs.
+_DDL_V1 = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
 );
@@ -61,6 +62,28 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 """
 
+# Phase 2 DDL — ai_calls.
+_DDL_V2 = """
+CREATE TABLE IF NOT EXISTS ai_calls (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    provider            TEXT    NOT NULL,
+    model               TEXT    NOT NULL,
+    prompt_name         TEXT    NOT NULL DEFAULT '',
+    prompt_version      TEXT    NOT NULL DEFAULT '',
+    input_tokens        INTEGER,
+    output_tokens       INTEGER,
+    estimated_cost_usd  REAL,
+    duration_ms         INTEGER,
+    retry_count         INTEGER NOT NULL DEFAULT 0,
+    status              TEXT    NOT NULL CHECK (status IN ('success', 'failed')),
+    error_category      TEXT,
+    error_message       TEXT,
+    run_id              INTEGER REFERENCES runs(id) ON DELETE SET NULL,
+    created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    completed_at        TEXT
+);
+"""
+
 
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
@@ -81,14 +104,23 @@ def _migrate(conn: sqlite3.Connection) -> None:
     current = _get_version(conn)
     if current == SCHEMA_VERSION:
         return
+
     if current == 0:
         logger.info("Initialising schema at version %d", SCHEMA_VERSION)
-        conn.executescript(_DDL)
+        conn.executescript(_DDL_V1)
+        conn.executescript(_DDL_V2)
         _set_version(conn, SCHEMA_VERSION)
-        logger.info("Schema ready")
+        logger.info("Schema ready at version %d", SCHEMA_VERSION)
+
+    elif current == 1:
+        logger.info("Migrating schema from version 1 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V2)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
     else:
         raise RuntimeError(
-            f"Unsupported schema version {current}; expected {SCHEMA_VERSION}. "
+            f"Unsupported schema version {current}; expected <= {SCHEMA_VERSION}. "
             "Manual migration required."
         )
 

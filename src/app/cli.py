@@ -298,6 +298,165 @@ def runs_update_status(
 
 
 # ---------------------------------------------------------------------------
+# AI commands (Phase 2)
+# ---------------------------------------------------------------------------
+
+ai_app = typer.Typer(help="AI provider diagnostics.", no_args_is_help=True)
+app.add_typer(ai_app, name="ai")
+
+ai_prompts_app = typer.Typer(help="Inspect the prompt registry.", no_args_is_help=True)
+ai_app.add_typer(ai_prompts_app, name="prompts")
+
+
+@ai_prompts_app.command("list")
+def ai_prompts_list() -> None:
+    """List all available versioned prompts."""
+    from app.ai.registry import PromptRegistry
+
+    registry = PromptRegistry()
+    prompts = registry.list_all()
+    if not prompts:
+        typer.echo("No prompts found.")
+        return
+    for p in prompts:
+        typer.echo(f"{p.name}  v{p.version}  —  {p.description}")
+
+
+@ai_prompts_app.command("show")
+def ai_prompts_show(
+    name: Annotated[str, typer.Argument(help="Prompt name.")],
+    version: Annotated[str, typer.Argument(help="Prompt version.")] = "1",
+) -> None:
+    """Show metadata and content for a specific prompt version."""
+    from app.ai.errors import PromptMetadataError, PromptNotFoundError
+    from app.ai.registry import PromptRegistry
+
+    registry = PromptRegistry()
+    try:
+        p = registry.get(name, version)
+    except PromptNotFoundError:
+        typer.echo(f"Prompt {name!r} v{version} not found.", err=True)
+        raise typer.Exit(1) from None
+    except PromptMetadataError as exc:
+        typer.echo(f"Prompt metadata error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    typer.echo(f"Name:        {p.name}")
+    typer.echo(f"Version:     {p.version}")
+    typer.echo(f"Description: {p.description}")
+    typer.echo("")
+    typer.echo("── System ──")
+    typer.echo(p.system.strip())
+    typer.echo("")
+    typer.echo("── User template ──")
+    typer.echo(p.user_template.strip())
+
+
+@ai_app.command("demo")
+def ai_demo(
+    text: Annotated[
+        str, typer.Option("--text", "-t", help="Text to echo.")
+    ] = "Hello from Phase 2!",
+    live: Annotated[
+        bool,
+        typer.Option(
+            "--live", help="Use the live Claude provider (requires ACE_ANTHROPIC_API_KEY)."
+        ),  # noqa: E501
+    ] = False,
+) -> None:
+    """Run the demo-echo prompt and display the structured result.
+
+    Uses the fake provider by default.  Pass --live to use Claude (credentials
+    required; live API calls are not verified during Phase 2).
+    """
+    from datetime import UTC, datetime
+
+    from app.ai.errors import AIError
+    from app.ai.fake import FakeProvider
+    from app.ai.registry import PromptRegistry
+    from app.ai.schemas import EchoOutput
+    from app.ai.usage import record_ai_call
+
+    cfg = get_config()
+    configure_logging(cfg.log_level)
+
+    if live and not cfg.dry_run:
+        if not cfg.anthropic_api_key:
+            typer.echo("Error: ACE_ANTHROPIC_API_KEY is not set. Cannot use --live mode.", err=True)
+            raise typer.Exit(1)
+        typer.echo(
+            "Note: --live mode is implemented but live API calls are not executed "
+            "during Phase 2 verification. Use the fake provider instead.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    registry = PromptRegistry()
+    prompt = registry.get("demo-echo", "1")
+    user = prompt.format_user(text=text)
+
+    from app.ai.provider import AIRequest
+
+    request = AIRequest(
+        system=prompt.system,
+        user=user,
+        model="fake",
+        response_schema=EchoOutput,
+        prompt_name=prompt.name,
+        prompt_version=prompt.version,
+    )
+
+    import json as _json
+
+    provider = FakeProvider(output=_json.dumps({"echo": text}))
+    started = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
+    try:
+        response = provider.complete(request)
+        status = "success"
+        error_cat = None
+        error_msg = None
+    except AIError as exc:
+        typer.echo(f"AI error: {exc}", err=True)
+        conn = _get_db()
+        record_ai_call(
+            conn,
+            request,
+            None,
+            status="failed",
+            error_category=type(exc).__name__,
+            error_message=str(exc),
+            started_at=started,
+        )
+        raise typer.Exit(1) from None
+
+    conn = _get_db()
+    call_id = record_ai_call(
+        conn,
+        request,
+        response,
+        status=status,
+        error_category=error_cat,
+        error_message=error_msg,
+        started_at=started,
+    )
+
+    typer.echo(f"Provider:      {response.provider_name}")
+    typer.echo(f"Model:         {response.model}")
+    typer.echo(f"Prompt:        {prompt.name} v{prompt.version}")
+    typer.echo(f"Input tokens:  {response.input_tokens}")
+    typer.echo(f"Output tokens: {response.output_tokens}")
+    typer.echo(f"Duration:      {response.duration_ms} ms")
+    typer.echo(f"Retries:       {response.retry_count}")
+    typer.echo(f"Usage id:      {call_id}")
+    typer.echo("")
+    if response.parsed is not None:
+        typer.echo(f"Result: {response.parsed.model_dump_json(indent=2)}")
+    else:
+        typer.echo(f"Raw: {response.raw_text}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

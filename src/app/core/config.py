@@ -18,6 +18,16 @@ class Config:
         self.db_path: Path = Path(raw) if raw else _default_db_path()
         self.log_level: str = os.environ.get("ACE_LOG_LEVEL", "WARNING").upper()
 
+        # AI / LLM settings (Phase 2).
+        # The application starts and runs non-AI commands without any of these.
+        self.anthropic_api_key: str = os.environ.get("ACE_ANTHROPIC_API_KEY", "")
+        self.ai_provider: str = os.environ.get("ACE_AI_PROVIDER", "fake").lower()
+        self.ai_model: str = os.environ.get("ACE_AI_MODEL", "claude-sonnet-5")
+        self.ai_timeout: float = float(os.environ.get("ACE_AI_TIMEOUT", "30"))
+        self.ai_max_retries: int = int(os.environ.get("ACE_AI_MAX_RETRIES", "3"))
+        # ACE_DRY_RUN=1 forces the fake provider regardless of ACE_AI_PROVIDER.
+        self.dry_run: bool = os.environ.get("ACE_DRY_RUN", "").lower() in {"1", "true", "yes"}
+
 
 _config: Config | None = None
 
