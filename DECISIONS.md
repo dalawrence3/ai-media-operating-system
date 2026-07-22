@@ -1,4 +1,150 @@
-# Decisions
+## Phase 3 Milestone 3.1: Operator decisions (D1–D7)
+
+**D1 — Default scoring weights are configurable, not constants**
+
+**Decision:** The initial scoring weights (`audience_demand: 0.30`,
+`competition: 0.25`, `channel_fit: 0.25`, `production_feasibility: 0.20`)
+are stored as versioned constants in `DEFAULT_SCORING_WEIGHTS` and referenced
+by scoring policy version `"1.0.0"`. They must not be treated as permanent
+universal constants.
+
+**Reasoning:** Scoring weights are business judgment, not physical constants.
+They will need tuning once real analytics data is available (Phase 11). The
+scoring policy versioning mechanism (Milestone 3.3) exists precisely to
+support this without breaking historical score comparability.
+
+---
+
+**D2 — Initial channel maturity stage: `validation`**
+
+**Decision:** New channels default to `MaturityStage.validation`. The
+operator sets the stage explicitly when advancing (via `ace channels new-version
+--stage`).
+
+**Reasoning:** A new channel has not yet validated its niche, audience fit,
+or content format. Defaulting to `validation` signals this and informs how
+discovery, scoring, and content decisions should be weighted for early-stage
+channels.
+
+---
+
+**D3 — GoogleTrendsAdapter deferred from MVP**
+
+**Decision:** `google_trends` is a valid entry in `VALID_ADAPTERS` (schema
+reservation) but is not implemented in Phase 3 MVP. It is not included in
+any default `allowed_discovery_adapters` list.
+
+**Reasoning:** Google Trends integration introduces rate-limiting, unofficial
+API risks, and global vs. niche-specific demand mismatches. The OIE functions
+correctly with `manual` and `youtube_data_api` adapters. Trends can be
+added as an optional adapter in Milestone 3.2c without changing the channel
+strategy schema.
+
+---
+
+**D4 — CompetitorResearchAdapter deferred (optional Milestone 3.2b)**
+
+**Decision:** `competitor_research` is a valid adapter key but not
+implemented in Phase 3 MVP. Deferred to optional Milestone 3.2b.
+
+**Reasoning:** Competitor research adds meaningful signal but requires the
+YouTube Data API client (Milestone 3.2a) to be complete first. Building
+the adapter interface before the underlying client exists creates
+placeholder code, which is explicitly excluded.
+
+---
+
+**D5 — `duplicate_similarity_threshold` default: 0.70, configurable per channel**
+
+**Decision:** `ChannelProfileVersion.duplicate_similarity_threshold` defaults
+to `0.70` (stored as `REAL NOT NULL DEFAULT 0.70` in the DB). The operator
+can lower or raise this per channel by creating a new profile version.
+
+**Reasoning:** 0.70 is a conservative threshold that prevents near-duplicate
+content while allowing legitimate variations on proven topics. Channels with
+a narrower niche may need a lower threshold; channels covering broad topics
+may tolerate a higher one.
+
+---
+
+**D6 — Capacity defaults are ceilings, not quotas**
+
+**Decision:** Default capacity policy values: `long_form_slots_per_week=2`,
+`short_slots_per_week=4`, `content_package_slots_per_week=1`,
+`max_concurrent_productions=2`, `review_hours_per_week=3.0`.
+
+These are hard **ceilings**. The system must never fill capacity with weak
+opportunities merely because capacity is available. Producing content that
+does not meet the minimum opportunity score wastes budget and review time
+without contributing to business objectives.
+
+**Reasoning:** Filling slots with low-quality content is worse than producing
+fewer, higher-quality pieces. The capacity ceiling prevents runaway production;
+the `min_opportunity_score` threshold (default 0.40) prevents weak
+opportunities from reaching the production queue.
+
+---
+
+**D7 — Recommendation thresholds are conservative, configurable, and auditable**
+
+**Decision:** Default `min_opportunity_score=0.40`. Thresholds must remain
+configurable via channel profile versions and must never be overridden in
+application logic. Every threshold check must be auditable (stored with
+the scoring record that triggered it).
+
+**Reasoning:** Conservative defaults protect against the OIE promoting
+mediocre content early in a channel's life when signal data is sparse.
+Auditability is required to diagnose cases where the threshold rejects
+an opportunity the operator considers valuable, or accepts one that
+performs poorly.
+
+---
+
+## Phase 3 Milestone 3.1: Architectural decisions
+
+**Circular FK pattern: channels ↔ profile versions**
+
+**Decision:** `channels.current_profile_version_id` and
+`channels.current_strategy_id` are nullable INTEGER columns with FK
+references. They are set to NULL on channel creation and updated
+immediately after the first profile version and strategy are inserted.
+All of this happens within `create_channel_full()` before the transaction
+commits.
+
+**Reasoning:** SQLite with FK enforcement only checks FK validity at DML
+time, not DDL time. The NULL → INSERT → UPDATE pattern satisfies FK
+constraints at every step. Channel deletion is not supported in Phase 3,
+so cascade ordering is not a current concern.
+
+---
+
+**Scoring policy version stored as TEXT reference, not FK**
+
+**Decision:** `channel_profile_versions.scoring_policy_version` is a
+`TEXT NOT NULL DEFAULT '1.0.0'` column, not a FK to a `scoring_policies`
+table. The `scoring_policies` table and its seed data belong to
+Milestone 3.3.
+
+**Reasoning:** Establishing a FK to a table that doesn't exist yet would
+require either placeholder seed data (which violates the no-placeholder-code
+rule) or deferring the entire field to 3.3 (which loses the schema
+reservation). Storing the version as a named TEXT string is a clean contract
+that the 3.3 scoring engine will fulfill.
+
+---
+
+**Profile versions are immutable: no update path**
+
+**Decision:** The repository exposes no `update_profile_version()` function.
+The only write paths are `create_profile_version()` and
+`supersede_profile_version()`. Changing any profile field requires
+`create_new_profile_version()`, which creates a new row and supersedes
+the old one.
+
+**Reasoning:** Profile versions serve as the audit trail for how channel
+strategy evolved over time. Allowing in-place updates would destroy the
+history needed to explain why a given opportunity was scored the way it
+was under a given configuration.
 
 ---
 

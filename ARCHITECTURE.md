@@ -25,16 +25,35 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 2 complete)
+## Current state (Phase 3 Milestone 3.1 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=2): `topics`, `sources`, `scripts`,
-  `runs`, `ai_calls`.
-- Four domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
+- Versioned schema (SCHEMA_VERSION=3): `topics`, `sources`, `scripts`,
+  `runs`, `ai_calls`, plus 5 Phase 3 channel strategy tables.
+- Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
-- Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai` subcommand
-  groups and diagnostic `version`, `doctor` commands.
+- Phase 3 Milestone 3.1 — Versioned Channel Strategy Foundation:
+  - `src/app/intelligence/` package: `models.py`, `repository.py`, `cli.py`
+  - New DB tables: `channels`, `channel_monetization_strategies`,
+    `channel_profile_versions`, `channel_capacity_policies`,
+    `channel_operating_mode_events`
+  - Versioned, immutable channel profile snapshots (niche, audience, format,
+    discovery settings, portfolio targets, scoring policy reference)
+  - Versioned monetization strategy (objective weights validated to sum 1.0;
+    16 named objectives; pre/active status)
+  - Capacity policy with operator-approved ceilings (D6): 2 long-form/4 short
+    /1 package slots per week, 2 concurrent, 3 review hrs/wk
+  - Append-only operating mode event log
+  - Phase 3 runtime restriction: only `manual` mode permitted; `supervised`
+    and `autonomous` are schema reservations for future phases
+  - Duplicate similarity threshold default 0.70 (D5); configurable
+  - Scoring policy version field `"1.0.0"` referenced; scoring engine deferred
+    to Milestone 3.3
+  - CLI: `ace channels add/list/show/versions/new-version/new-strategy
+    /set-mode/capacity/set-capacity`
+- Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`
+  subcommand groups and diagnostic `version`, `doctor` commands.
 - Stdlib structured logging via `ACE_LOG_LEVEL`.
 - `src/app/ai/` package: provider-independent LLM abstraction (`AIProvider`
   Protocol), `FakeProvider` (deterministic, no API calls), `ClaudeProvider`
@@ -121,9 +140,15 @@ than `SCHEMA_VERSION`. A version higher than expected raises immediately.
 
 Phase 1 tables: `schema_version`, `topics`, `sources`, `scripts`, `runs`
 
+Phase 2 tables: `ai_calls`
+
+Phase 3 Milestone 3.1 tables: `channels`, `channel_monetization_strategies`,
+`channel_profile_versions`, `channel_capacity_policies`,
+`channel_operating_mode_events`
+
 Planned additions per phase:
-- Phase 2: `llm_calls`
-- Phase 3: `channels`, `discovery_runs`, `opportunity_scores`; extend `topics`
+- Phase 3 remaining: `scoring_policies`, `discovery_runs`, `opportunity_scores`,
+  `opportunity_factor_scores`; extend `topics`
 - Phase 4: extend `sources`; add `claims`, `asset_rights`
 - Phase 5: extend `scripts`; add `hooks`, `metadata_drafts`
 - Phase 6: `narrations`, `captions`, `tts_calls`

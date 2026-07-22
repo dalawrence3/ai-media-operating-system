@@ -21,6 +21,21 @@
   `ai_calls` DB table (SCHEMA_VERSION 2); CLI: `ace ai prompts list/show`,
   `ace ai demo`; no live API calls in any test. 149 tests pass.
 
+- **Phase 3 Milestone 3.1: Versioned Channel Strategy Foundation** —
+  `src/app/intelligence/` package; 5 new DB tables (SCHEMA_VERSION 3):
+  `channels`, `channel_monetization_strategies`, `channel_profile_versions`,
+  `channel_capacity_policies`, `channel_operating_mode_events`; versioned
+  immutable profile snapshots (niche, audience, format, discovery config,
+  portfolio targets, D5 dedup threshold 0.70, scoring policy reference);
+  versioned monetization strategy (16 named objectives, weights validated to
+  sum 1.0, pre/active status); capacity policy with D6 ceilings (not quotas);
+  append-only operating mode event log; Phase 3 restricts set-mode to
+  `manual` only (`supervised`/`autonomous` are schema reservations); operator
+  decisions D1–D7 implemented and recorded; CLI: `ace channels add/list/show/
+  versions/new-version/new-strategy/set-mode/capacity/set-capacity`;
+  no external API integrations; no scoring execution; no opportunity
+  discovery; no placeholder code. 259 tests pass.
+
 ---
 
 ## Roadmap

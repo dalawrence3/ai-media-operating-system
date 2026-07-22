@@ -28,12 +28,14 @@ from app.core.repository import (
     update_script_status,
     update_topic,
 )
+from app.intelligence.cli import channels_app
 
 app = typer.Typer(
     name="ace",
     help="AI Content Production Engine command-line interface.",
     no_args_is_help=True,
 )
+app.add_typer(channels_app, name="channels")
 logger = get_logger(__name__)
 
 
