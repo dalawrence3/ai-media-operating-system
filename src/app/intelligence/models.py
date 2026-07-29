@@ -71,6 +71,52 @@ class VersionStatus(StrEnum):
     superseded = "superseded"
 
 
+class LifecycleState(StrEnum):
+    new = "new"
+    under_review = "under_review"
+    approved = "approved"
+    rejected = "rejected"
+    produced = "produced"
+    archived = "archived"
+
+
+class FormatRecommendation(StrEnum):
+    short = "short"
+    long_form = "long_form"
+    both = "both"
+    content_package = "content_package"
+    undecided = "undecided"
+
+
+class StrategicRole(StrEnum):
+    discovery = "discovery"
+    monetization = "monetization"
+    subscriber_growth = "subscriber_growth"
+    authority = "authority"
+    retention = "retention"
+    experimentation = "experimentation"
+
+
+class SourceQualityTier(StrEnum):
+    high = "high"
+    medium_high = "medium_high"
+    medium = "medium"
+    variable = "variable"
+
+
+class RunStatus(StrEnum):
+    pending = "pending"
+    running = "running"
+    completed = "completed"
+    partial = "partial"
+    failed = "failed"
+
+
+class AdapterName(StrEnum):
+    manual = "manual"
+    youtube_data_api = "youtube_data_api"
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -309,6 +355,92 @@ class ChannelCapacityPolicy(BaseModel):
     trend_reservation_slots: int = Field(default=1, ge=0, le=10)
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class DiscoveryRun(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int | None = None
+    channel_id: int
+    profile_version_id: int
+    adapter_name: AdapterName
+    query_parameters_json: str = "{}"
+    status: RunStatus = RunStatus.pending
+    candidate_count: int = 0
+    new_opportunity_count: int = 0
+    dedup_count: int = 0
+    failed_count: int = 0
+    quota_units_consumed: int = 0
+    error_message: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class Opportunity(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int | None = None
+    channel_id: int
+    discovery_run_id: int
+    normalized_topic: str = Field(min_length=1, max_length=200)
+    raw_topic: str = Field(min_length=1, max_length=200)
+    title: str = Field(default="", max_length=300)
+    topic_summary: str = Field(default="", max_length=1000)
+    format_recommendation: FormatRecommendation = FormatRecommendation.undecided
+    strategic_role: StrategicRole = StrategicRole.discovery
+    current_lifecycle_state: LifecycleState = LifecycleState.new
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class OpportunityObservation(BaseModel):
+    """Time-sensitive evidence-collection event. is_stale is computed, not stored."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int | None = None
+    opportunity_id: int
+    discovery_run_id: int
+    adapter_name: AdapterName
+    collected_at: datetime | None = None
+    signal_age_days: float | None = None
+    source_quality_tier: SourceQualityTier = SourceQualityTier.medium
+    raw_payload_json: str = "{}"
+    collection_notes: str = ""
+    was_deduplicated: bool = False
+    candidate_topic: str | None = None
+    dedup_similarity_score: float | None = None
+
+    def is_stale(self, signal_staleness_days: int) -> bool:
+        if self.signal_age_days is None:
+            return False
+        return self.signal_age_days > signal_staleness_days
+
+
+class OpportunitySourceEvidence(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int | None = None
+    observation_id: int
+    opportunity_id: int
+    evidence_type: str
+    evidence_value: float | None = None
+    evidence_text: str | None = None
+    evidence_unit: str = ""
+    source_label: str
+    collected_at: datetime | None = None
+
+
+class OpportunityStateEvent(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int | None = None
+    opportunity_id: int
+    from_state: LifecycleState | None = None
+    to_state: LifecycleState
+    actor: str = Field(default="system", max_length=100)
+    reason: str = Field(default="", max_length=500)
+    created_at: datetime | None = None
 
 
 class ChannelOperatingModeEvent(BaseModel):

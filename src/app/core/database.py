@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -211,6 +211,96 @@ CREATE TABLE IF NOT EXISTS channel_operating_mode_events (
 """
 
 
+# Phase 4 DDL — opportunity discovery foundation.
+# Creation order: discovery_runs → opportunities → opportunity_observations
+#   → opportunity_source_evidence → opportunity_state_events
+_DDL_V4_NEW_TABLES = """
+CREATE TABLE IF NOT EXISTS discovery_runs (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id              INTEGER NOT NULL REFERENCES channels(id),
+    profile_version_id      INTEGER NOT NULL REFERENCES channel_profile_versions(id),
+    adapter_name            TEXT    NOT NULL
+                                    CHECK (adapter_name IN ('manual', 'youtube_data_api')),
+    query_parameters_json   TEXT    NOT NULL DEFAULT '{}',
+    status                  TEXT    NOT NULL DEFAULT 'pending'
+                                    CHECK (status IN (
+                                        'pending', 'running', 'completed', 'partial', 'failed')),
+    candidate_count         INTEGER NOT NULL DEFAULT 0,
+    new_opportunity_count   INTEGER NOT NULL DEFAULT 0,
+    dedup_count             INTEGER NOT NULL DEFAULT 0,
+    failed_count            INTEGER NOT NULL DEFAULT 0,
+    quota_units_consumed    INTEGER NOT NULL DEFAULT 0,
+    error_message           TEXT,
+    started_at              TEXT    NOT NULL,
+    completed_at            TEXT
+);
+
+CREATE TABLE IF NOT EXISTS opportunities (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id              INTEGER NOT NULL REFERENCES channels(id),
+    discovery_run_id        INTEGER NOT NULL REFERENCES discovery_runs(id),
+    normalized_topic        TEXT    NOT NULL,
+    raw_topic               TEXT    NOT NULL,
+    title                   TEXT    NOT NULL DEFAULT '',
+    topic_summary           TEXT    NOT NULL DEFAULT '',
+    format_recommendation   TEXT    NOT NULL DEFAULT 'undecided'
+                                    CHECK (format_recommendation IN (
+                                        'short', 'long_form', 'both',
+                                        'content_package', 'undecided')),
+    strategic_role          TEXT    NOT NULL DEFAULT 'discovery'
+                                    CHECK (strategic_role IN (
+                                        'discovery', 'monetization', 'subscriber_growth',
+                                        'authority', 'retention', 'experimentation')),
+    current_lifecycle_state TEXT    NOT NULL DEFAULT 'new'
+                                    CHECK (current_lifecycle_state IN (
+                                        'new', 'under_review', 'approved',
+                                        'rejected', 'produced', 'archived')),
+    created_at              TEXT    NOT NULL,
+    updated_at              TEXT    NOT NULL,
+    UNIQUE (channel_id, normalized_topic)
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_observations (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id          INTEGER NOT NULL REFERENCES opportunities(id),
+    discovery_run_id        INTEGER NOT NULL REFERENCES discovery_runs(id),
+    adapter_name            TEXT    NOT NULL,
+    collected_at            TEXT    NOT NULL,
+    signal_age_days         REAL,
+    source_quality_tier     TEXT    NOT NULL DEFAULT 'medium'
+                                    CHECK (source_quality_tier IN (
+                                        'high', 'medium_high', 'medium', 'variable')),
+    raw_payload_json        TEXT    NOT NULL DEFAULT '{}',
+    collection_notes        TEXT    NOT NULL DEFAULT '',
+    was_deduplicated        INTEGER NOT NULL DEFAULT 0 CHECK (was_deduplicated IN (0, 1)),
+    candidate_topic         TEXT,
+    dedup_similarity_score  REAL
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_source_evidence (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    observation_id  INTEGER NOT NULL REFERENCES opportunity_observations(id),
+    opportunity_id  INTEGER NOT NULL REFERENCES opportunities(id),
+    evidence_type   TEXT    NOT NULL,
+    evidence_value  REAL,
+    evidence_text   TEXT,
+    evidence_unit   TEXT    NOT NULL DEFAULT '',
+    source_label    TEXT    NOT NULL,
+    collected_at    TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS opportunity_state_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id  INTEGER NOT NULL REFERENCES opportunities(id),
+    from_state      TEXT,
+    to_state        TEXT    NOT NULL,
+    actor           TEXT    NOT NULL DEFAULT 'system',
+    reason          TEXT    NOT NULL DEFAULT '',
+    created_at      TEXT    NOT NULL
+);
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -236,6 +326,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V1)
         conn.executescript(_DDL_V2)
         conn.executescript(_DDL_V3)
+        conn.executescript(_DDL_V4_NEW_TABLES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -243,12 +334,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 1 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V2)
         conn.executescript(_DDL_V3)
+        conn.executescript(_DDL_V4_NEW_TABLES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 2:
         logger.info("Migrating schema from version 2 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V3)
+        conn.executescript(_DDL_V4_NEW_TABLES)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 3:
+        logger.info("Migrating schema from version 3 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V4_NEW_TABLES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

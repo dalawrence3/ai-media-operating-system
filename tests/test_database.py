@@ -67,17 +67,22 @@ def test_phase3_tables_exist(db: sqlite3.Connection) -> None:
     assert expected <= tables
 
 
-def test_migration_from_v2_applies_v3(tmp_path) -> None:
-    """A database at schema version 2 must migrate to 3 on next open_db."""
-    from app.core.database import _get_version
+def test_migration_from_v2_applies_latest(tmp_path) -> None:
+    """A database at schema version 2 must migrate to SCHEMA_VERSION on next open_db."""
+    from app.core.database import SCHEMA_VERSION, _get_version
 
     # Manually build a v2 database
     conn = open_db(tmp_path / "v2.db")
     # open_db already migrates to SCHEMA_VERSION; reset it to 2 to simulate a pre-v3 DB
     conn.execute("DELETE FROM schema_version")
     conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-    # Drop Phase 3 tables to simulate a real v2 state
+    # Drop Phase 3/4 tables to simulate a real v2 state
     for tbl in (
+        "opportunity_state_events",
+        "opportunity_source_evidence",
+        "opportunity_observations",
+        "opportunities",
+        "discovery_runs",
         "channel_operating_mode_events",
         "channel_capacity_policies",
         "channel_profile_versions",
@@ -88,9 +93,9 @@ def test_migration_from_v2_applies_v3(tmp_path) -> None:
     conn.commit()
     conn.close()
 
-    # Re-open — must migrate to v3
+    # Re-open — must migrate to latest SCHEMA_VERSION
     conn2 = open_db(tmp_path / "v2.db")
-    assert _get_version(conn2) == 3
+    assert _get_version(conn2) == SCHEMA_VERSION
     tables = {
         r[0]
         for r in conn2.execute(

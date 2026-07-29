@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from app.core.logging import get_logger
 from app.intelligence.models import (
     DEFAULT_PRE_MONETIZATION_WEIGHTS,
+    AdapterName,
     AudienceIntent,
     BrandVoice,
     Channel,
@@ -17,12 +18,22 @@ from app.intelligence.models import (
     ChannelOperatingModeEvent,
     ChannelProfileVersion,
     ContentStyle,
+    DiscoveryRun,
+    FormatRecommendation,
+    LifecycleState,
     MaturityStage,
     MonetizationStatus,
     OperatingMode,
+    Opportunity,
+    OpportunityObservation,
+    OpportunitySourceEvidence,
+    OpportunityStateEvent,
     Platform,
     PortfolioTargets,
     PrimaryFormat,
+    RunStatus,
+    SourceQualityTier,
+    StrategicRole,
     VersionStatus,
 )
 
@@ -942,3 +953,392 @@ def activate_strategy_version(
     activated = get_monetization_strategy(conn, version_id)
     assert activated is not None
     return activated
+
+
+# ---------------------------------------------------------------------------
+# Discovery runs
+# ---------------------------------------------------------------------------
+
+
+def _row_to_discovery_run(row: sqlite3.Row) -> DiscoveryRun:
+    return DiscoveryRun(
+        id=row["id"],
+        channel_id=row["channel_id"],
+        profile_version_id=row["profile_version_id"],
+        adapter_name=AdapterName(row["adapter_name"]),
+        query_parameters_json=row["query_parameters_json"],
+        status=RunStatus(row["status"]),
+        candidate_count=row["candidate_count"],
+        new_opportunity_count=row["new_opportunity_count"],
+        dedup_count=row["dedup_count"],
+        failed_count=row["failed_count"],
+        quota_units_consumed=row["quota_units_consumed"],
+        error_message=row["error_message"],
+        started_at=datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+        completed_at=datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+    )
+
+
+def create_discovery_run(conn: sqlite3.Connection, run: DiscoveryRun) -> DiscoveryRun:
+    now = _now()
+    cursor = conn.execute(
+        """INSERT INTO discovery_runs
+           (channel_id, profile_version_id, adapter_name, query_parameters_json,
+            status, candidate_count, new_opportunity_count, dedup_count,
+            failed_count, quota_units_consumed, error_message, started_at, completed_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            run.channel_id,
+            run.profile_version_id,
+            run.adapter_name.value,
+            run.query_parameters_json,
+            run.status.value,
+            run.candidate_count,
+            run.new_opportunity_count,
+            run.dedup_count,
+            run.failed_count,
+            run.quota_units_consumed,
+            run.error_message,
+            run.started_at.strftime("%Y-%m-%dT%H:%M:%S") if run.started_at else now,
+            run.completed_at.strftime("%Y-%m-%dT%H:%M:%S") if run.completed_at else None,
+        ),
+    )
+    result = get_discovery_run(conn, cursor.lastrowid)
+    assert result is not None
+    return result
+
+
+def update_discovery_run(
+    conn: sqlite3.Connection,
+    run_id: int,
+    *,
+    status: RunStatus | None = None,
+    candidate_count: int | None = None,
+    new_opportunity_count: int | None = None,
+    dedup_count: int | None = None,
+    failed_count: int | None = None,
+    quota_units_consumed: int | None = None,
+    error_message: str | None = None,
+    completed_at: str | None = None,
+) -> None:
+    fields: list[str] = []
+    values: list[object] = []
+    if status is not None:
+        fields.append("status = ?")
+        values.append(status.value)
+    if candidate_count is not None:
+        fields.append("candidate_count = ?")
+        values.append(candidate_count)
+    if new_opportunity_count is not None:
+        fields.append("new_opportunity_count = ?")
+        values.append(new_opportunity_count)
+    if dedup_count is not None:
+        fields.append("dedup_count = ?")
+        values.append(dedup_count)
+    if failed_count is not None:
+        fields.append("failed_count = ?")
+        values.append(failed_count)
+    if quota_units_consumed is not None:
+        fields.append("quota_units_consumed = ?")
+        values.append(quota_units_consumed)
+    if error_message is not None:
+        fields.append("error_message = ?")
+        values.append(error_message)
+    if completed_at is not None:
+        fields.append("completed_at = ?")
+        values.append(completed_at)
+    if not fields:
+        return
+    values.append(run_id)
+    conn.execute(f"UPDATE discovery_runs SET {', '.join(fields)} WHERE id = ?", values)  # noqa: S608
+
+
+def get_discovery_run(conn: sqlite3.Connection, run_id: int) -> DiscoveryRun | None:
+    row = conn.execute("SELECT * FROM discovery_runs WHERE id = ?", (run_id,)).fetchone()
+    return _row_to_discovery_run(row) if row else None
+
+
+def list_discovery_runs(conn: sqlite3.Connection, channel_id: int) -> list[DiscoveryRun]:
+    rows = conn.execute(
+        "SELECT * FROM discovery_runs WHERE channel_id = ? ORDER BY started_at DESC",
+        (channel_id,),
+    ).fetchall()
+    return [_row_to_discovery_run(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Opportunities
+# ---------------------------------------------------------------------------
+
+
+def _row_to_opportunity(row: sqlite3.Row) -> Opportunity:
+    return Opportunity(
+        id=row["id"],
+        channel_id=row["channel_id"],
+        discovery_run_id=row["discovery_run_id"],
+        normalized_topic=row["normalized_topic"],
+        raw_topic=row["raw_topic"],
+        title=row["title"],
+        topic_summary=row["topic_summary"],
+        format_recommendation=FormatRecommendation(row["format_recommendation"]),
+        strategic_role=StrategicRole(row["strategic_role"]),
+        current_lifecycle_state=LifecycleState(row["current_lifecycle_state"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+def create_opportunity(conn: sqlite3.Connection, opp: Opportunity) -> Opportunity:
+    """Insert a new opportunity and its initial state event atomically."""
+    now = _now()
+    cursor = conn.execute(
+        """INSERT INTO opportunities
+           (channel_id, discovery_run_id, normalized_topic, raw_topic,
+            title, topic_summary, format_recommendation, strategic_role,
+            current_lifecycle_state, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            opp.channel_id,
+            opp.discovery_run_id,
+            opp.normalized_topic,
+            opp.raw_topic,
+            opp.title,
+            opp.topic_summary,
+            opp.format_recommendation.value,
+            opp.strategic_role.value,
+            opp.current_lifecycle_state.value,
+            now,
+            now,
+        ),
+    )
+    opp_id = cursor.lastrowid
+    conn.execute(
+        """INSERT INTO opportunity_state_events
+           (opportunity_id, from_state, to_state, actor, reason, created_at)
+           VALUES (?, NULL, ?, 'system', 'discovered', ?)""",
+        (opp_id, opp.current_lifecycle_state.value, now),
+    )
+    result = get_opportunity(conn, opp_id)
+    assert result is not None
+    return result
+
+
+def get_opportunity(conn: sqlite3.Connection, opportunity_id: int) -> Opportunity | None:
+    row = conn.execute("SELECT * FROM opportunities WHERE id = ?", (opportunity_id,)).fetchone()
+    return _row_to_opportunity(row) if row else None
+
+
+def list_opportunities(
+    conn: sqlite3.Connection,
+    channel_id: int,
+    *,
+    state: LifecycleState | None = None,
+) -> list[Opportunity]:
+    if state is not None:
+        rows = conn.execute(
+            """SELECT * FROM opportunities
+               WHERE channel_id = ? AND current_lifecycle_state = ?
+               ORDER BY created_at DESC""",
+            (channel_id, state.value),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM opportunities WHERE channel_id = ? ORDER BY created_at DESC",
+            (channel_id,),
+        ).fetchall()
+    return [_row_to_opportunity(r) for r in rows]
+
+
+def find_existing_opportunity(
+    conn: sqlite3.Connection,
+    channel_id: int,
+    normalized_topic: str,
+    threshold: float,
+) -> tuple[Opportunity, float] | None:
+    """Return (best_matching_opportunity, jaccard_score) if score >= threshold, else None."""
+    from app.intelligence.dedup import jaccard_similarity
+
+    rows = conn.execute(
+        """SELECT * FROM opportunities
+           WHERE channel_id = ?
+             AND current_lifecycle_state NOT IN ('rejected', 'archived')""",
+        (channel_id,),
+    ).fetchall()
+
+    best: tuple[Opportunity, float] | None = None
+    for row in rows:
+        opp = _row_to_opportunity(row)
+        score = jaccard_similarity(normalized_topic, opp.normalized_topic)
+        if score >= threshold and (best is None or score > best[1]):
+            best = (opp, score)
+    return best
+
+
+def transition_opportunity_state(
+    conn: sqlite3.Connection,
+    opportunity_id: int,
+    to_state: LifecycleState,
+    *,
+    actor: str = "system",
+    reason: str = "",
+) -> OpportunityStateEvent:
+    opp = get_opportunity(conn, opportunity_id)
+    if opp is None:
+        raise ValueError(f"Opportunity {opportunity_id} not found")
+    now = _now()
+    cursor = conn.execute(
+        """INSERT INTO opportunity_state_events
+           (opportunity_id, from_state, to_state, actor, reason, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (opportunity_id, opp.current_lifecycle_state.value, to_state.value, actor, reason, now),
+    )
+    conn.execute(
+        "UPDATE opportunities SET current_lifecycle_state = ?, updated_at = ? WHERE id = ?",
+        (to_state.value, now, opportunity_id),
+    )
+    row = conn.execute(
+        "SELECT * FROM opportunity_state_events WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone()
+    return _row_to_state_event(row)
+
+
+# ---------------------------------------------------------------------------
+# Observations
+# ---------------------------------------------------------------------------
+
+
+def _row_to_observation(row: sqlite3.Row) -> OpportunityObservation:
+    return OpportunityObservation(
+        id=row["id"],
+        opportunity_id=row["opportunity_id"],
+        discovery_run_id=row["discovery_run_id"],
+        adapter_name=AdapterName(row["adapter_name"]),
+        collected_at=datetime.fromisoformat(row["collected_at"]),
+        signal_age_days=row["signal_age_days"],
+        source_quality_tier=SourceQualityTier(row["source_quality_tier"]),
+        raw_payload_json=row["raw_payload_json"],
+        collection_notes=row["collection_notes"],
+        was_deduplicated=bool(row["was_deduplicated"]),
+        candidate_topic=row["candidate_topic"],
+        dedup_similarity_score=row["dedup_similarity_score"],
+    )
+
+
+def create_observation(
+    conn: sqlite3.Connection, obs: OpportunityObservation
+) -> OpportunityObservation:
+    now = _now()
+    cursor = conn.execute(
+        """INSERT INTO opportunity_observations
+           (opportunity_id, discovery_run_id, adapter_name, collected_at,
+            signal_age_days, source_quality_tier, raw_payload_json,
+            collection_notes, was_deduplicated, candidate_topic, dedup_similarity_score)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            obs.opportunity_id,
+            obs.discovery_run_id,
+            obs.adapter_name.value,
+            obs.collected_at.strftime("%Y-%m-%dT%H:%M:%S") if obs.collected_at else now,
+            obs.signal_age_days,
+            obs.source_quality_tier.value,
+            obs.raw_payload_json,
+            obs.collection_notes,
+            1 if obs.was_deduplicated else 0,
+            obs.candidate_topic,
+            obs.dedup_similarity_score,
+        ),
+    )
+    row = conn.execute(
+        "SELECT * FROM opportunity_observations WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone()
+    return _row_to_observation(row)
+
+
+def list_observations(
+    conn: sqlite3.Connection, opportunity_id: int
+) -> list[OpportunityObservation]:
+    rows = conn.execute(
+        """SELECT * FROM opportunity_observations
+           WHERE opportunity_id = ? ORDER BY collected_at DESC""",
+        (opportunity_id,),
+    ).fetchall()
+    return [_row_to_observation(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Source evidence
+# ---------------------------------------------------------------------------
+
+
+def _row_to_evidence(row: sqlite3.Row) -> OpportunitySourceEvidence:
+    return OpportunitySourceEvidence(
+        id=row["id"],
+        observation_id=row["observation_id"],
+        opportunity_id=row["opportunity_id"],
+        evidence_type=row["evidence_type"],
+        evidence_value=row["evidence_value"],
+        evidence_text=row["evidence_text"],
+        evidence_unit=row["evidence_unit"],
+        source_label=row["source_label"],
+        collected_at=datetime.fromisoformat(row["collected_at"]),
+    )
+
+
+def create_source_evidence(
+    conn: sqlite3.Connection, ev: OpportunitySourceEvidence
+) -> OpportunitySourceEvidence:
+    now = _now()
+    cursor = conn.execute(
+        """INSERT INTO opportunity_source_evidence
+           (observation_id, opportunity_id, evidence_type, evidence_value,
+            evidence_text, evidence_unit, source_label, collected_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            ev.observation_id,
+            ev.opportunity_id,
+            ev.evidence_type,
+            ev.evidence_value,
+            ev.evidence_text,
+            ev.evidence_unit,
+            ev.source_label,
+            ev.collected_at.strftime("%Y-%m-%dT%H:%M:%S") if ev.collected_at else now,
+        ),
+    )
+    row = conn.execute(
+        "SELECT * FROM opportunity_source_evidence WHERE id = ?", (cursor.lastrowid,)
+    ).fetchone()
+    return _row_to_evidence(row)
+
+
+def list_evidence(conn: sqlite3.Connection, observation_id: int) -> list[OpportunitySourceEvidence]:
+    rows = conn.execute(
+        "SELECT * FROM opportunity_source_evidence WHERE observation_id = ? ORDER BY id",
+        (observation_id,),
+    ).fetchall()
+    return [_row_to_evidence(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# State events
+# ---------------------------------------------------------------------------
+
+
+def _row_to_state_event(row: sqlite3.Row) -> OpportunityStateEvent:
+    return OpportunityStateEvent(
+        id=row["id"],
+        opportunity_id=row["opportunity_id"],
+        from_state=LifecycleState(row["from_state"]) if row["from_state"] else None,
+        to_state=LifecycleState(row["to_state"]),
+        actor=row["actor"],
+        reason=row["reason"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+    )
+
+
+def list_state_events(conn: sqlite3.Connection, opportunity_id: int) -> list[OpportunityStateEvent]:
+    rows = conn.execute(
+        """SELECT * FROM opportunity_state_events
+           WHERE opportunity_id = ? ORDER BY created_at""",
+        (opportunity_id,),
+    ).fetchall()
+    return [_row_to_state_event(r) for r in rows]

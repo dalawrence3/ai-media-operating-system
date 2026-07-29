@@ -1,4 +1,4 @@
-"""Typer sub-app for channel strategy commands (Phase 3)."""
+"""Typer sub-apps for channel strategy and discovery commands (Phase 3)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 
 from app.intelligence.models import (
+    AdapterName,
     AudienceIntent,
     BrandVoice,
     MaturityStage,
@@ -19,6 +20,11 @@ from app.intelligence.models import (
 
 channels_app = typer.Typer(
     help="Manage channels and channel strategy.",
+    no_args_is_help=True,
+)
+
+discover_app = typer.Typer(
+    help="Run and inspect content opportunity discovery.",
     no_args_is_help=True,
 )
 
@@ -606,3 +612,167 @@ def channels_set_capacity(
     typer.echo(f"  Review hours/week:    {updated.review_hours_per_week}")
     typer.echo(f"  Daily budget:         ${updated.daily_budget_usd:.2f}")
     typer.echo(f"  Monthly budget:       ${updated.monthly_budget_usd:.2f}")
+
+
+# ---------------------------------------------------------------------------
+# discover run
+# ---------------------------------------------------------------------------
+
+
+@discover_app.command("run")
+def discover_run(
+    channel_id: Annotated[int, typer.Option("--channel", "-c", help="Channel ID.")],
+    topic: Annotated[
+        list[str] | None,
+        typer.Option("--topic", "-t", help="Topic string (repeatable; ManualSignalAdapter)."),
+    ] = None,
+    adapter: Annotated[
+        AdapterName,
+        typer.Option("--adapter", help="Adapter to use."),
+    ] = AdapterName.manual,
+    youtube_query: Annotated[
+        str | None,
+        typer.Option("--youtube-query", help="Search query for YouTubeDataAPIAdapter."),
+    ] = None,
+    youtube_api_key: Annotated[
+        str,
+        typer.Option("--youtube-api-key", envvar="ACE_YOUTUBE_API_KEY", help="YouTube API key."),
+    ] = "",
+    operator: Annotated[
+        str, typer.Option("--operator", help="Operator name for audit.")
+    ] = "system",
+) -> None:
+    """Run a discovery cycle and persist all candidates."""
+    from app.intelligence.discovery import run_discovery
+
+    conn = _get_db()
+    topics: list[str] = list(topic) if topic else []
+    if adapter == AdapterName.youtube_data_api and youtube_query:
+        topics = [youtube_query, *topics]
+
+    if not topics:
+        typer.echo("No topics supplied. Use --topic or --youtube-query.", err=True)
+        raise typer.Exit(1)
+
+    try:
+        run = run_discovery(
+            conn,
+            channel_id,
+            adapter,
+            topics,
+            operator=operator,
+            youtube_api_key=youtube_api_key,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+    typer.echo(f"Discovery run {run.id} [{run.adapter_name.value}] — {run.status.value}")
+    typer.echo(f"  New opportunities: {run.new_opportunity_count}")
+    typer.echo(f"  Deduplicated:      {run.dedup_count}")
+    typer.echo(f"  Failed:            {run.failed_count}")
+    typer.echo(f"  Quota units used:  {run.quota_units_consumed}")
+    if run.error_message:
+        typer.echo(f"  Error: {run.error_message}", err=True)
+
+
+# ---------------------------------------------------------------------------
+# discover list
+# ---------------------------------------------------------------------------
+
+
+@discover_app.command("list")
+def discover_list(
+    channel_id: Annotated[int, typer.Option("--channel", "-c", help="Channel ID.")],
+    status: Annotated[
+        str | None,
+        typer.Option("--status", help="Filter by lifecycle state (new/under_review/…)."),
+    ] = None,
+) -> None:
+    """List opportunities for a channel."""
+    from app.intelligence.models import LifecycleState
+    from app.intelligence.repository import get_channel, list_opportunities
+
+    conn = _get_db()
+    channel = get_channel(conn, channel_id)
+    if channel is None:
+        typer.echo(f"Channel {channel_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    try:
+        state = LifecycleState(status) if status else None
+    except ValueError:
+        typer.echo(f"Unknown lifecycle state: {status!r}", err=True)
+        raise typer.Exit(1) from None
+
+    opps = list_opportunities(conn, channel_id, state=state)
+    if not opps:
+        typer.echo("No opportunities found.")
+        return
+    for opp in opps:
+        typer.echo(
+            f"[{opp.id}] {opp.raw_topic!r}"
+            f"  state={opp.current_lifecycle_state.value}"
+            f"  format={opp.format_recommendation.value}"
+            f"  created={opp.created_at}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# discover show
+# ---------------------------------------------------------------------------
+
+
+@discover_app.command("show")
+def discover_show(
+    opportunity_id: Annotated[int, typer.Argument(help="Opportunity ID.")],
+) -> None:
+    """Show full detail for an opportunity including observations and evidence."""
+    from app.intelligence.repository import (
+        get_opportunity,
+        list_evidence,
+        list_observations,
+        list_state_events,
+    )
+
+    conn = _get_db()
+    opp = get_opportunity(conn, opportunity_id)
+    if opp is None:
+        typer.echo(f"Opportunity {opportunity_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Opportunity [{opp.id}]")
+    typer.echo(f"  Topic (raw):     {opp.raw_topic!r}")
+    typer.echo(f"  Topic (normed):  {opp.normalized_topic!r}")
+    typer.echo(f"  State:           {opp.current_lifecycle_state.value}")
+    typer.echo(f"  Format:          {opp.format_recommendation.value}")
+    typer.echo(f"  Strategic role:  {opp.strategic_role.value}")
+    typer.echo(f"  Created:         {opp.created_at}")
+
+    observations = list_observations(conn, opportunity_id)
+    typer.echo(f"\nObservations ({len(observations)}):")
+    for obs in observations:
+        dedup_note = (
+            f"  [dedup from {obs.candidate_topic!r}, similarity={obs.dedup_similarity_score:.2f}]"
+            if obs.was_deduplicated
+            else ""
+        )
+        typer.echo(
+            f"  [{obs.id}] adapter={obs.adapter_name.value}"
+            f"  collected={obs.collected_at}"
+            f"  age={obs.signal_age_days}d"
+            f"{dedup_note}"
+        )
+        for ev in list_evidence(conn, obs.id):
+            val = (
+                f"{ev.evidence_value} {ev.evidence_unit}"
+                if ev.evidence_value is not None
+                else ev.evidence_text
+            )
+            typer.echo(f"    {ev.evidence_type}: {val}  [{ev.source_label}]")
+
+    events = list_state_events(conn, opportunity_id)
+    typer.echo(f"\nState history ({len(events)}):")
+    for evt in events:
+        from_s = evt.from_state.value if evt.from_state else "—"
+        typer.echo(f"  {from_s} → {evt.to_state.value}  actor={evt.actor}  {evt.created_at}")

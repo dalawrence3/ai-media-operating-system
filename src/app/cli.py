@@ -28,7 +28,7 @@ from app.core.repository import (
     update_script_status,
     update_topic,
 )
-from app.intelligence.cli import channels_app
+from app.intelligence.cli import channels_app, discover_app
 
 app = typer.Typer(
     name="ace",
@@ -36,6 +36,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(channels_app, name="channels")
+app.add_typer(discover_app, name="discover")
 logger = get_logger(__name__)
 
 
