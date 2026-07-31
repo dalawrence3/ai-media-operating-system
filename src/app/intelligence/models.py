@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import StrEnum
 
@@ -455,3 +456,155 @@ class ChannelOperatingModeEvent(BaseModel):
     operator: str = Field(default="", max_length=100)
     reason: str = Field(default="", max_length=500)
     created_at: datetime | None = None
+
+
+# ---------------------------------------------------------------------------
+# M3.3 Scoring engine enums and models
+# ---------------------------------------------------------------------------
+
+
+class MissingDataPolicy(StrEnum):
+    reweight_available = "reweight_available"
+    apply_prior = "apply_prior"
+    require_research = "require_research"
+    # mandatory and reduce_confidence_only deferred to a future milestone
+
+
+class FactorStatus(StrEnum):
+    present = "present"
+    absent = "absent"
+    insufficient = "insufficient"
+    degraded = "degraded"
+
+
+class PolicyStatus(StrEnum):
+    draft = "draft"
+    active = "active"
+    archived = "archived"
+
+
+class FactorResult(BaseModel):
+    """Internal result of a single factor computation. Not persisted directly."""
+
+    name: str
+    raw_score: float | None
+    status: FactorStatus
+    observation_ids: list[int] = Field(default_factory=list)
+    evidence_row_ids: list[int] = Field(default_factory=list)
+    notes: str | None = None
+
+
+class ScoringPolicy(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int | None = None
+    channel_id: int
+    version: int = Field(default=1, ge=1)
+    label: str = Field(min_length=1, max_length=200)
+    description: str | None = None
+
+    weight_trend_strength: float = Field(default=0.05, ge=0.0, le=1.0)
+    weight_audience_demand: float = Field(default=0.20, ge=0.0, le=1.0)
+    weight_competition: float = Field(default=0.15, ge=0.0, le=1.0)
+    weight_evergreen_value: float = Field(default=0.20, ge=0.0, le=1.0)
+    weight_audience_fit: float = Field(default=0.30, ge=0.0, le=1.0)
+    weight_content_novelty: float = Field(default=0.10, ge=0.0, le=1.0)
+
+    missing_trend_strength: MissingDataPolicy = MissingDataPolicy.reweight_available
+    missing_audience_demand: MissingDataPolicy = MissingDataPolicy.reweight_available
+    missing_competition: MissingDataPolicy = MissingDataPolicy.reweight_available
+    missing_evergreen_value: MissingDataPolicy = MissingDataPolicy.reweight_available
+    missing_audience_fit: MissingDataPolicy = MissingDataPolicy.require_research
+    missing_content_novelty: MissingDataPolicy = MissingDataPolicy.reweight_available
+
+    min_confidence_threshold: float = Field(default=0.40, ge=0.0, le=1.0)
+    freshness_decay_days: float = Field(default=7.0, gt=0.0)
+    max_corroboration_bonus: float = Field(default=0.10, ge=0.0, le=1.0)
+    corroboration_bonus_per_source: float = Field(default=0.05, ge=0.0, le=1.0)
+
+    status: PolicyStatus = PolicyStatus.draft
+    is_default: bool = False
+    activated_at: datetime | None = None
+    archived_at: datetime | None = None
+    created_at: datetime | None = None
+    created_by: str | None = None
+
+    @model_validator(mode="after")
+    def _weights_sum_to_one(self) -> ScoringPolicy:
+        total = (
+            self.weight_trend_strength
+            + self.weight_audience_demand
+            + self.weight_competition
+            + self.weight_evergreen_value
+            + self.weight_audience_fit
+            + self.weight_content_novelty
+        )
+        if abs(total - 1.0) > 1e-9:
+            raise ValueError(f"Factor weights must sum to 1.0, got {total:.10f}")
+        return self
+
+
+class OpportunityScore(BaseModel):
+    """Immutable scoring snapshot. Rows are never updated — always appended."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int | None = None
+    opportunity_id: int
+    scoring_policy_id: int
+    channel_profile_version_id: int
+
+    composite_score: float
+    confidence: float
+
+    score_trend_strength: float | None = None
+    score_audience_demand: float | None = None
+    score_competition: float | None = None
+    score_evergreen_value: float | None = None
+    score_audience_fit: float | None = None
+    score_content_novelty: float | None = None
+
+    status_trend_strength: FactorStatus = FactorStatus.absent
+    status_audience_demand: FactorStatus = FactorStatus.absent
+    status_competition: FactorStatus = FactorStatus.absent
+    status_evergreen_value: FactorStatus = FactorStatus.absent
+    status_audience_fit: FactorStatus = FactorStatus.absent
+    status_content_novelty: FactorStatus = FactorStatus.absent
+
+    eff_weight_trend_strength: float = 0.0
+    eff_weight_audience_demand: float = 0.0
+    eff_weight_competition: float = 0.0
+    eff_weight_evergreen_value: float = 0.0
+    eff_weight_audience_fit: float = 0.0
+    eff_weight_content_novelty: float = 0.0
+
+    observation_ids_json: str = "[]"
+    input_snapshot_json: str = "{}"
+    input_hash: str = ""
+
+    below_confidence_threshold: bool = False
+    requires_research: bool = False
+    scored_at: datetime | None = None
+    scorer_version: str = "1.0"
+
+    @property
+    def observation_ids(self) -> list[int]:
+        return json.loads(self.observation_ids_json)
+
+    @property
+    def input_snapshot(self) -> dict:
+        return json.loads(self.input_snapshot_json)
+
+
+class FactorContext(BaseModel):
+    """Immutable bundle passed to every factor function. Avoids global state."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    opportunity: Opportunity
+    profile: ChannelProfileVersion
+    observations: list[OpportunityObservation]
+    evidence: dict[int, list[OpportunitySourceEvidence]]
+    best_similarity: float | None = None
+    matched_opportunity_id: int | None = None
+    matched_normalized_topic: str | None = None

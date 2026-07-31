@@ -19,19 +19,24 @@ from app.intelligence.models import (
     ChannelProfileVersion,
     ContentStyle,
     DiscoveryRun,
+    FactorStatus,
     FormatRecommendation,
     LifecycleState,
     MaturityStage,
+    MissingDataPolicy,
     MonetizationStatus,
     OperatingMode,
     Opportunity,
     OpportunityObservation,
+    OpportunityScore,
     OpportunitySourceEvidence,
     OpportunityStateEvent,
     Platform,
+    PolicyStatus,
     PortfolioTargets,
     PrimaryFormat,
     RunStatus,
+    ScoringPolicy,
     SourceQualityTier,
     StrategicRole,
     VersionStatus,
@@ -1342,3 +1347,514 @@ def list_state_events(conn: sqlite3.Connection, opportunity_id: int) -> list[Opp
         (opportunity_id,),
     ).fetchall()
     return [_row_to_state_event(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Scoring policies
+# ---------------------------------------------------------------------------
+
+
+def _row_to_scoring_policy(row: sqlite3.Row) -> ScoringPolicy:
+    return ScoringPolicy(
+        id=row["id"],
+        channel_id=row["channel_id"],
+        version=row["version"],
+        label=row["label"],
+        description=row["description"],
+        weight_trend_strength=row["weight_trend_strength"],
+        weight_audience_demand=row["weight_audience_demand"],
+        weight_competition=row["weight_competition"],
+        weight_evergreen_value=row["weight_evergreen_value"],
+        weight_audience_fit=row["weight_audience_fit"],
+        weight_content_novelty=row["weight_content_novelty"],
+        missing_trend_strength=MissingDataPolicy(row["missing_trend_strength"]),
+        missing_audience_demand=MissingDataPolicy(row["missing_audience_demand"]),
+        missing_competition=MissingDataPolicy(row["missing_competition"]),
+        missing_evergreen_value=MissingDataPolicy(row["missing_evergreen_value"]),
+        missing_audience_fit=MissingDataPolicy(row["missing_audience_fit"]),
+        missing_content_novelty=MissingDataPolicy(row["missing_content_novelty"]),
+        min_confidence_threshold=row["min_confidence_threshold"],
+        freshness_decay_days=row["freshness_decay_days"],
+        max_corroboration_bonus=row["max_corroboration_bonus"],
+        corroboration_bonus_per_source=row["corroboration_bonus_per_source"],
+        status=PolicyStatus(row["status"]),
+        is_default=bool(row["is_default"]),
+        activated_at=datetime.fromisoformat(row["activated_at"]) if row["activated_at"] else None,
+        archived_at=datetime.fromisoformat(row["archived_at"]) if row["archived_at"] else None,
+        created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+        created_by=row["created_by"],
+    )
+
+
+def create_scoring_policy(conn: sqlite3.Connection, policy: ScoringPolicy) -> ScoringPolicy:
+    if policy.status != PolicyStatus.draft:
+        raise ValueError("Only draft policies can be created directly")
+    now = _now()
+    cur = conn.execute(
+        """INSERT INTO scoring_policies (
+            channel_id, version, label, description,
+            weight_trend_strength, weight_audience_demand, weight_competition,
+            weight_evergreen_value, weight_audience_fit, weight_content_novelty,
+            missing_trend_strength, missing_audience_demand, missing_competition,
+            missing_evergreen_value, missing_audience_fit, missing_content_novelty,
+            min_confidence_threshold, freshness_decay_days,
+            max_corroboration_bonus, corroboration_bonus_per_source,
+            status, is_default, activated_at, archived_at, created_at, created_by
+        ) VALUES (
+            ?, ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?,
+            ?, ?,
+            ?, ?, ?, ?, ?, ?
+        )""",
+        (
+            policy.channel_id,
+            policy.version,
+            policy.label,
+            policy.description,
+            policy.weight_trend_strength,
+            policy.weight_audience_demand,
+            policy.weight_competition,
+            policy.weight_evergreen_value,
+            policy.weight_audience_fit,
+            policy.weight_content_novelty,
+            policy.missing_trend_strength.value,
+            policy.missing_audience_demand.value,
+            policy.missing_competition.value,
+            policy.missing_evergreen_value.value,
+            policy.missing_audience_fit.value,
+            policy.missing_content_novelty.value,
+            policy.min_confidence_threshold,
+            policy.freshness_decay_days,
+            policy.max_corroboration_bonus,
+            policy.corroboration_bonus_per_source,
+            policy.status.value,
+            1 if policy.is_default else 0,
+            None,
+            None,
+            now,
+            policy.created_by,
+        ),
+    )
+    result = get_scoring_policy(conn, cur.lastrowid)
+    assert result is not None
+    return result
+
+
+def get_scoring_policy(conn: sqlite3.Connection, policy_id: int) -> ScoringPolicy | None:
+    row = conn.execute("SELECT * FROM scoring_policies WHERE id = ?", (policy_id,)).fetchone()
+    return _row_to_scoring_policy(row) if row else None
+
+
+def get_default_scoring_policy(conn: sqlite3.Connection, channel_id: int) -> ScoringPolicy | None:
+    row = conn.execute(
+        "SELECT * FROM scoring_policies WHERE channel_id = ? AND is_default = 1",
+        (channel_id,),
+    ).fetchone()
+    return _row_to_scoring_policy(row) if row else None
+
+
+def list_scoring_policies(conn: sqlite3.Connection, channel_id: int) -> list[ScoringPolicy]:
+    rows = conn.execute(
+        "SELECT * FROM scoring_policies WHERE channel_id = ? ORDER BY version ASC",
+        (channel_id,),
+    ).fetchall()
+    return [_row_to_scoring_policy(r) for r in rows]
+
+
+def update_scoring_policy(conn: sqlite3.Connection, policy_id: int, **kwargs: object) -> None:
+    """Update mutable fields on a draft policy. Raises ValueError for non-draft policies."""
+    row = conn.execute("SELECT status FROM scoring_policies WHERE id = ?", (policy_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Scoring policy {policy_id} not found")
+    if row["status"] != "draft":
+        raise ValueError(
+            f"Policy {policy_id} has status '{row['status']}'; only draft policies can be updated. "
+            "Use clone_scoring_policy() to create an editable copy of an active policy."
+        )
+
+    _UPDATABLE = {
+        "label", "description",
+        "weight_trend_strength", "weight_audience_demand", "weight_competition",
+        "weight_evergreen_value", "weight_audience_fit", "weight_content_novelty",
+        "missing_trend_strength", "missing_audience_demand", "missing_competition",
+        "missing_evergreen_value", "missing_audience_fit", "missing_content_novelty",
+        "min_confidence_threshold", "freshness_decay_days",
+        "max_corroboration_bonus", "corroboration_bonus_per_source",
+    }
+    _MISSING_FIELDS = {
+        "missing_trend_strength", "missing_audience_demand", "missing_competition",
+        "missing_evergreen_value", "missing_audience_fit", "missing_content_novelty",
+    }
+
+    unknown = set(kwargs) - _UPDATABLE
+    if unknown:
+        raise ValueError(f"Cannot update fields: {sorted(unknown)}")
+
+    # Coerce MissingDataPolicy values to their string representation
+    params: dict[str, object] = {}
+    for k, v in kwargs.items():
+        if k in _MISSING_FIELDS and isinstance(v, MissingDataPolicy):
+            params[k] = v.value
+        else:
+            params[k] = v
+
+    # Re-validate weight sum if any weight changed
+    weight_keys = {
+        "weight_trend_strength", "weight_audience_demand", "weight_competition",
+        "weight_evergreen_value", "weight_audience_fit", "weight_content_novelty",
+    }
+    if weight_keys & set(params):
+        current = get_scoring_policy(conn, policy_id)
+        assert current is not None
+        updated = current.model_copy(update=params)
+        # model_validator fires in model_copy if weights changed
+        _ = ScoringPolicy(**updated.model_dump())
+
+    fields = [f"{k} = ?" for k in params]
+    values = list(params.values()) + [policy_id]
+    conn.execute(  # noqa: S608
+        f"UPDATE scoring_policies SET {', '.join(fields)} WHERE id = ?",
+        values,
+    )
+
+
+def activate_scoring_policy(conn: sqlite3.Connection, policy_id: int) -> None:
+    """
+    Make the policy the channel default.
+    - draft → frozen (status='active'), becomes default
+    - active non-default → becomes default (content already frozen)
+    - active already-default → idempotent no-op
+    - archived → raises ValueError
+    """
+    row = conn.execute("SELECT * FROM scoring_policies WHERE id = ?", (policy_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Scoring policy {policy_id} not found")
+    if row["status"] == "archived":
+        raise ValueError(f"Policy {policy_id} is archived and cannot be activated")
+
+    # Idempotent: already the default
+    if row["is_default"] == 1 and row["status"] == "active":
+        return
+
+    channel_id = row["channel_id"]
+    now = _now()
+
+    # Clear prior default for this channel
+    conn.execute(
+        "UPDATE scoring_policies SET is_default = 0 WHERE channel_id = ? AND is_default = 1",
+        (channel_id,),
+    )
+
+    # Freeze content if transitioning from draft; update is_default regardless
+    activated_at = row["activated_at"] if row["activated_at"] else now
+    conn.execute(
+        """UPDATE scoring_policies
+           SET is_default = 1, status = 'active', activated_at = ?
+           WHERE id = ?""",
+        (activated_at, policy_id),
+    )
+
+
+def clone_scoring_policy(
+    conn: sqlite3.Connection, policy_id: int, label: str
+) -> ScoringPolicy:
+    """Clone any non-archived policy into a new draft at the next version number."""
+    source = get_scoring_policy(conn, policy_id)
+    if source is None:
+        raise ValueError(f"Scoring policy {policy_id} not found")
+
+    max_row = conn.execute(
+        "SELECT MAX(version) FROM scoring_policies WHERE channel_id = ?",
+        (source.channel_id,),
+    ).fetchone()
+    next_version = (max_row[0] or 0) + 1
+
+    clone = ScoringPolicy(
+        channel_id=source.channel_id,
+        version=next_version,
+        label=label,
+        description=source.description,
+        weight_trend_strength=source.weight_trend_strength,
+        weight_audience_demand=source.weight_audience_demand,
+        weight_competition=source.weight_competition,
+        weight_evergreen_value=source.weight_evergreen_value,
+        weight_audience_fit=source.weight_audience_fit,
+        weight_content_novelty=source.weight_content_novelty,
+        missing_trend_strength=source.missing_trend_strength,
+        missing_audience_demand=source.missing_audience_demand,
+        missing_competition=source.missing_competition,
+        missing_evergreen_value=source.missing_evergreen_value,
+        missing_audience_fit=source.missing_audience_fit,
+        missing_content_novelty=source.missing_content_novelty,
+        min_confidence_threshold=source.min_confidence_threshold,
+        freshness_decay_days=source.freshness_decay_days,
+        max_corroboration_bonus=source.max_corroboration_bonus,
+        corroboration_bonus_per_source=source.corroboration_bonus_per_source,
+        status=PolicyStatus.draft,
+        is_default=False,
+    )
+    return create_scoring_policy(conn, clone)
+
+
+def archive_scoring_policy(conn: sqlite3.Connection, policy_id: int) -> None:
+    row = conn.execute("SELECT * FROM scoring_policies WHERE id = ?", (policy_id,)).fetchone()
+    if row is None:
+        raise ValueError(f"Scoring policy {policy_id} not found")
+    if row["status"] == "archived":
+        raise ValueError(f"Policy {policy_id} is already archived")
+    if row["is_default"] == 1:
+        raise ValueError(
+            f"Policy {policy_id} is the current default and cannot be archived. "
+            "Activate another policy first."
+        )
+    conn.execute(
+        "UPDATE scoring_policies"
+        " SET status = 'archived', archived_at = ?, is_default = 0 WHERE id = ?",
+        (_now(), policy_id),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Opportunity scores
+# ---------------------------------------------------------------------------
+
+
+def _row_to_opportunity_score(row: sqlite3.Row) -> OpportunityScore:
+    return OpportunityScore(
+        id=row["id"],
+        opportunity_id=row["opportunity_id"],
+        scoring_policy_id=row["scoring_policy_id"],
+        channel_profile_version_id=row["channel_profile_version_id"],
+        composite_score=row["composite_score"],
+        confidence=row["confidence"],
+        score_trend_strength=row["score_trend_strength"],
+        score_audience_demand=row["score_audience_demand"],
+        score_competition=row["score_competition"],
+        score_evergreen_value=row["score_evergreen_value"],
+        score_audience_fit=row["score_audience_fit"],
+        score_content_novelty=row["score_content_novelty"],
+        status_trend_strength=FactorStatus(row["status_trend_strength"]),
+        status_audience_demand=FactorStatus(row["status_audience_demand"]),
+        status_competition=FactorStatus(row["status_competition"]),
+        status_evergreen_value=FactorStatus(row["status_evergreen_value"]),
+        status_audience_fit=FactorStatus(row["status_audience_fit"]),
+        status_content_novelty=FactorStatus(row["status_content_novelty"]),
+        eff_weight_trend_strength=row["eff_weight_trend_strength"],
+        eff_weight_audience_demand=row["eff_weight_audience_demand"],
+        eff_weight_competition=row["eff_weight_competition"],
+        eff_weight_evergreen_value=row["eff_weight_evergreen_value"],
+        eff_weight_audience_fit=row["eff_weight_audience_fit"],
+        eff_weight_content_novelty=row["eff_weight_content_novelty"],
+        observation_ids_json=row["observation_ids_json"],
+        input_snapshot_json=row["input_snapshot_json"],
+        input_hash=row["input_hash"],
+        below_confidence_threshold=bool(row["below_confidence_threshold"]),
+        requires_research=bool(row["requires_research"]),
+        scored_at=datetime.fromisoformat(row["scored_at"]) if row["scored_at"] else None,
+        scorer_version=row["scorer_version"],
+    )
+
+
+def create_opportunity_score(
+    conn: sqlite3.Connection, score: OpportunityScore
+) -> OpportunityScore:
+    """Append-only insert. Never updates an existing row."""
+    now = _now()
+    cur = conn.execute(
+        """INSERT INTO opportunity_scores (
+            opportunity_id, scoring_policy_id, channel_profile_version_id,
+            composite_score, confidence,
+            score_trend_strength, score_audience_demand, score_competition,
+            score_evergreen_value, score_audience_fit, score_content_novelty,
+            status_trend_strength, status_audience_demand, status_competition,
+            status_evergreen_value, status_audience_fit, status_content_novelty,
+            eff_weight_trend_strength, eff_weight_audience_demand, eff_weight_competition,
+            eff_weight_evergreen_value, eff_weight_audience_fit, eff_weight_content_novelty,
+            observation_ids_json, input_snapshot_json, input_hash,
+            below_confidence_threshold, requires_research,
+            scored_at, scorer_version
+        ) VALUES (
+            ?, ?, ?,
+            ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?, ?,
+            ?, ?,
+            ?, ?
+        )""",
+        (
+            score.opportunity_id,
+            score.scoring_policy_id,
+            score.channel_profile_version_id,
+            score.composite_score,
+            score.confidence,
+            score.score_trend_strength,
+            score.score_audience_demand,
+            score.score_competition,
+            score.score_evergreen_value,
+            score.score_audience_fit,
+            score.score_content_novelty,
+            score.status_trend_strength.value,
+            score.status_audience_demand.value,
+            score.status_competition.value,
+            score.status_evergreen_value.value,
+            score.status_audience_fit.value,
+            score.status_content_novelty.value,
+            score.eff_weight_trend_strength,
+            score.eff_weight_audience_demand,
+            score.eff_weight_competition,
+            score.eff_weight_evergreen_value,
+            score.eff_weight_audience_fit,
+            score.eff_weight_content_novelty,
+            score.observation_ids_json,
+            score.input_snapshot_json,
+            score.input_hash,
+            1 if score.below_confidence_threshold else 0,
+            1 if score.requires_research else 0,
+            now,
+            score.scorer_version,
+        ),
+    )
+    result = get_opportunity_score(conn, cur.lastrowid)
+    assert result is not None
+    return result
+
+
+def get_opportunity_score(conn: sqlite3.Connection, score_id: int) -> OpportunityScore | None:
+    row = conn.execute(
+        "SELECT * FROM opportunity_scores WHERE id = ?", (score_id,)
+    ).fetchone()
+    return _row_to_opportunity_score(row) if row else None
+
+
+def get_latest_score(
+    conn: sqlite3.Connection,
+    opportunity_id: int,
+    scoring_policy_id: int,
+) -> OpportunityScore | None:
+    row = conn.execute(
+        """SELECT * FROM opportunity_scores
+           WHERE opportunity_id = ? AND scoring_policy_id = ?
+           ORDER BY scored_at DESC, id DESC
+           LIMIT 1""",
+        (opportunity_id, scoring_policy_id),
+    ).fetchone()
+    return _row_to_opportunity_score(row) if row else None
+
+
+def list_scores_for_opportunity(
+    conn: sqlite3.Connection,
+    opportunity_id: int,
+    scoring_policy_id: int | None = None,
+) -> list[OpportunityScore]:
+    if scoring_policy_id is not None:
+        rows = conn.execute(
+            """SELECT * FROM opportunity_scores
+               WHERE opportunity_id = ? AND scoring_policy_id = ?
+               ORDER BY scored_at DESC, id DESC""",
+            (opportunity_id, scoring_policy_id),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT * FROM opportunity_scores
+               WHERE opportunity_id = ?
+               ORDER BY scored_at DESC, id DESC""",
+            (opportunity_id,),
+        ).fetchall()
+    return [_row_to_opportunity_score(r) for r in rows]
+
+
+def list_scored_opportunities(
+    conn: sqlite3.Connection,
+    channel_id: int,
+    scoring_policy_id: int,
+    *,
+    min_score: float | None = None,
+    min_confidence: float | None = None,
+    limit: int = 50,
+) -> list[tuple[Opportunity, OpportunityScore]]:
+    """Return (Opportunity, latest OpportunityScore) pairs, ordered by composite_score DESC."""
+    score_filter = ""
+    params: list[object] = [scoring_policy_id, scoring_policy_id, channel_id]
+    if min_score is not None:
+        score_filter += " AND s.composite_score >= ?"
+        params.append(min_score)
+    if min_confidence is not None:
+        score_filter += " AND s.confidence >= ?"
+        params.append(min_confidence)
+    params.append(limit)
+
+    rows = conn.execute(
+        f"""
+        SELECT o.id AS opp_id, s.id AS score_id
+        FROM opportunities o
+        JOIN opportunity_scores s ON s.opportunity_id = o.id
+        WHERE s.scoring_policy_id = ?
+          AND NOT EXISTS (
+              SELECT 1 FROM opportunity_scores s2
+              WHERE s2.opportunity_id = s.opportunity_id
+                AND s2.scoring_policy_id = ?
+                AND (s2.scored_at > s.scored_at
+                     OR (s2.scored_at = s.scored_at AND s2.id > s.id))
+          )
+          AND o.channel_id = ?
+          {score_filter}
+        ORDER BY s.composite_score DESC, s.confidence DESC
+        LIMIT ?
+        """,  # noqa: S608
+        params,
+    ).fetchall()
+
+    results = []
+    for row in rows:
+        opp = get_opportunity(conn, row["opp_id"])
+        score_obj = get_opportunity_score(conn, row["score_id"])
+        if opp and score_obj:
+            results.append((opp, score_obj))
+    return results
+
+
+def get_max_similarity_to_existing(
+    conn: sqlite3.Connection,
+    opportunity_id: int,
+    channel_id: int,
+) -> tuple[float, int, str] | None:
+    """
+    Return (best_similarity, matched_opportunity_id, matched_normalized_topic) among all
+    non-rejected, non-archived opportunities in the channel, excluding the current opportunity.
+    Returns None if no comparable opportunities exist (first in channel).
+    """
+    from app.intelligence.dedup import jaccard_similarity
+
+    rows = conn.execute(
+        """SELECT id, normalized_topic FROM opportunities
+           WHERE channel_id = ?
+             AND id != ?
+             AND current_lifecycle_state NOT IN ('rejected', 'archived')""",
+        (channel_id, opportunity_id),
+    ).fetchall()
+
+    if not rows:
+        return None
+
+    opp_row = conn.execute(
+        "SELECT normalized_topic FROM opportunities WHERE id = ?", (opportunity_id,)
+    ).fetchone()
+    if opp_row is None:
+        return None
+
+    query_topic = opp_row["normalized_topic"]
+    best: tuple[float, int, str] | None = None
+    for row in rows:
+        sim = jaccard_similarity(query_topic, row["normalized_topic"])
+        if best is None or sim > best[0]:
+            best = (sim, row["id"], row["normalized_topic"])
+    return best

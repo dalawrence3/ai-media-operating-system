@@ -549,3 +549,110 @@ Black + Flake8 + isort separately.
 
 **Reasoning:** Ruff reimplements all three in one fast tool with one config
 block. No benefit to three tools for the same outcome.
+
+---
+
+## Phase 3 Milestone 3.3: Versioned Scoring and Confidence Engine (D-M3.3-1 through D-M3.3-8)
+
+**D-M3.3-1 — Score rows are append-only; skip-on-rescore uses a 4-tuple + input_hash match**
+
+**Decision:** `opportunity_scores` is an insert-only table. Re-scoring an
+opportunity with identical inputs returns the existing score row unchanged.
+The 4-tuple key is `(opportunity_id, scoring_policy_id,
+channel_profile_version_id, input_hash)`. `--force` bypasses the check and
+always writes a new row.
+
+**Reasoning:** Immutable historical records make score comparability
+reliable. The 4-tuple collapses identical scoring runs without discarding
+prior scores produced under different policies or profile versions.
+
+---
+
+**D-M3.3-2 — Activated policy content is immutable; update is draft-only**
+
+**Decision:** Once a `ScoringPolicy` transitions from `draft` to `active`,
+its weights and missing-data policy fields are frozen. `update_scoring_policy`
+raises `ValueError` for any non-draft policy.
+
+**Reasoning:** Score rows store `scoring_policy_id`, not a copy of the
+weights at the time of scoring. Mutable active policies would make the FK
+reference ambiguous for historical interpretation.
+
+---
+
+**D-M3.3-3 — `MissingDataPolicy.reweight_available` and `require_research` both enter the redistribution pool**
+
+**Decision:** Absent factors under `reweight_available` *and* under
+`require_research` both contribute their nominal weight to the redistribution
+pool. `apply_prior` retains its effective weight and contributes a fixed
+score of 0.5.
+
+**Reasoning:** `require_research` signals a data gap that must be surfaced
+(via the `requires_research` flag) without silently zeroing the composite
+score. The redistribution pool ensures the remaining factors fill the full
+0–1 scoring range while the flag alerts callers to the gap.
+
+---
+
+**D-M3.3-4 — Deterministic latest-score rule: ORDER BY scored_at DESC, id DESC**
+
+**Decision:** Every function that retrieves "the latest score" uses a
+correlated `NOT EXISTS` subquery with `ORDER BY scored_at DESC, id DESC`
+tiebreaker. `list_scored_opportunities` uses the same ORDER clause in its
+correlated subquery so deduplication is deterministic even if two rows share
+a timestamp.
+
+**Reasoning:** Wall-clock ties are possible in tests (same second) and in
+batch scoring. The auto-increment `id` provides a stable tiebreaker without
+requiring a higher-resolution timestamp column.
+
+---
+
+**D-M3.3-5 — `audience_fit` absent when niche token set is empty; zero overlap returns score 0.0 (present)**
+
+**Decision:** If `normalize_topic(primary_niche)` produces an empty token
+set, `compute_audience_fit` returns `FactorStatus.absent`. A non-empty niche
+with zero keyword overlap returns `FactorStatus.present` with `raw_score=0.0`.
+
+**Reasoning:** Empty niche tokens mean the operator has not configured a
+niche (or configured only stopwords). This is a *data-quality gap*, not a
+score of zero. Zero-overlap with a configured niche is legitimate content
+that genuinely does not fit the channel — the score should reflect that.
+
+---
+
+**D-M3.3-6 — Input snapshot excludes the policy; policy_id is compared separately**
+
+**Decision:** `build_input_snapshot` does not serialize the `ScoringPolicy`
+object. The skip-on-rescore check compares `policy_id` as a separate column
+alongside `input_hash`.
+
+**Reasoning:** Active policies are immutable, so their content cannot change
+between two score runs with the same `policy_id`. Serializing the policy
+would add weight to the hash computation and snapshot storage for no
+additional correctness benefit.
+
+---
+
+**D-M3.3-7 — SCHEMA_VERSION bumped to 5; all migration paths execute v5 DDL**
+
+**Decision:** `SCHEMA_VERSION = 5` adds `scoring_policies` and
+`opportunity_scores`. Every prior migration path (v0–v4 → v5) executes the
+same `_DDL_V5_SCORING` block.
+
+**Reasoning:** A single DDL block for v5 is simpler and easier to audit
+than branched DDL. Fresh databases also get v5 tables on first open.
+
+---
+
+**D-M3.3-8 — `get_max_similarity_to_existing` is a dedicated function, not reuse of `find_existing_opportunity`**
+
+**Decision:** Similarity scoring uses a separate `get_max_similarity_to_existing`
+function that scans all non-rejected/archived sibling opportunities and
+returns `(similarity_score, opportunity_id, normalized_topic) | None`.
+
+**Reasoning:** `find_existing_opportunity` implements duplicate detection for
+ingestion (strict deduplication semantics). Scoring novelty requires a
+different query scope (all siblings, not just duplicates) and a different
+return shape. Reusing the same function would have coupled two distinct
+concerns.

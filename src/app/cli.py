@@ -29,6 +29,7 @@ from app.core.repository import (
     update_topic,
 )
 from app.intelligence.cli import channels_app, discover_app
+from app.intelligence.scoring_cli import scoring_app
 
 app = typer.Typer(
     name="ace",
@@ -37,6 +38,7 @@ app = typer.Typer(
 )
 app.add_typer(channels_app, name="channels")
 app.add_typer(discover_app, name="discover")
+app.add_typer(scoring_app, name="intelligence")
 logger = get_logger(__name__)
 
 

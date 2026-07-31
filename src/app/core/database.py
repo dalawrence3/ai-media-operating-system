@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -301,6 +301,82 @@ CREATE TABLE IF NOT EXISTS opportunity_state_events (
 """
 
 
+# Phase 5 DDL — versioned scoring policies and opportunity scores.
+# Creation order: scoring_policies → opportunity_scores
+_DDL_V5_SCORING = """
+CREATE TABLE IF NOT EXISTS scoring_policies (
+    id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id                      INTEGER NOT NULL REFERENCES channels(id),
+    version                         INTEGER NOT NULL,
+    label                           TEXT    NOT NULL,
+    description                     TEXT,
+    weight_trend_strength           REAL    NOT NULL DEFAULT 0.05,
+    weight_audience_demand          REAL    NOT NULL DEFAULT 0.20,
+    weight_competition              REAL    NOT NULL DEFAULT 0.15,
+    weight_evergreen_value          REAL    NOT NULL DEFAULT 0.20,
+    weight_audience_fit             REAL    NOT NULL DEFAULT 0.30,
+    weight_content_novelty          REAL    NOT NULL DEFAULT 0.10,
+    missing_trend_strength          TEXT    NOT NULL DEFAULT 'reweight_available',
+    missing_audience_demand         TEXT    NOT NULL DEFAULT 'reweight_available',
+    missing_competition             TEXT    NOT NULL DEFAULT 'reweight_available',
+    missing_evergreen_value         TEXT    NOT NULL DEFAULT 'reweight_available',
+    missing_audience_fit            TEXT    NOT NULL DEFAULT 'require_research',
+    missing_content_novelty         TEXT    NOT NULL DEFAULT 'reweight_available',
+    min_confidence_threshold        REAL    NOT NULL DEFAULT 0.40,
+    freshness_decay_days            REAL    NOT NULL DEFAULT 7.0,
+    max_corroboration_bonus         REAL    NOT NULL DEFAULT 0.10,
+    corroboration_bonus_per_source  REAL    NOT NULL DEFAULT 0.05,
+    status                          TEXT    NOT NULL DEFAULT 'draft',
+    is_default                      INTEGER NOT NULL DEFAULT 0,
+    activated_at                    TEXT,
+    archived_at                     TEXT,
+    created_at                      TEXT    NOT NULL,
+    created_by                      TEXT,
+    UNIQUE(channel_id, version)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS scoring_policies_one_default_per_channel
+    ON scoring_policies(channel_id) WHERE is_default = 1;
+
+CREATE TABLE IF NOT EXISTS opportunity_scores (
+    id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+    opportunity_id                  INTEGER NOT NULL REFERENCES opportunities(id),
+    scoring_policy_id               INTEGER NOT NULL REFERENCES scoring_policies(id),
+    channel_profile_version_id      INTEGER NOT NULL REFERENCES channel_profile_versions(id),
+    composite_score                 REAL    NOT NULL,
+    confidence                      REAL    NOT NULL,
+    score_trend_strength            REAL,
+    score_audience_demand           REAL,
+    score_competition               REAL,
+    score_evergreen_value           REAL,
+    score_audience_fit              REAL,
+    score_content_novelty           REAL,
+    status_trend_strength           TEXT    NOT NULL DEFAULT 'absent',
+    status_audience_demand          TEXT    NOT NULL DEFAULT 'absent',
+    status_competition              TEXT    NOT NULL DEFAULT 'absent',
+    status_evergreen_value          TEXT    NOT NULL DEFAULT 'absent',
+    status_audience_fit             TEXT    NOT NULL DEFAULT 'absent',
+    status_content_novelty          TEXT    NOT NULL DEFAULT 'absent',
+    eff_weight_trend_strength       REAL    NOT NULL,
+    eff_weight_audience_demand      REAL    NOT NULL,
+    eff_weight_competition          REAL    NOT NULL,
+    eff_weight_evergreen_value      REAL    NOT NULL,
+    eff_weight_audience_fit         REAL    NOT NULL,
+    eff_weight_content_novelty      REAL    NOT NULL,
+    observation_ids_json            TEXT    NOT NULL DEFAULT '[]',
+    input_snapshot_json             TEXT    NOT NULL DEFAULT '{}',
+    input_hash                      TEXT    NOT NULL,
+    below_confidence_threshold      INTEGER NOT NULL DEFAULT 0,
+    requires_research               INTEGER NOT NULL DEFAULT 0,
+    scored_at                       TEXT    NOT NULL,
+    scorer_version                  TEXT    NOT NULL DEFAULT '1.0'
+);
+
+CREATE INDEX IF NOT EXISTS opportunity_scores_opp_policy
+    ON opportunity_scores(opportunity_id, scoring_policy_id, scored_at DESC, id DESC);
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -327,6 +403,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V2)
         conn.executescript(_DDL_V3)
         conn.executescript(_DDL_V4_NEW_TABLES)
+        conn.executescript(_DDL_V5_SCORING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -335,6 +412,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V2)
         conn.executescript(_DDL_V3)
         conn.executescript(_DDL_V4_NEW_TABLES)
+        conn.executescript(_DDL_V5_SCORING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -342,12 +420,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 2 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V3)
         conn.executescript(_DDL_V4_NEW_TABLES)
+        conn.executescript(_DDL_V5_SCORING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 3:
         logger.info("Migrating schema from version 3 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V4_NEW_TABLES)
+        conn.executescript(_DDL_V5_SCORING)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 4:
+        logger.info("Migrating schema from version 4 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V5_SCORING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
