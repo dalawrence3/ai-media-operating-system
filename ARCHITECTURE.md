@@ -25,12 +25,12 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 3 complete — M3.1–M3.4)
+## Current state (Phase 4 M4.1 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=6): `topics`, `sources`, `scripts`,
-  `runs`, `ai_calls`, plus all Phase 3 intelligence tables.
+- Versioned schema (SCHEMA_VERSION=7): `topics`, `sources`, `scripts`,
+  `runs`, `ai_calls`, Phase 3 intelligence tables, plus `source_contents`.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
 - Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
@@ -86,6 +86,23 @@ optional adapters after YouTube is stable.
     promoted)
   - CLI: `ace topics promote <opportunity_id> [--angle] [--operator]
     [--allow-unscored]`
+- Phase 4 Milestone 4.1 — Source Ingestion Foundation:
+  - New DB table: `source_contents` (append-only; one row per fetch/ingest
+    attempt; never updated; `fetch_status` ok/failed, `extraction_status`
+    ok/partial/failed)
+  - `src/app/research/` package: `constants`, `errors`, `hashing`, `models`,
+    `validate`, `extract`, `quality`, `fetch`, `repository`
+  - SSRF protection: pre-resolution via `socket.getaddrinfo` + 23 blocked
+    IPv4/IPv6 ranges (RFC 1918, loopback, link-local, multicast, etc.)
+  - HTTPS→HTTP redirect blocking: raises `SecurityError` (not a warning)
+  - HTML extraction: BeautifulSoup4 with html.parser; title/author/date
+  - PDF extraction: pypdf; 200-page cap; page separators; partial on error
+  - Quality scoring: 7 deterministic factors, weights summing to 1.0
+  - `retrieval_hash`: SHA-256 of raw fetched bytes
+  - `normalized_text_hash`: SHA-256 of NFC-normalized extracted text
+  - Idempotency: compare `normalized_text_hash`; skip if unchanged
+  - CLI: `ace sources fetch <url>`, `ace sources ingest-file <path>`,
+    `ace sources quality <source_id>`
 - Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`,
   `discover`, `intelligence` subcommand groups and diagnostic `version`,
   `doctor` commands.
@@ -132,11 +149,16 @@ src/app/
 │       ├── weights.py        # Weight normalization and rebalancing
 │       ├── confidence.py     # Confidence calculation
 │       └── snapshot.py       # Score snapshot serialization
-├── research/                 # Phase 4: Source management and fact checking
-│   ├── ingest.py             # URL fetch, file read, note capture
-│   ├── extract.py            # LLM claim extraction
-│   ├── quality.py            # Source quality scoring
-│   └── provenance.py         # Citation and rights records
+├── research/                 # Phase 4: Source management (M4.1 implemented)
+│   ├── constants.py          # Named limits and configuration constants
+│   ├── errors.py             # ResearchError, SecurityError, FetchError, ExtractionError
+│   ├── hashing.py            # SHA-256 helpers; normalize_for_hash (NFC)
+│   ├── models.py             # SourceContent Pydantic model + enums
+│   ├── validate.py           # SSRF/scheme URL validation; file-path validation
+│   ├── extract.py            # HTML (BS4), PDF (pypdf), plaintext, markdown extraction
+│   ├── quality.py            # Deterministic 7-factor quality scorer
+│   ├── fetch.py              # HTTP acquisition with redirect and size enforcement
+│   └── repository.py         # get_or_create_source, create/get source_contents
 ├── content/                  # Phase 5: Content generation
 │   ├── brief.py              # Content brief assembly
 │   ├── hooks.py              # Hook generation and scoring
@@ -195,8 +217,12 @@ Phase 3 M3.3 tables: `scoring_policies`, `opportunity_scores`
 Phase 3 M3.4: `topics.promoted_opportunity_id` column (nullable FK →
 opportunities); partial unique index `uq_topics_promoted_opportunity`
 
+Phase 4 M4.1: `source_contents` table — append-only per-attempt acquisition
+and extraction records; indexes `sc_source_id` and `sc_normalized_text_hash`
+
 Planned additions per phase:
-- Phase 4: extend `sources`; add `claims`, `asset_rights`
+- Phase 4 M4.2: `claims`, `claim_extraction_runs` (deferred; requires LLM)
+- Phase 5: extend `scripts`; add `hooks`, `metadata_drafts`
 - Phase 5: extend `scripts`; add `hooks`, `metadata_drafts`
 - Phase 6: `narrations`, `captions`, `tts_calls`
 - Phase 7: `assets`, `scene_manifests`

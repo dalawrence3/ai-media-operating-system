@@ -239,6 +239,369 @@ def sources_delete(
     typer.echo(f"Source {source_id} deleted.")
 
 
+@sources_app.command("fetch")
+def sources_fetch(
+    url: Annotated[str, typer.Argument(help="URL to fetch.")],
+    topic_id: Annotated[int, typer.Option("--topic", "-t", help="Parent topic ID.")],
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-fetch even if content is unchanged.")
+    ] = False,
+) -> None:
+    """Fetch a URL, extract content, and compute a quality score."""
+    from datetime import UTC, datetime
+
+    from app.research.errors import FetchError, SecurityError
+    from app.research.extract import extract_html, extract_text
+    from app.research.fetch import fetch_url
+    from app.research.hashing import HASH_ALGORITHM, normalize_for_hash, sha256_hex
+    from app.research.models import ExtractionStatus, FetchStatus
+    from app.research.quality import score_quality
+    from app.research.repository import (
+        create_source_content,
+        get_latest_source_content,
+        get_or_create_source,
+    )
+    from app.research.validate import validate_url
+
+    conn = _get_db()
+
+    # 1. Validate topic exists
+    from app.core.repository import get_topic
+
+    if get_topic(conn, topic_id) is None:
+        typer.echo(f"Error: Topic {topic_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    # 2–5. URL validation (scheme, userinfo, SSRF)
+    try:
+        validate_url(url)
+    except SecurityError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    # 6. Get or create Source identity (only after validation passes)
+    from app.core.models import SourceKind
+
+    source, _created = get_or_create_source(conn, topic_id, SourceKind.url, url)
+
+    # 7. HTTP fetch
+    fetched_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+    try:
+        fetch_result = fetch_url(url)
+    except SecurityError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    except FetchError as exc:
+        create_source_content(
+            conn,
+            source_id=source.id,  # type: ignore[arg-type]
+            fetch_status=FetchStatus.failed,
+            extraction_status=ExtractionStatus.failed,
+            fetched_at=fetched_at,
+            http_status=exc.http_status,
+            extraction_error=str(exc),
+        )
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    retrieval_hash = sha256_hex(fetch_result.content)
+
+    # Determine MIME type and extract text
+    mime = (fetch_result.mime_type or "").lower()
+    if "pdf" in mime:
+        from app.research.extract import extract_pdf
+        result = extract_pdf(fetch_result.content)
+    elif mime.startswith("text/plain"):
+        result = extract_text(fetch_result.content)
+    else:
+        result = extract_html(fetch_result.content, url=fetch_result.canonical_url)
+
+    # Hashes
+    normalized_hash: str | None = None
+    if result.raw_text:
+        normalized_hash = sha256_hex(normalize_for_hash(result.raw_text))
+
+    # Idempotency: compare normalized_text_hash with latest successful content
+    if not force and normalized_hash is not None:
+        latest = get_latest_source_content(conn, source.id, require_successful=True)  # type: ignore[arg-type]
+        if latest and latest.normalized_text_hash == normalized_hash:
+            typer.echo(
+                f"Source {source.id}: content unchanged (hash match). "
+                "Use --force to re-fetch."
+            )
+            return
+
+    # Determine fetch/extraction status and exit code
+    if result.raw_text is None:
+        fetch_status = FetchStatus.ok
+        extraction_status = ExtractionStatus.failed
+    elif result.is_partial or result.extraction_error:
+        fetch_status = FetchStatus.ok
+        extraction_status = ExtractionStatus.partial
+    else:
+        fetch_status = FetchStatus.ok
+        extraction_status = ExtractionStatus.ok
+
+    # Quality scoring (only when there is usable text)
+    quality_score: float | None = None
+    quality_factors_json: str | None = None
+    quality_scorer_version: str | None = None
+    if result.raw_text:
+        from app.research.models import SourceContent
+
+        sc_temp = SourceContent(
+            source_id=source.id,  # type: ignore[arg-type]
+            fetch_status=fetch_status,
+            extraction_status=extraction_status,
+            fetched_at=datetime.now(UTC),
+            raw_text=result.raw_text,
+            word_count=result.word_count,
+            author=result.author,
+            published_at=result.published_at,
+            domain_type=result.domain_type,
+            suspected_truncation=result.suspected_truncation,
+        )
+        qr = score_quality(sc_temp)
+        quality_score = qr.score
+        quality_factors_json = qr.factors_json
+        quality_scorer_version = qr.scorer_version
+
+    # 8. Persist SourceContent
+    create_source_content(
+        conn,
+        source_id=source.id,  # type: ignore[arg-type]
+        fetch_status=fetch_status,
+        extraction_status=extraction_status,
+        http_status=fetch_result.http_status,
+        canonical_url=fetch_result.canonical_url,
+        mime_type=fetch_result.mime_type,
+        fetched_at=fetched_at,
+        raw_text=result.raw_text,
+        retrieval_hash=retrieval_hash,
+        normalized_text_hash=normalized_hash,
+        hash_algorithm=HASH_ALGORITHM,
+        word_count=result.word_count,
+        title=result.title,
+        author=result.author,
+        published_at=result.published_at,
+        domain_type=result.domain_type.value if result.domain_type else None,
+        extraction_method=result.extraction_method.value if result.extraction_method else None,
+        extraction_error=result.extraction_error,
+        suspected_truncation=result.suspected_truncation,
+        quality_score=quality_score,
+        quality_factors_json=quality_factors_json,
+        quality_scorer_version=quality_scorer_version,
+    )
+
+    if extraction_status == ExtractionStatus.failed:
+        typer.echo(
+            f"Error: Source {source.id} created but extraction failed: "
+            f"{result.extraction_error}",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    host = fetch_result.canonical_url.split("/")[2] if "/" in fetch_result.canonical_url else url
+    words = f"{result.word_count:,}" if result.word_count else "?"
+    quality_str = f"{quality_score:.2f}" if quality_score is not None else "?"
+
+    if extraction_status == ExtractionStatus.partial:
+        typer.echo(
+            f"Warning: partial extraction — {result.extraction_error}", err=True
+        )
+
+    typer.echo(
+        f"Source {source.id}: fetched ({words} words, quality: {quality_str}) — {host}"
+    )
+
+
+@sources_app.command("ingest-file")
+def sources_ingest_file(
+    path: Annotated[str, typer.Argument(help="Local file path to ingest.")],
+    topic_id: Annotated[int, typer.Option("--topic", "-t", help="Parent topic ID.")],
+    force: Annotated[
+        bool, typer.Option("--force", help="Re-ingest even if content is unchanged.")
+    ] = False,
+) -> None:
+    """Read a local file, extract content, and compute a quality score."""
+    from datetime import UTC, datetime
+
+    from app.research.errors import SecurityError
+    from app.research.extract import extract_markdown, extract_pdf, extract_text
+    from app.research.hashing import HASH_ALGORITHM, normalize_for_hash, sha256_hex
+    from app.research.models import ExtractionStatus, FetchStatus
+    from app.research.quality import score_quality
+    from app.research.repository import (
+        create_source_content,
+        get_latest_source_content,
+        get_or_create_source,
+    )
+    from app.research.validate import validate_file_path
+
+    conn = _get_db()
+
+    from app.core.repository import get_topic
+
+    if get_topic(conn, topic_id) is None:
+        typer.echo(f"Error: Topic {topic_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    # File validation (steps 2–6)
+    try:
+        resolved = validate_file_path(path)
+    except (SecurityError, ValueError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    from app.core.models import SourceKind
+
+    source, _created = get_or_create_source(conn, topic_id, SourceKind.file, str(resolved))
+
+    fetched_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+    content = resolved.read_bytes()
+    retrieval_hash = sha256_hex(content)
+
+    suffix = resolved.suffix.lower()
+    if suffix == ".pdf":
+        result = extract_pdf(content)
+    elif suffix == ".md":
+        result = extract_markdown(content)
+    else:
+        result = extract_text(content)
+
+    normalized_hash: str | None = None
+    if result.raw_text:
+        normalized_hash = sha256_hex(normalize_for_hash(result.raw_text))
+
+    if not force and normalized_hash is not None:
+        latest = get_latest_source_content(conn, source.id, require_successful=True)  # type: ignore[arg-type]
+        if latest and latest.normalized_text_hash == normalized_hash:
+            typer.echo(
+                f"Source {source.id}: content unchanged (hash match). "
+                "Use --force to re-ingest."
+            )
+            return
+
+    if result.raw_text is None:
+        fetch_status = FetchStatus.ok
+        extraction_status = ExtractionStatus.failed
+    elif result.is_partial or result.extraction_error:
+        fetch_status = FetchStatus.ok
+        extraction_status = ExtractionStatus.partial
+    else:
+        fetch_status = FetchStatus.ok
+        extraction_status = ExtractionStatus.ok
+
+    quality_score: float | None = None
+    quality_factors_json: str | None = None
+    quality_scorer_version: str | None = None
+    if result.raw_text:
+        from app.research.models import SourceContent
+
+        sc_temp = SourceContent(
+            source_id=source.id,  # type: ignore[arg-type]
+            fetch_status=fetch_status,
+            extraction_status=extraction_status,
+            fetched_at=datetime.now(UTC),
+            raw_text=result.raw_text,
+            word_count=result.word_count,
+            author=result.author,
+            published_at=result.published_at,
+            domain_type=result.domain_type,
+            suspected_truncation=result.suspected_truncation,
+        )
+        qr = score_quality(sc_temp)
+        quality_score = qr.score
+        quality_factors_json = qr.factors_json
+        quality_scorer_version = qr.scorer_version
+
+    create_source_content(
+        conn,
+        source_id=source.id,  # type: ignore[arg-type]
+        fetch_status=fetch_status,
+        extraction_status=extraction_status,
+        fetched_at=fetched_at,
+        raw_text=result.raw_text,
+        retrieval_hash=retrieval_hash,
+        normalized_text_hash=normalized_hash,
+        hash_algorithm=HASH_ALGORITHM,
+        word_count=result.word_count,
+        title=result.title,
+        author=result.author,
+        published_at=result.published_at,
+        domain_type=result.domain_type.value if result.domain_type else None,
+        extraction_method=result.extraction_method.value if result.extraction_method else None,
+        extraction_error=result.extraction_error,
+        suspected_truncation=result.suspected_truncation,
+        quality_score=quality_score,
+        quality_factors_json=quality_factors_json,
+        quality_scorer_version=quality_scorer_version,
+    )
+
+    if extraction_status == ExtractionStatus.failed:
+        typer.echo(
+            f"Error: Source {source.id} created but extraction failed: "
+            f"{result.extraction_error}",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    words = f"{result.word_count:,}" if result.word_count else "?"
+    quality_str = f"{quality_score:.2f}" if quality_score is not None else "?"
+
+    if extraction_status == ExtractionStatus.partial:
+        typer.echo(
+            f"Warning: partial extraction — {result.extraction_error}", err=True
+        )
+
+    typer.echo(
+        f"Source {source.id}: ingested ({words} words, quality: {quality_str}) — {resolved.name}"
+    )
+
+
+@sources_app.command("quality")
+def sources_quality(
+    source_id: Annotated[int, typer.Argument(help="Source ID.")],
+) -> None:
+    """Display the quality score breakdown for a source."""
+    from app.research.repository import get_latest_source_content
+
+    conn = _get_db()
+    from app.core.repository import get_source
+
+    if get_source(conn, source_id) is None:
+        typer.echo(f"Error: Source {source_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    sc = get_latest_source_content(conn, source_id, require_successful=True)
+    if sc is None or sc.quality_score is None:
+        typer.echo(
+            f"Error: Source {source_id} has no extracted content. "
+            f"Run 'ace sources fetch {source_id}' first.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    factors = sc.quality_factors or {}
+    typer.echo(f"Source {source_id} quality report (scorer: {sc.quality_scorer_version})")
+    typer.echo(f"{'Factor':<24} {'Score':>6}")
+    typer.echo("-" * 32)
+    for factor, value in factors.items():
+        typer.echo(f"  {factor:<22} {value:>6.2f}")
+    typer.echo("-" * 32)
+    typer.echo(f"  {'Composite':<22} {sc.quality_score:>6.2f}")
+    if sc.word_count is not None:
+        typer.echo(f"\nWords: {sc.word_count:,}")
+    if sc.title:
+        typer.echo(f"Title: {sc.title}")
+    if sc.author:
+        typer.echo(f"Author: {sc.author}")
+    if sc.published_at:
+        typer.echo(f"Published: {sc.published_at}")
+    if sc.extraction_error:
+        typer.echo(f"Note: {sc.extraction_error}", err=True)
+
+
 # ---------------------------------------------------------------------------
 # Script commands
 # ---------------------------------------------------------------------------

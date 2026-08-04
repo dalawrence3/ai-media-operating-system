@@ -112,13 +112,70 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     conn2.close()
 
 
-def test_schema_version_is_6(tmp_path: Path) -> None:
+def test_schema_version_is_7(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version
 
     conn = open_db(tmp_path / "test.db")
-    assert SCHEMA_VERSION == 6
-    assert _get_version(conn) == 6
+    assert SCHEMA_VERSION == 7
+    assert _get_version(conn) == 7
     conn.close()
+
+
+def test_source_contents_table_exists(db: sqlite3.Connection) -> None:
+    tables = {
+        r[0]
+        for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "source_contents" in tables
+
+
+def test_source_contents_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(source_contents)").fetchall()}
+    required = {
+        "id", "source_id", "fetch_status", "extraction_status",
+        "http_status", "canonical_url", "mime_type", "fetched_at",
+        "raw_text", "retrieval_hash", "normalized_text_hash", "hash_algorithm",
+        "word_count", "title", "author", "published_at",
+        "domain_type", "extraction_method", "extraction_error", "suspected_truncation",
+        "quality_score", "quality_factors_json", "quality_scorer_version", "created_at",
+    }
+    assert required <= cols
+
+
+def test_source_contents_indexes_exist(db: sqlite3.Connection) -> None:
+    indexes = {
+        r[0]
+        for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'"
+        ).fetchall()
+    }
+    assert "sc_source_id" in indexes
+    assert "sc_normalized_text_hash" in indexes
+
+
+def test_migration_v6_to_v7(tmp_path: Path) -> None:
+    """A v6 database gains source_contents on next open_db."""
+    from app.core.database import SCHEMA_VERSION, _get_version, _set_version
+
+    conn = open_db(tmp_path / "v6.db")
+    # Simulate v6 state: reset version and drop the v7 table
+    _set_version(conn, 6)
+    conn.execute("DROP TABLE IF EXISTS source_contents")
+    conn.commit()
+    conn.close()
+
+    conn2 = open_db(tmp_path / "v6.db")
+    assert _get_version(conn2) == SCHEMA_VERSION
+    tables = {
+        r[0]
+        for r in conn2.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "source_contents" in tables
+    conn2.close()
 
 
 def test_topics_promoted_opportunity_id_column_exists(db) -> None:

@@ -14,10 +14,11 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 3 (YouTube Opportunity Intelligence) is complete.**
+**Phase 4 Milestone 4.1 (Source Ingestion) is complete.**
 
-The system can discover content opportunities, score them, and promote them
-to active topics through an explicit operator approval step. 513 tests pass.
+The system can fetch URLs, ingest local files, extract content, compute
+deterministic quality scores, and persist source content with full
+idempotency and SSRF protection. 696 tests pass.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -33,9 +34,21 @@ Implemented phases:
     missing-data policies, confidence calculation, append-only score records)
   - M3.4: opportunity promotion (`ace topics promote`; SAVEPOINT atomicity;
     idempotent; score prerequisite; lifecycle guard)
+- **Phase 4 M4.1** — Source ingestion foundation:
+  - `src/app/research/` package (constants, errors, hashing, models,
+    validate, extract, quality, fetch, repository)
+  - `source_contents` table (SCHEMA_VERSION 7); append-only per-attempt rows
+  - URL fetch with SSRF protection (pre-resolution + blocked IP ranges),
+    HTTPS→HTTP redirect blocking, MIME and size enforcement
+  - Local file ingest (.txt, .md, .pdf); null-byte and extension allowlist
+  - HTML extraction (BeautifulSoup4, title/author/date metadata)
+  - PDF extraction (pypdf, page separators, partial extraction support)
+  - Deterministic quality scoring (7 factors, weights sum to 1.0)
+  - Idempotency via `normalized_text_hash`; `--force` to override
+  - CLI: `ace sources fetch`, `ace sources ingest-file`, `ace sources quality`
 
-End-to-end workflow: channel strategy → discovery run → evidence collection
-→ deterministic scoring → explicit operator promotion → active Topic.
+End-to-end workflow: channel strategy → discovery → scoring → topic
+promotion → source ingestion → quality review.
 
 ## Requirements
 

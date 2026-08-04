@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -389,6 +389,47 @@ CREATE UNIQUE INDEX uq_topics_promoted_opportunity
 """
 
 
+# Phase 7 DDL — source_contents for acquired and extracted content.
+_DDL_V7_RESEARCH = """
+CREATE TABLE IF NOT EXISTS source_contents (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id               INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    fetch_status            TEXT    NOT NULL CHECK (fetch_status IN ('ok', 'failed')),
+    extraction_status       TEXT    NOT NULL
+                                CHECK (extraction_status IN ('ok', 'partial', 'failed')),
+    http_status             INTEGER,
+    canonical_url           TEXT,
+    mime_type               TEXT,
+    fetched_at              TEXT    NOT NULL,
+    raw_text                TEXT,
+    retrieval_hash          TEXT,
+    normalized_text_hash    TEXT,
+    hash_algorithm          TEXT    NOT NULL DEFAULT 'sha256-nfc-v1',
+    word_count              INTEGER,
+    title                   TEXT,
+    author                  TEXT,
+    published_at            TEXT,
+    domain_type             TEXT    CHECK (domain_type IN
+                                ('academic', 'news', 'government', 'blog', 'forum', 'unknown')),
+    extraction_method       TEXT    CHECK (extraction_method IN
+                                ('html_parser', 'pdf', 'plaintext', 'markdown')),
+    extraction_error        TEXT,
+    suspected_truncation    INTEGER NOT NULL DEFAULT 0 CHECK (suspected_truncation IN (0, 1)),
+    quality_score           REAL,
+    quality_factors_json    TEXT,
+    quality_scorer_version  TEXT,
+    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS sc_source_id
+    ON source_contents(source_id, fetched_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS sc_normalized_text_hash
+    ON source_contents(normalized_text_hash)
+    WHERE normalized_text_hash IS NOT NULL;
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -417,6 +458,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V4_NEW_TABLES)
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
+        conn.executescript(_DDL_V7_RESEARCH)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -427,6 +469,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V4_NEW_TABLES)
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
+        conn.executescript(_DDL_V7_RESEARCH)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -436,6 +479,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V4_NEW_TABLES)
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
+        conn.executescript(_DDL_V7_RESEARCH)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -444,6 +488,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V4_NEW_TABLES)
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
+        conn.executescript(_DDL_V7_RESEARCH)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -451,12 +496,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 4 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
+        conn.executescript(_DDL_V7_RESEARCH)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 5:
         logger.info("Migrating schema from version 5 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V6_PROMOTE)
+        conn.executescript(_DDL_V7_RESEARCH)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 6:
+        logger.info("Migrating schema from version 6 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V7_RESEARCH)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

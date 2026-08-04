@@ -740,3 +740,49 @@ inspectable audit chain: `topic → opportunity → observations → evidence �
 discovery_run`. Recovery tooling for the exceptional case (a promoted topic
 deleted while the opportunity remained) is deferred until the scenario
 arises in practice.
+
+---
+
+**D-M4.1-1 — Validate URL/path before creating any Source identity row**
+
+**Decision:** `validate_url()` and `validate_file_path()` are called before
+`get_or_create_source()`. A SecurityError or ValueError during validation
+creates no DB rows.
+
+**Reasoning:** Source identity rows represent a commitment that a resource
+was assessed. Creating a Source row for a URL that fails SSRF validation
+would pollute the sources table with records that can never have valid
+content, and would make the deduplication logic (same URL → same Source)
+incorrect for future legitimate fetches after the block was lifted (e.g. if
+the URL were changed to a public address). Rows are only created when the
+resource passes pre-fetch validation.
+
+---
+
+**D-M4.1-2 — HTTPS→HTTP redirect is a hard SecurityError, not a warning**
+
+**Decision:** Any redirect that changes scheme from https to http — whether
+in the redirect history or the final URL — raises `SecurityError` and
+terminates the request. No SourceContent row is written for the content that
+would have been fetched over HTTP.
+
+**Reasoning:** HTTPS→HTTP downgrades expose the connection to MitM attacks.
+A warning-only approach would allow extracting and storing potentially tampered
+content. The operator's explicit decision to block (not warn) is recorded here
+so future maintainers do not soften this to a log line.
+
+---
+
+**D-M4.1-3 — Pre-resolution SSRF is the documented MVP boundary**
+
+**Decision:** SSRF protection uses `socket.getaddrinfo()` to pre-resolve
+the hostname and checks the resolved IP against blocked ranges. Connect-time
+IP pinning (verifying the connection actually goes to the pre-resolved IP) is
+deferred.
+
+**Reasoning:** Pre-resolution blocks the most common SSRF attack surface
+(hostnames resolving to RFC 1918 or loopback addresses). It does not prevent
+DNS rebinding attacks, where a hostname resolves to a public IP at validation
+time and then to a private IP at connection time. This limitation is documented
+here so it is not forgotten: connect-time IP pinning is the hardening step,
+not a change to this design.

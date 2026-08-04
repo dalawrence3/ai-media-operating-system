@@ -72,6 +72,26 @@
   [--allow-unscored]`; architectural decisions D-M3.4-1 through D-M3.4-6
   recorded; no placeholder code. 513 tests pass. **Phase 3 complete.**
 
+- **Phase 4 Milestone 4.1: Source Ingestion Foundation** —
+  `src/app/research/` package (10 modules: constants, errors, hashing,
+  models, validate, extract, quality, fetch, repository, plus `__init__.py`);
+  `source_contents` table (SCHEMA_VERSION 7); append-only per-attempt rows;
+  v6→v7 migration path. URL fetch with SSRF protection (pre-resolution +
+  23 blocked IPv4/IPv6 ranges), HTTPS→HTTP redirect blocking (SecurityError),
+  MIME allowlist and 5 MB size enforcement. Local file ingest (.txt, .md,
+  .pdf); null-byte rejection, `Path.resolve()`, `S_ISREG` check, extension
+  allowlist, 10 MB size limit. HTML extraction (BeautifulSoup4 + html.parser;
+  title, author, publication date). PDF extraction (pypdf; page separators;
+  up to 200 pages; partial extraction on failure). Deterministic quality
+  scoring (7 factors, weights asserted to sum 1.0; linear recency decay;
+  `quality-v1` scorer version). SHA-256 `retrieval_hash` (raw bytes) and
+  `normalized_text_hash` (NFC-normalized extracted text). Idempotency via
+  `normalized_text_hash` comparison; `--force` to override. SAVEPOINT
+  atomicity throughout. CLI: `ace sources fetch`, `ace sources ingest-file`,
+  `ace sources quality`. New dependencies: `beautifulsoup4>=4.12,<5.0`,
+  `pypdf>=4.0,<6.0`. No LLM calls; no Phase 4.2 claim extraction; no live
+  network or live LLM in any test. 696 tests pass.
+
 ---
 
 ## Roadmap
