@@ -1822,6 +1822,117 @@ def list_scored_opportunities(
     return results
 
 
+# ---------------------------------------------------------------------------
+# Opportunity promotion
+# ---------------------------------------------------------------------------
+
+
+def _row_to_promoted_topic(row: sqlite3.Row):  # type: ignore[return]
+    from datetime import datetime
+
+    from app.core.models import Topic, TopicStatus
+
+    return Topic(
+        id=row["id"],
+        title=row["title"],
+        angle=row["angle"],
+        status=TopicStatus(row["status"]),
+        promoted_opportunity_id=row["promoted_opportunity_id"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+def promote_opportunity(
+    conn: sqlite3.Connection,
+    opportunity_id: int,
+    *,
+    angle_override: str | None = None,
+    operator: str = "operator",
+    allow_unscored: bool = False,
+) -> tuple:
+    """
+    Promote a discovered opportunity to an active topic.
+
+    Returns (Topic, OpportunityStateEvent). Idempotent: if a topic linked to
+    this opportunity already exists it is returned immediately. Uses a SAVEPOINT
+    to make the topics INSERT and the lifecycle transition atomic.
+    """
+    from app.core.repository import get_topic_by_promoted_opportunity
+
+    opp = get_opportunity(conn, opportunity_id)
+    if opp is None:
+        raise ValueError(f"Opportunity {opportunity_id} not found")
+
+    existing = get_topic_by_promoted_opportunity(conn, opportunity_id)
+    if existing is not None:
+        events = list_state_events(conn, opportunity_id)
+        last_event = events[-1] if events else None
+        return (existing, last_event)
+
+    _ELIGIBLE = {LifecycleState.new, LifecycleState.under_review}
+    if opp.current_lifecycle_state not in _ELIGIBLE:
+        raise ValueError(
+            f"Opportunity {opportunity_id} is in state "
+            f"'{opp.current_lifecycle_state.value}' and cannot be promoted. "
+            "Only 'new' or 'under_review' opportunities are eligible."
+        )
+
+    has_score = (
+        conn.execute(
+            "SELECT 1 FROM opportunity_scores WHERE opportunity_id = ? LIMIT 1",
+            (opportunity_id,),
+        ).fetchone()
+        is not None
+    )
+    if not has_score and not allow_unscored:
+        raise ValueError(
+            f"Opportunity {opportunity_id} has no score. "
+            "Score it first with 'ace intelligence score', "
+            "or pass --allow-unscored to promote anyway."
+        )
+
+    title = opp.title if opp.title else opp.raw_topic
+    angle = angle_override if angle_override is not None else (opp.topic_summary or "")
+    now = _now()
+
+    sp = f"sp_promote_{opportunity_id}"
+    conn.execute(f"SAVEPOINT {sp}")
+    try:
+        cursor = conn.execute(
+            """INSERT INTO topics
+               (title, angle, status, promoted_opportunity_id, created_at, updated_at)
+               VALUES (?, ?, 'active', ?, ?, ?)""",
+            (title, angle, opportunity_id, now, now),
+        )
+        topic_id = cursor.lastrowid
+
+        event = transition_opportunity_state(
+            conn,
+            opportunity_id,
+            LifecycleState.approved,
+            actor=operator,
+            reason="promoted to topic",
+        )
+
+        conn.execute(f"RELEASE SAVEPOINT {sp}")
+    except Exception:
+        conn.execute(f"ROLLBACK TO SAVEPOINT {sp}")
+        conn.execute(f"RELEASE SAVEPOINT {sp}")
+        raise
+
+    conn.commit()
+    row = conn.execute("SELECT * FROM topics WHERE id = ?", (topic_id,)).fetchone()
+    topic = _row_to_promoted_topic(row)
+    logger.info(
+        "Promoted opportunity id=%d → topic id=%d title=%r",
+        opportunity_id,
+        topic_id,
+        title,
+    )
+    return (topic, event)
+
+
 def get_max_similarity_to_existing(
     conn: sqlite3.Connection,
     opportunity_id: int,

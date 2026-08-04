@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -377,6 +377,18 @@ CREATE INDEX IF NOT EXISTS opportunity_scores_opp_policy
 """
 
 
+# Phase 6 DDL — promote opportunities to topics.
+# ALTER TABLE cannot add a UNIQUE column reliably in all SQLite versions,
+# so uniqueness is enforced via a partial index (NULL values excluded).
+_DDL_V6_PROMOTE = """
+ALTER TABLE topics ADD COLUMN promoted_opportunity_id INTEGER REFERENCES opportunities(id);
+
+CREATE UNIQUE INDEX uq_topics_promoted_opportunity
+    ON topics(promoted_opportunity_id)
+    WHERE promoted_opportunity_id IS NOT NULL;
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -404,6 +416,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V3)
         conn.executescript(_DDL_V4_NEW_TABLES)
         conn.executescript(_DDL_V5_SCORING)
+        conn.executescript(_DDL_V6_PROMOTE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -413,6 +426,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V3)
         conn.executescript(_DDL_V4_NEW_TABLES)
         conn.executescript(_DDL_V5_SCORING)
+        conn.executescript(_DDL_V6_PROMOTE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -421,6 +435,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V3)
         conn.executescript(_DDL_V4_NEW_TABLES)
         conn.executescript(_DDL_V5_SCORING)
+        conn.executescript(_DDL_V6_PROMOTE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -428,12 +443,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 3 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V4_NEW_TABLES)
         conn.executescript(_DDL_V5_SCORING)
+        conn.executescript(_DDL_V6_PROMOTE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 4:
         logger.info("Migrating schema from version 4 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V5_SCORING)
+        conn.executescript(_DDL_V6_PROMOTE)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 5:
+        logger.info("Migrating schema from version 5 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V6_PROMOTE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

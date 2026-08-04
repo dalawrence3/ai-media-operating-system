@@ -192,3 +192,228 @@ def test_runs_update_status_invalid() -> None:
     runner.invoke(app, ["runs", "create", "1"])
     result = runner.invoke(app, ["runs", "update-status", "1", "bogus"])
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# topics promote (M3.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _scored_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """
+    Set up a DB with one channel, one opportunity, and one score, then point
+    CLI env vars at it. Yields (db_path, opportunity_id).
+    """
+
+    from app.core.config import reset_config as _reset
+    from app.core.database import open_db as _open_db
+    from app.intelligence.models import (
+        AdapterName,
+        DiscoveryRun,
+        FactorStatus,
+        MissingDataPolicy,
+        Opportunity,
+        OpportunityScore,
+        RunStatus,
+        ScoringPolicy,
+    )
+    from app.intelligence.repository import (
+        activate_scoring_policy,
+        create_channel_full,
+        create_discovery_run,
+        create_opportunity,
+        create_opportunity_score,
+        create_scoring_policy,
+    )
+
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("ACE_DB_PATH", str(db_path))
+    _reset()
+
+    db = _open_db(db_path)
+    channel, profile, _, _ = create_channel_full(
+        db, channel_name="Finance", primary_niche="personal finance"
+    )
+    run = create_discovery_run(
+        db,
+        DiscoveryRun(
+            channel_id=channel.id,
+            profile_version_id=profile.id,
+            adapter_name=AdapterName.manual,
+            status=RunStatus.completed,
+        ),
+    )
+    db.commit()
+    opp = create_opportunity(
+        db,
+        Opportunity(
+            channel_id=channel.id,
+            discovery_run_id=run.id,
+            normalized_topic="index fund basics",
+            raw_topic="index fund basics",
+        ),
+    )
+    db.commit()
+
+    policy = create_scoring_policy(
+        db,
+        ScoringPolicy(
+            channel_id=channel.id,
+            version=1,
+            label="default",
+            missing_competition=MissingDataPolicy.reweight_available,
+        ),
+    )
+    activate_scoring_policy(db, policy.id)
+    db.commit()
+
+    create_opportunity_score(
+        db,
+        OpportunityScore(
+            opportunity_id=opp.id,
+            scoring_policy_id=policy.id,
+            channel_profile_version_id=profile.id,
+            composite_score=0.72,
+            confidence=0.61,
+            status_trend_strength=FactorStatus.present,
+            status_audience_demand=FactorStatus.present,
+            status_competition=FactorStatus.present,
+            status_evergreen_value=FactorStatus.present,
+            status_audience_fit=FactorStatus.present,
+            status_content_novelty=FactorStatus.present,
+            eff_weight_trend_strength=0.05,
+            eff_weight_audience_demand=0.20,
+            eff_weight_competition=0.15,
+            eff_weight_evergreen_value=0.20,
+            eff_weight_audience_fit=0.30,
+            eff_weight_content_novelty=0.10,
+            input_hash="abc",
+            scorer_version="1.0",
+        ),
+    )
+    db.commit()
+    db.close()
+
+    yield db_path, opp.id
+    _reset()
+
+
+@pytest.fixture()
+def _unscored_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """DB with a channel and opportunity but no score."""
+    from app.core.config import reset_config as _reset
+    from app.core.database import open_db as _open_db
+    from app.intelligence.models import AdapterName, DiscoveryRun, Opportunity, RunStatus
+    from app.intelligence.repository import (
+        create_channel_full,
+        create_discovery_run,
+        create_opportunity,
+    )
+
+    db_path = tmp_path / "test.db"
+    monkeypatch.setenv("ACE_DB_PATH", str(db_path))
+    _reset()
+
+    db = _open_db(db_path)
+    channel, profile, _, _ = create_channel_full(
+        db, channel_name="Finance", primary_niche="personal finance"
+    )
+    run = create_discovery_run(
+        db,
+        DiscoveryRun(
+            channel_id=channel.id,
+            profile_version_id=profile.id,
+            adapter_name=AdapterName.manual,
+            status=RunStatus.completed,
+        ),
+    )
+    db.commit()
+    opp = create_opportunity(
+        db,
+        Opportunity(
+            channel_id=channel.id,
+            discovery_run_id=run.id,
+            normalized_topic="index fund basics",
+            raw_topic="index fund basics",
+        ),
+    )
+    db.commit()
+    db.close()
+
+    yield db_path, opp.id
+    _reset()
+
+
+def test_topics_promote_success(_scored_db) -> None:
+    _, opp_id = _scored_db
+    result = runner.invoke(app, ["topics", "promote", str(opp_id)])
+    assert result.exit_code == 0, result.output
+    assert f"Promoted opportunity [{opp_id}]" in result.output
+    assert "Topic [" in result.output
+
+
+def test_topics_promote_shows_in_topics_list(_scored_db) -> None:
+    _, opp_id = _scored_db
+    runner.invoke(app, ["topics", "promote", str(opp_id)])
+    result = runner.invoke(app, ["topics", "list"])
+    assert result.exit_code == 0
+    assert "index fund basics" in result.output
+
+
+def test_topics_promote_shows_score_in_output(_scored_db) -> None:
+    _, opp_id = _scored_db
+    result = runner.invoke(app, ["topics", "promote", str(opp_id)])
+    assert result.exit_code == 0, result.output
+    assert "Score:" in result.output
+    assert "Confidence:" in result.output
+
+
+def test_topics_promote_idempotent(_scored_db) -> None:
+    _, opp_id = _scored_db
+    runner.invoke(app, ["topics", "promote", str(opp_id)])
+    result = runner.invoke(app, ["topics", "promote", str(opp_id)])
+    assert result.exit_code == 0, result.output
+    assert "already promoted" in result.output
+
+    result2 = runner.invoke(app, ["topics", "list"])
+    topic_lines = [ln for ln in result2.output.splitlines() if ln.strip().startswith("[")]
+    assert len(topic_lines) == 1
+
+
+def test_topics_promote_missing_opportunity_fails() -> None:
+    result = runner.invoke(app, ["topics", "promote", "9999"])
+    assert result.exit_code != 0
+
+
+def test_topics_promote_no_score_fails(_unscored_db) -> None:
+    _, opp_id = _unscored_db
+    result = runner.invoke(app, ["topics", "promote", str(opp_id)])
+    assert result.exit_code != 0
+    assert "no score" in result.output.lower()
+
+
+def test_topics_promote_allow_unscored_warns_and_succeeds(_unscored_db) -> None:
+    _, opp_id = _unscored_db
+    result = runner.invoke(app, ["topics", "promote", str(opp_id), "--allow-unscored"])
+    assert result.exit_code == 0, result.output
+    assert "Warning" in result.output
+    assert f"Promoted opportunity [{opp_id}]" in result.output
+
+
+def test_topics_promote_angle_override(_scored_db) -> None:
+    _, opp_id = _scored_db
+    result = runner.invoke(
+        app, ["topics", "promote", str(opp_id), "--angle", "custom angle"]
+    )
+    assert result.exit_code == 0, result.output
+    result2 = runner.invoke(app, ["topics", "list"])
+    assert "custom angle" in result2.output
+
+
+def test_topics_promote_operator_option(_scored_db) -> None:
+    _, opp_id = _scored_db
+    result = runner.invoke(
+        app, ["topics", "promote", str(opp_id), "--operator", "alice"]
+    )
+    assert result.exit_code == 0, result.output

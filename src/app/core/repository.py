@@ -21,6 +21,7 @@ def _row_to_topic(row: sqlite3.Row) -> Topic:
         title=row["title"],
         angle=row["angle"],
         status=TopicStatus(row["status"]),
+        promoted_opportunity_id=row["promoted_opportunity_id"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
     )
@@ -93,6 +94,15 @@ def list_topics(conn: sqlite3.Connection, *, status: TopicStatus | None = None) 
     else:
         rows = conn.execute("SELECT * FROM topics ORDER BY id").fetchall()
     return [_row_to_topic(r) for r in rows]
+
+
+def get_topic_by_promoted_opportunity(
+    conn: sqlite3.Connection, opportunity_id: int
+) -> Topic | None:
+    row = conn.execute(
+        "SELECT * FROM topics WHERE promoted_opportunity_id = ?", (opportunity_id,)
+    ).fetchone()
+    return _row_to_topic(row) if row else None
 
 
 def update_topic(conn: sqlite3.Connection, topic: Topic) -> Topic:

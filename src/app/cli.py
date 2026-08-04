@@ -29,6 +29,7 @@ from app.core.repository import (
     update_topic,
 )
 from app.intelligence.cli import channels_app, discover_app
+from app.intelligence.repository import promote_opportunity
 from app.intelligence.scoring_cli import scoring_app
 
 app = typer.Typer(
@@ -100,6 +101,60 @@ def topics_list(
         return
     for t in rows:
         typer.echo(f"[{t.id}] {t.title!r}  status={t.status.value}  angle={t.angle!r}")
+
+
+@topics_app.command("promote")
+def topics_promote(
+    opportunity_id: Annotated[int, typer.Argument(help="Opportunity ID to promote.")],
+    angle: Annotated[
+        str | None, typer.Option("--angle", help="Override topic angle.")
+    ] = None,
+    operator: Annotated[
+        str, typer.Option("--operator", help="Actor name recorded in lifecycle event.")
+    ] = "operator",
+    allow_unscored: Annotated[
+        bool,
+        typer.Option("--allow-unscored", help="Promote without requiring a score."),
+    ] = False,
+) -> None:
+    """Promote a discovered opportunity to an active topic."""
+    from app.core.repository import get_topic_by_promoted_opportunity
+    from app.intelligence.repository import list_scores_for_opportunity
+
+    conn = _get_db()
+    already_promoted = get_topic_by_promoted_opportunity(conn, opportunity_id) is not None
+
+    try:
+        topic, _event = promote_opportunity(
+            conn,
+            opportunity_id,
+            angle_override=angle,
+            operator=operator,
+            allow_unscored=allow_unscored,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+    scores = list_scores_for_opportunity(conn, opportunity_id)
+    if allow_unscored and not scores:
+        typer.echo(f"Warning: opportunity {opportunity_id} has no score.", err=True)
+    score_line = ""
+    if scores:
+        s = scores[0]
+        score_line = f"  Score: {s.composite_score:.2f}  Confidence: {s.confidence:.2f}"
+
+    if already_promoted:
+        typer.echo(
+            f"Opportunity [{opportunity_id}] was already promoted"
+            f" → Topic [{topic.id}] {topic.title!r}"
+        )
+    else:
+        typer.echo(
+            f"Promoted opportunity [{opportunity_id}] → Topic [{topic.id}] {topic.title!r}"
+        )
+    if score_line:
+        typer.echo(score_line)
 
 
 @topics_app.command("archive")

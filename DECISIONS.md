@@ -656,3 +656,87 @@ ingestion (strict deduplication semantics). Scoring novelty requires a
 different query scope (all siblings, not just duplicates) and a different
 return shape. Reusing the same function would have coupled two distinct
 concerns.
+
+---
+
+## Phase 3 Milestone 3.4: Opportunity Promotion (D-M3.4-1 through D-M3.4-6)
+
+**D-M3.4-1 — `topics.channel_id` omitted; channel derived via FK chain**
+
+**Decision:** The `promoted_opportunity_id` FK on `topics` links back to
+`opportunities`, which already owns `channel_id`. Channel is not
+denormalised onto `topics`.
+
+**Reasoning:** Single source of truth. For manually-created topics there is
+no current mechanism to assign a channel, so the column would always be NULL
+for them. Any future query needing both topic and channel can JOIN
+`opportunities` via `promoted_opportunity_id`.
+
+---
+
+**D-M3.4-2 — SCHEMA_VERSION 5 → 6; partial unique index instead of UNIQUE column**
+
+**Decision:** `_DDL_V6_PROMOTE` uses two statements:
+`ALTER TABLE topics ADD COLUMN promoted_opportunity_id INTEGER REFERENCES opportunities(id)`
+followed by
+`CREATE UNIQUE INDEX uq_topics_promoted_opportunity ON topics(promoted_opportunity_id) WHERE promoted_opportunity_id IS NOT NULL`.
+
+**Reasoning:** `ALTER TABLE ADD COLUMN ... UNIQUE` is not reliably enforced
+as an actual unique index in all SQLite versions. A partial `WHERE NOT NULL`
+index enforces uniqueness for promoted topics while allowing any number of
+manually-created topics (`promoted_opportunity_id = NULL`).
+
+---
+
+**D-M3.4-3 — Idempotency check runs before lifecycle guard**
+
+**Decision:** `promote_opportunity()` calls `get_topic_by_promoted_opportunity()`
+first. If a linked topic exists, the function returns immediately with that
+topic and the last state event, regardless of the opportunity's current
+lifecycle state.
+
+**Reasoning:** The idempotent case is the success case — a topic already
+exists. Checking lifecycle state first would cause the second call to fail
+on a now-`approved` opportunity, breaking idempotency for the most common
+re-promotion scenario.
+
+---
+
+**D-M3.4-4 — "Scored" means at least one `opportunity_scores` row; no policy requirement**
+
+**Decision:** The score prerequisite check queries
+`SELECT 1 FROM opportunity_scores WHERE opportunity_id = ? LIMIT 1`.
+Any score row satisfies the check, regardless of which policy produced it.
+
+**Reasoning:** The operator is trusted to have run an appropriate scoring
+pass. Restricting to a specific policy would force re-scoring after policy
+changes and block legitimate promotion flows.
+
+---
+
+**D-M3.4-5 — One SAVEPOINT per promotion; `create_topic()` bypassed**
+
+**Decision:** `promote_opportunity()` inserts directly into `topics` within
+a SAVEPOINT, then calls `transition_opportunity_state()`, then commits once.
+It does not call `create_topic()`.
+
+**Reasoning:** `create_topic()` calls `conn.commit()` eagerly, which would
+commit the topics INSERT before the lifecycle transition, breaking atomicity.
+The SAVEPOINT pattern (established in `discovery.py`) provides rollback of
+both writes on any exception.
+
+---
+
+**D-M3.4-6 — Promoted opportunities are permanent records; no `--force` deletion-recovery flag**
+
+**Decision:** Once a topic is promoted and downstream artifacts reference it,
+deleting the topic cascades to those artifacts. The opportunity record and
+its full history (state events, observations, evidence) must not be modified
+or deleted after reaching `approved`. No `--force` flag is provided for the
+deleted-topic recovery scenario.
+
+**Reasoning:** The `promoted_opportunity_id` column creates a permanent,
+inspectable audit chain: `topic → opportunity → observations → evidence →
+discovery_run`. Recovery tooling for the exceptional case (a promoted topic
+deleted while the opportunity remained) is deferred until the scenario
+arises in practice.

@@ -40,6 +40,7 @@ class Topic(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     angle: str = Field(default="", max_length=500)
     status: TopicStatus = TopicStatus.active
+    promoted_opportunity_id: int | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
