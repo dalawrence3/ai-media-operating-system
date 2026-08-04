@@ -1,8 +1,9 @@
 # Phase 3: Opportunity Intelligence Engine — Design Specification
 
-> **Status:** Design only. No production code, migrations, or external API
-> calls have been performed. Awaiting architectural review before
-> implementation begins.
+> **Status:** Implemented — M3.1 through M3.4 complete. 513 tests pass.
+> This document describes the design and rationale; the implementation may
+> differ in detail from earlier sections. See `TASKS.md` for the canonical
+> milestone record and `DECISIONS.md` for architectural decisions.
 >
 > **Revision:** v2 — incorporates architectural corrections to persistence
 > model, scoring reproducibility, decision flow, channel strategy, business

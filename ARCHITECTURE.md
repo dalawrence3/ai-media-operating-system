@@ -25,41 +25,71 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 3 Milestone 3.1 complete)
+## Current state (Phase 3 complete — M3.1–M3.4)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=3): `topics`, `sources`, `scripts`,
-  `runs`, `ai_calls`, plus 5 Phase 3 channel strategy tables.
+- Versioned schema (SCHEMA_VERSION=6): `topics`, `sources`, `scripts`,
+  `runs`, `ai_calls`, plus all Phase 3 intelligence tables.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
+- Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
+  (`AIProvider` Protocol), `FakeProvider` (deterministic, no API calls),
+  `ClaudeProvider` (Anthropic SDK, injectable client), versioned TOML prompt
+  registry, structured output via Pydantic, bounded retry with injectable
+  sleep, token/cost tracking, `ai_calls` DB table.
 - Phase 3 Milestone 3.1 — Versioned Channel Strategy Foundation:
-  - `src/app/intelligence/` package: `models.py`, `repository.py`, `cli.py`
   - New DB tables: `channels`, `channel_monetization_strategies`,
     `channel_profile_versions`, `channel_capacity_policies`,
     `channel_operating_mode_events`
   - Versioned, immutable channel profile snapshots (niche, audience, format,
     discovery settings, portfolio targets, scoring policy reference)
-  - Versioned monetization strategy (objective weights validated to sum 1.0;
-    16 named objectives; pre/active status)
-  - Capacity policy with operator-approved ceilings (D6): 2 long-form/4 short
-    /1 package slots per week, 2 concurrent, 3 review hrs/wk
-  - Append-only operating mode event log
-  - Phase 3 runtime restriction: only `manual` mode permitted; `supervised`
-    and `autonomous` are schema reservations for future phases
-  - Duplicate similarity threshold default 0.70 (D5); configurable
-  - Scoring policy version field `"1.0.0"` referenced; scoring engine deferred
-    to Milestone 3.3
-  - CLI: `ace channels add/list/show/versions/new-version/new-strategy
-    /set-mode/capacity/set-capacity`
-- Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`
-  subcommand groups and diagnostic `version`, `doctor` commands.
+  - Versioned monetization strategy (16 named objectives, weights validated
+    to sum 1.0, pre/active status); capacity policy with operator-approved
+    ceilings (not quotas); append-only operating mode event log
+  - Phase 3 runtime restriction: only `manual` mode permitted
+  - CLI: `ace channels add/list/show/versions/new-version/activate-version/
+    new-strategy/activate-strategy/set-mode/capacity/set-capacity`
+- Phase 3 Milestone 3.2 — Discovery Foundation:
+  - New DB tables: `discovery_runs`, `opportunities`,
+    `opportunity_observations`, `opportunity_source_evidence`,
+    `opportunity_state_events`
+  - Opportunity lifecycle (discovered → approved → in_production);
+    append-only state event log; denormalized current_lifecycle_state
+  - Adapter abstraction (`adapters/base.py`): injectable stub for tests;
+    `ManualAdapter`; `YouTubeDataAPIAdapter` (injectable client, no live
+    calls in tests)
+  - Jaccard dedup against active opportunities (`dedup.py`)
+  - `discovery.py` orchestrator: single-adapter discovery run with FK-safe
+    observation and evidence persistence
+  - CLI: `ace discover run/list/show`
+- Phase 3 Milestone 3.3 — Scoring and Confidence Engine:
+  - New DB tables: `scoring_policies`, `opportunity_scores`
+  - Versioned, immutable scoring policies (6 factors, weights validated to
+    sum 1.0); active-policy enforcement via partial unique index
+  - Six scoring factors: trend_strength, audience_demand, competition,
+    evergreen_value, audience_fit, content_novelty
+  - Confidence engine: source quality, data completeness, freshness,
+    corroboration; `FactorStatus` per factor
+  - Missing-data policies: `reweight_available`, `apply_prior`,
+    `reduce_confidence_only`; weights rebalanced so composite sums to 1.0
+  - Score rows are append-only; latest score determined by
+    `scored_at DESC, id DESC`
+  - CLI: `ace intelligence score/score-all/explain` and
+    `ace intelligence policy list/show/create/clone/update/activate`
+- Phase 3 Milestone 3.4 — Opportunity Promotion Workflow:
+  - `topics.promoted_opportunity_id` column (FK → opportunities) with
+    partial unique index (`WHERE promoted_opportunity_id IS NOT NULL`)
+  - `promote_opportunity()`: score prerequisite guard; lifecycle guard
+    (new/under_review only); SAVEPOINT atomicity (topics INSERT +
+    lifecycle transition); idempotent (returns existing topic if already
+    promoted)
+  - CLI: `ace topics promote <opportunity_id> [--angle] [--operator]
+    [--allow-unscored]`
+- Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`,
+  `discover`, `intelligence` subcommand groups and diagnostic `version`,
+  `doctor` commands.
 - Stdlib structured logging via `ACE_LOG_LEVEL`.
-- `src/app/ai/` package: provider-independent LLM abstraction (`AIProvider`
-  Protocol), `FakeProvider` (deterministic, no API calls), `ClaudeProvider`
-  (Anthropic SDK, injected client for testing), versioned TOML prompt
-  registry, structured output validation via Pydantic, bounded retry with
-  injectable sleep, token/cost tracking, `ai_calls` DB table.
 
 ## Package layout (target — populated phase by phase)
 
@@ -85,13 +115,23 @@ src/app/
 │   ├── retry.py              # Bounded retry with injectable sleep
 │   ├── usage.py              # record_ai_call() → ai_calls table
 │   └── prompts/              # Named, versioned prompt template files (TOML)
-├── intelligence/             # Phase 3: YouTube opportunity intelligence
-│   ├── channel.py            # Channel and niche configuration
-│   ├── youtube_client.py     # YouTube Data API v3 wrapper
-│   ├── trends.py             # Google Trends / external signal integration
-│   ├── scoring.py            # Topic scoring (deterministic)
-│   ├── dedup.py              # Duplicate-topic protection
-│   └── discovery.py          # Orchestrates a discovery run
+├── intelligence/             # Phase 3: YouTube opportunity intelligence (implemented)
+│   ├── models.py             # All Phase 3 Pydantic models and enums
+│   ├── repository.py         # Channel, opportunity, score, promotion repository
+│   ├── cli.py                # channels_app and discover_app Typer subcommands
+│   ├── scoring_cli.py        # intelligence_app: score/explain/policy commands
+│   ├── dedup.py              # Jaccard duplicate-topic protection
+│   ├── discovery.py          # Discovery run orchestrator
+│   ├── adapters/             # Adapter abstraction + ManualAdapter + YouTubeAdapter
+│   │   ├── base.py           # DiscoveryAdapter Protocol and result types
+│   │   ├── manual.py         # ManualSignalAdapter
+│   │   └── youtube.py        # YouTubeDataAPIAdapter (injectable client)
+│   └── scoring/              # Deterministic scoring engine
+│       ├── engine.py         # score_opportunity() entry point
+│       ├── factors.py        # Six factor computation functions
+│       ├── weights.py        # Weight normalization and rebalancing
+│       ├── confidence.py     # Confidence calculation
+│       └── snapshot.py       # Score snapshot serialization
 ├── research/                 # Phase 4: Source management and fact checking
 │   ├── ingest.py             # URL fetch, file read, note capture
 │   ├── extract.py            # LLM claim extraction
@@ -142,13 +182,20 @@ Phase 1 tables: `schema_version`, `topics`, `sources`, `scripts`, `runs`
 
 Phase 2 tables: `ai_calls`
 
-Phase 3 Milestone 3.1 tables: `channels`, `channel_monetization_strategies`,
+Phase 3 M3.1 tables: `channels`, `channel_monetization_strategies`,
 `channel_profile_versions`, `channel_capacity_policies`,
 `channel_operating_mode_events`
 
+Phase 3 M3.2 tables: `discovery_runs`, `opportunities`,
+`opportunity_observations`, `opportunity_source_evidence`,
+`opportunity_state_events`
+
+Phase 3 M3.3 tables: `scoring_policies`, `opportunity_scores`
+
+Phase 3 M3.4: `topics.promoted_opportunity_id` column (nullable FK →
+opportunities); partial unique index `uq_topics_promoted_opportunity`
+
 Planned additions per phase:
-- Phase 3 remaining: `scoring_policies`, `discovery_runs`, `opportunity_scores`,
-  `opportunity_factor_scores`; extend `topics`
 - Phase 4: extend `sources`; add `claims`, `asset_rights`
 - Phase 5: extend `scripts`; add `hooks`, `metadata_drafts`
 - Phase 6: `narrations`, `captions`, `tts_calls`

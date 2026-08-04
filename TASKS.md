@@ -32,9 +32,45 @@
   append-only operating mode event log; Phase 3 restricts set-mode to
   `manual` only (`supervised`/`autonomous` are schema reservations); operator
   decisions D1–D7 implemented and recorded; CLI: `ace channels add/list/show/
-  versions/new-version/new-strategy/set-mode/capacity/set-capacity`;
-  no external API integrations; no scoring execution; no opportunity
-  discovery; no placeholder code. 259 tests pass.
+  versions/new-version/activate-version/new-strategy/activate-strategy/
+  set-mode/capacity/set-capacity`; no external API integrations; no scoring
+  execution; no opportunity discovery; no placeholder code. 259 tests pass.
+
+- **Phase 3 Milestone 3.2: Discovery Foundation** —
+  `discovery_runs`, `opportunities`, `opportunity_observations`,
+  `opportunity_source_evidence`, `opportunity_state_events` DB tables
+  (SCHEMA_VERSION 4); opportunity lifecycle with append-only state event log
+  and denormalized `current_lifecycle_state`; adapter abstraction
+  (`adapters/base.py`) with injectable stub; `ManualAdapter`;
+  `YouTubeDataAPIAdapter` (injectable client, no live calls in tests);
+  Jaccard dedup against active opportunities (`dedup.py`); discovery
+  orchestrator (`discovery.py`); CLI: `ace discover run/list/show`;
+  no placeholder code.
+
+- **Phase 3 Milestone 3.3: Versioned Scoring and Confidence Engine** —
+  `scoring_policies`, `opportunity_scores` DB tables (SCHEMA_VERSION 5);
+  versioned immutable scoring policies (6 factors, weights validated to
+  sum 1.0); active-policy enforcement via partial unique index; six scoring
+  factors: trend_strength, audience_demand, competition, evergreen_value,
+  audience_fit, content_novelty; confidence engine (source quality, data
+  completeness, freshness, corroboration); `FactorStatus` per factor;
+  missing-data policies (`reweight_available`, `apply_prior`,
+  `reduce_confidence_only`) with weight rebalancing so composite sums to
+  1.0; score rows append-only; latest score by `scored_at DESC, id DESC`;
+  `scoring/` sub-package (engine, factors, weights, confidence, snapshot);
+  CLI: `ace intelligence score/score-all/explain` and
+  `ace intelligence policy list/show/create/clone/update/activate`;
+  no placeholder code. 476 tests pass.
+
+- **Phase 3 Milestone 3.4: Opportunity Promotion Workflow** —
+  `topics.promoted_opportunity_id` nullable FK column with partial unique
+  index (SCHEMA_VERSION 6); `promote_opportunity()`: score prerequisite
+  guard; lifecycle guard (`new`/`under_review` only); SAVEPOINT atomicity
+  (topics INSERT + lifecycle transition in one savepoint); idempotent (returns
+  existing topic on second call); `get_topic_by_promoted_opportunity()`;
+  CLI: `ace topics promote <opportunity_id> [--angle] [--operator]
+  [--allow-unscored]`; architectural decisions D-M3.4-1 through D-M3.4-6
+  recorded; no placeholder code. 513 tests pass. **Phase 3 complete.**
 
 ---
 
@@ -43,140 +79,6 @@
 Each phase entry states: objective, business value, technical scope,
 dependencies, database changes, interfaces, tests, human approval gates,
 risks, definition of done, demonstrable capability, and what waits.
-
----
-
-### Phase 3 — YouTube Opportunity Intelligence
-
-*(next phase — formerly Phase 2 in old numbering)*
-
-**Business value:** Enables script generation, critique, and metadata
-production in later phases. Getting the abstraction right here avoids
-rewiring every phase that touches an LLM.
-
-**Technical scope:**
-- `src/app/llm/` package
-- Provider protocol / abstract base: `LLMProvider`
-- `ClaudeProvider` using the Anthropic SDK (`anthropic` package)
-- Prompt registry: named, versioned prompt templates stored as files under
-  `src/app/llm/prompts/`; loaded at startup, not hardcoded in call sites
-- Structured output: call → validate against a Pydantic schema → return typed
-  result
-- Bounded retries with exponential back-off (configurable max attempts)
-- Token and cost tracking: input tokens, output tokens, estimated cost per
-  call stored in a new `llm_calls` table
-- Dry-run mode (`ACE_DRY_RUN=1`): returns fixture responses without hitting
-  the API
-- Mock provider for tests: no network calls, deterministic responses
-
-**Dependencies:** Phase 1 (database, config, logging).
-
-**Database changes:** New `llm_calls` table:
-`(id, provider, model, prompt_name, prompt_version, input_tokens,
-output_tokens, estimated_cost_usd, duration_ms, error, created_at)`
-
-**Interfaces:**
-- `LLMProvider.complete(prompt_name, version, variables) -> StructuredResult`
-- CLI: `ace llm estimate-cost --prompt <name>` (dry-run cost estimate)
-- Config: `ACE_ANTHROPIC_API_KEY`, `ACE_LLM_MODEL`, `ACE_DRY_RUN`
-
-**Tests:** Unit tests for retry logic, cost accumulation, dry-run bypass,
-schema validation failure handling, mock provider. No live API calls in CI.
-
-**Human approval gates:** None (infrastructure phase).
-
-**Risks:** Anthropic SDK changes; structured output reliability at low
-temperatures; prompt versioning discipline.
-
-**Definition of done:** Mock provider passes all tests; dry-run mode returns
-fixture outputs; `llm_calls` table records every call; real Claude call
-succeeds in manual smoke test; ruff clean.
-
-**Demonstrable capability:** `ace llm estimate-cost --prompt script-draft`
-prints token and cost estimate. `ACE_DRY_RUN=1 ace scripts generate 1`
-returns a fixture script without an API call.
-
-**What waits:** Opportunity intelligence, content generation, any live API
-calls in automated tests.
-
----
-
-### Phase 3 — YouTube Opportunity Intelligence
-
-**Objective:** Identify and score content opportunities so the system selects
-topics with genuine audience demand rather than guessing.
-
-**Business value:** This is the competitive foundation — choosing what to make
-determines ceiling revenue more than any production optimisation.
-
-**Technical scope:**
-- `src/app/intelligence/` package
-- Channel and niche configuration (stored in DB, editable via CLI):
-  channel name, primary niche, secondary niches, excluded topics, target
-  audience description
-- YouTube Data API v3 client (`google-api-python-client`): search, video
-  details, channel statistics
-- Google Trends integration (`pytrends` or official endpoint where available):
-  rising queries, interest over time; clearly marked as non-YouTube data
-- Manual signal ingestion: user-supplied keyword lists, competitor channels
-  to watch, trend notes
-- Competitor research: top videos in a niche by view count, recency, and
-  engagement; stored per discovery run
-- Topic scoring model (deterministic, not ML): composite score from
-  — trend velocity (Trends or manual)
-  — estimated search demand (manual or third-party; never scraped)
-  — competitor saturation (Data API video counts and view distribution)
-  — recency of existing coverage
-  — fit to channel niche config
-- Shorts vs. long-form recommendation: based on topic type, competitor
-  format distribution, and average video duration in niche
-- Duplicate-topic protection: cosine similarity or keyword overlap against
-  existing topics in DB; threshold configurable
-- Source provenance: every data point records its origin (API, Trends,
-  manual, provider name + date)
-
-**Data availability notes (must be respected in implementation):**
-- Keyword search volume: not available from YouTube or Google free APIs;
-  field stored but marked as `source=manual` or `source=provider:<name>`
-- Competitor revenue: never available; do not infer or display
-- Algorithm ranking signals: not available; do not model
-
-**Dependencies:** Phase 1 (DB, models), Phase 2 (LLM — for niche
-classification and duplicate detection if needed).
-
-**Database changes:**
-- `channels` table: channel config per managed channel
-- `discovery_runs` table: timestamp, config snapshot, signal sources used
-- `opportunity_scores` table: topic candidate, score components, recommended
-  format, data provenance JSON, run_id
-- Extend `topics` table: `channel_id`, `discovery_run_id`, `format`
-  (`shorts` | `long_form`), `opportunity_score`
-
-**Interfaces:**
-- `ace channels add/list/config`
-- `ace discover run` — run a discovery cycle, output ranked candidates
-- `ace discover list` — list candidates from most recent run
-- `ace topics promote <opportunity_id>` — move candidate to active topic
-
-**Tests:** Stub YouTube Data API responses; verify scoring formula; verify
-duplicate detection at configurable threshold; verify provenance fields
-populated; verify Shorts/long-form recommendation logic.
-
-**Human approval gates:** Topic selection — human explicitly promotes
-candidates to active topics.
-
-**Risks:** YouTube Data API quota (10,000 units/day default); Google Trends
-rate limiting; scoring model being gamed by outlier data; Trends data
-reflecting global not niche-specific demand.
-
-**Definition of done:** `ace discover run` produces a scored, ranked list of
-candidates with provenance; duplicate detection fires correctly; promoted
-topics appear in `ace topics list`; all tests pass; ruff clean.
-
-**Demonstrable capability:** Run discovery on a real niche, inspect scored
-candidates, promote a topic.
-
-**What waits:** Actual source ingestion, script generation, any publishing.
 
 ---
 

@@ -14,10 +14,28 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 0: Planning & environment.** The only working piece right now is a
-diagnostic CLI proving the package, virtual environment, and test harness
-are correctly wired together. No business logic (topics, scripts, video)
-exists yet.
+**Phase 3 (YouTube Opportunity Intelligence) is complete.**
+
+The system can discover content opportunities, score them, and promote them
+to active topics through an explicit operator approval step. 513 tests pass.
+
+Implemented phases:
+- **Phase 0** — environment, diagnostic CLI
+- **Phase 1** — core data model (`Topic`, `Source`, `Script`, `Run`; SQLite; CLI)
+- **Phase 2** — LLM abstraction (`FakeProvider`, `ClaudeProvider`, prompt
+  registry, structured output, cost tracking)
+- **Phase 3** — YouTube Opportunity Intelligence:
+  - M3.1: versioned channel strategy (profile snapshots, monetization
+    strategy, capacity policy, operating mode log)
+  - M3.2: discovery foundation (discovery runs, opportunities, observations,
+    source evidence, lifecycle state events, adapters, dedup)
+  - M3.3: scoring and confidence engine (versioned policies, 6 factors,
+    missing-data policies, confidence calculation, append-only score records)
+  - M3.4: opportunity promotion (`ace topics promote`; SAVEPOINT atomicity;
+    idempotent; score prerequisite; lifecycle guard)
+
+End-to-end workflow: channel strategy → discovery run → evidence collection
+→ deterministic scoring → explicit operator promotion → active Topic.
 
 ## Requirements
 
