@@ -1,4 +1,4 @@
-"""End-to-end CLI tests for Phase 4.1 research commands.
+"""End-to-end CLI tests for Phase 4.1/4.2 research commands.
 
 All HTTP goes through httpx.MockTransport — no live network.
 All files use tmp_path — no real filesystem side-effects.
@@ -6,6 +6,7 @@ All files use tmp_path — no real filesystem side-effects.
 
 from __future__ import annotations
 
+import json as _json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -253,3 +254,142 @@ class TestSourcesQuality:
         result = runner.invoke(app, [*_QUALITY_CMD, "1"])
         assert result.exit_code == 0
         assert "Composite" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Phase 4.2 — sources extract-claims / list-claims / claim-runs
+# ---------------------------------------------------------------------------
+
+
+def _ingest_and_extract(tmp_path: Path, monkeypatch, *, text: str = "The sky is blue.") -> None:
+    """Ingest a file and run extract-claims with the fake provider."""
+    monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+    from app.core.config import reset_config as _reset
+    _reset()
+
+    f = tmp_path / "doc.txt"
+    f.write_text(text)
+    _create_topic()
+    res = _ingest(str(f))
+    assert res.exit_code == 0
+
+    fake_out = _json.dumps({
+        "claims": [
+            {
+                "claim_text": "The sky is blue.",
+                "claim_type": "factual",
+                "supporting_quote": "sky is blue",
+            }
+        ]
+    })
+    monkeypatch.setattr("app.ai.fake.FakeProvider.__init__",
+                        lambda self, output=fake_out: setattr(self, "_output", output))
+    from unittest.mock import patch as _patch
+    with _patch("app.ai.fake.FakeProvider._output", fake_out, create=True):
+        pass  # just set up env; FakeProvider is instantiated in the CLI
+
+
+def _extract_claims_cmd(source_id: int = 1, extra: list | None = None) -> object:
+    args = ["sources", "extract-claims", str(source_id), *(extra or [])]
+    return runner.invoke(app, args)
+
+
+class TestSourcesExtractClaims:
+    def test_missing_source_exits_1(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+        result = _extract_claims_cmd(999)
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_source_without_content_exits_1(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+        _create_topic()
+        runner.invoke(app, ["sources", "add", "http://example.com", "--topic", "1"])
+        result = _extract_claims_cmd(1)
+        assert result.exit_code == 1
+
+    def test_extract_succeeds_with_fake_provider(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+        monkeypatch.setenv("ACE_DRY_RUN", "1")
+        from app.core.config import reset_config as _reset
+        _reset()
+
+        _create_topic()
+        f = tmp_path / "doc.txt"
+        f.write_text("The sky is blue.")
+        res = _ingest(str(f))
+        assert res.exit_code == 0
+
+        result = _extract_claims_cmd(1)
+        assert result.exit_code == 0
+        assert "Run" in result.output
+
+    def test_extract_missing_source_shows_error(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+        result = runner.invoke(app, ["sources", "extract-claims", "9999"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+
+class TestSourcesListClaims:
+    def test_list_claims_empty_topic(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+        _create_topic()
+        result = runner.invoke(app, ["sources", "list-claims", "1"])
+        assert result.exit_code == 0
+        assert "0 active evidence" in result.output
+
+    def test_list_claims_after_extraction(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+        monkeypatch.setenv("ACE_DRY_RUN", "1")
+        from app.core.config import reset_config as _reset
+        _reset()
+
+        _create_topic()
+        f = tmp_path / "doc.txt"
+        f.write_text("The sky is blue.")
+        res = _ingest(str(f))
+        assert res.exit_code == 0
+
+        runner.invoke(app, ["sources", "extract-claims", "1"])
+        result = runner.invoke(app, ["sources", "list-claims", "1"])
+        assert result.exit_code == 0
+
+
+class TestSourcesClaimRuns:
+    def test_claim_runs_no_source_exits_1(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+        result = runner.invoke(app, ["sources", "claim-runs", "9999"])
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_claim_runs_no_content_returns_message(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+        _create_topic()
+        runner.invoke(app, ["sources", "add", "1", "url", "http://example.com"])
+        result = runner.invoke(app, ["sources", "claim-runs", "1"])
+        assert result.exit_code == 0
+        assert "no content" in result.output
+
+    def test_claim_runs_shows_run_history(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
+        monkeypatch.setenv("ACE_DRY_RUN", "1")
+        from app.core.config import reset_config as _reset
+        _reset()
+
+        _create_topic()
+        f = tmp_path / "doc.txt"
+        f.write_text("The sky is blue.")
+        res = _ingest(str(f))
+        assert res.exit_code == 0
+
+        runner.invoke(app, ["sources", "extract-claims", "1"])
+        result = runner.invoke(app, ["sources", "claim-runs", "1"])
+        assert result.exit_code == 0
+        assert "Status" in result.output

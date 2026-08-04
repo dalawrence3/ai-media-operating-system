@@ -603,6 +603,169 @@ def sources_quality(
 
 
 # ---------------------------------------------------------------------------
+# Phase 4.2 — claim extraction commands
+# ---------------------------------------------------------------------------
+
+
+@sources_app.command("extract-claims")
+def sources_extract_claims(
+    source_id: Annotated[int, typer.Argument(help="Source ID.")],
+    force: Annotated[
+        bool, typer.Option("--force", help="Skip idempotency check; always run.")
+    ] = False,
+    replace: Annotated[
+        bool, typer.Option("--replace", help="Supersede the prior completed run.")
+    ] = False,
+    model: Annotated[
+        str | None, typer.Option("--model", help="Override AI model (default: cfg.ai_model).")
+    ] = None,
+    prompt_version: Annotated[
+        str, typer.Option("--prompt-version", help="Prompt version to use.")
+    ] = "1",
+) -> None:
+    """Extract claims from the latest fetched content for SOURCE_ID."""
+    from app.core.repository import get_source
+    from app.research.errors import ClaimExtractionError
+    from app.research.extractor import _build_provider, extract_claims
+    from app.research.repository import get_latest_source_content
+
+    cfg = get_config()
+    configure_logging(cfg.log_level)
+    conn = _get_db()
+
+    if get_source(conn, source_id) is None:
+        typer.echo(f"Error: Source {source_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    sc = get_latest_source_content(conn, source_id, require_successful=True)
+    if sc is None:
+        typer.echo(
+            f"Error: Source {source_id} has no successful content. "
+            f"Run 'ace sources fetch {source_id}' first.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    provider = _build_provider(cfg)
+    if model:
+        provider._model = model  # type: ignore[attr-defined]
+
+    try:
+        run = extract_claims(
+            conn,
+            sc,
+            provider=provider,
+            prompt_version=prompt_version,
+            replace=replace or force,
+        )
+    except ClaimExtractionError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(
+        f"Run {run.id}: {run.status.value} — "
+        f"{run.accepted_claim_count} claim(s) accepted from {run.total_chunk_count} chunk(s)."
+    )
+    if run.was_truncated:
+        typer.echo("Note: content was truncated before chunking.")
+
+
+@sources_app.command("list-claims")
+def sources_list_claims(
+    topic_id: Annotated[int, typer.Argument(help="Topic ID.")],
+    include_unsupported: Annotated[
+        bool,
+        typer.Option("--include-unsupported", help="Include no_quote and unsupported claims."),
+    ] = False,
+    all_runs: Annotated[
+        bool, typer.Option("--all-runs", help="Show claims from all runs, not just active.")
+    ] = False,
+    source_id: Annotated[
+        int | None, typer.Option("--source-id", help="Filter to a specific source.")
+    ] = None,
+    run_id: Annotated[
+        int | None, typer.Option("--run-id", help="Filter to a specific extraction run.")
+    ] = None,
+) -> None:
+    """List active evidence claims for TOPIC_ID."""
+    from app.research.repository import list_active_evidence_for_topic, list_claims
+
+    conn = _get_db()
+
+    if run_id is not None:
+        claims = list_claims(conn, run_id, include_unsupported=include_unsupported)
+        typer.echo(f"{'ID':>6}  {'Type':<12}  {'Support':<12}  Claim")
+        typer.echo("-" * 70)
+        for c in claims:
+            row = (
+                f"{c.id:>6}  {c.claim_type.value:<12}"
+                f"  {c.quote_support_status.value:<12}  {c.claim_text[:60]}"
+            )
+            typer.echo(row)
+        typer.echo(f"\n{len(claims)} claim(s) from run {run_id}.")
+        return
+
+    evidence = list_active_evidence_for_topic(conn, topic_id)
+
+    if source_id is not None:
+        evidence = [e for e in evidence if e.source_id == source_id]
+
+    if include_unsupported:
+        pass  # active evidence already filtered; unsupported flag only affects run-level queries
+
+    typer.echo(f"Active evidence for topic {topic_id}:")
+    typer.echo(f"{'ID':>6}  {'Type':<12}  {'Support':<12}  {'Review':>7}  Claim")
+    typer.echo("-" * 80)
+    for e in evidence:
+        review = "YES" if e.requires_date_review else "no"
+        typer.echo(
+            f"{e.claim_id:>6}  {e.claim_type.value:<12}  "
+            f"{e.quote_support_status.value:<12}  {review:>7}  {e.claim_text[:50]}"
+        )
+    typer.echo(f"\n{len(evidence)} active evidence claim(s).")
+
+
+@sources_app.command("claim-runs")
+def sources_claim_runs(
+    source_id: Annotated[int, typer.Argument(help="Source ID.")],
+    include_superseded: Annotated[
+        bool,
+        typer.Option("--include-superseded", help="Show superseded runs as well."),
+    ] = False,
+) -> None:
+    """Show claim extraction run history for SOURCE_ID."""
+    from app.core.repository import get_source
+    from app.research.repository import get_latest_source_content, list_claim_extraction_runs
+
+    conn = _get_db()
+
+    if get_source(conn, source_id) is None:
+        typer.echo(f"Error: Source {source_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    sc = get_latest_source_content(conn, source_id, require_successful=False)
+    if sc is None:
+        typer.echo(f"Source {source_id} has no content records.")
+        return
+
+    runs = list_claim_extraction_runs(conn, sc.id, include_superseded=include_superseded)
+    if not runs:
+        typer.echo(f"No claim extraction runs for source {source_id}.")
+        return
+
+    hdr = f"{'ID':>6}  {'Status':<10}  {'Claims':>6}  {'Chunks':>6}  {'Superseded':>10}  Started"
+    typer.echo(hdr)
+    typer.echo("-" * 70)
+    for r in runs:
+        sup = r.superseded_at[:10] if r.superseded_at else "-"
+        claims = r.accepted_claim_count if r.accepted_claim_count is not None else "-"
+        typer.echo(
+            f"{r.id:>6}  {r.status.value:<10}  {str(claims):>6}  "
+            f"{r.total_chunk_count:>6}  {sup:>10}  {r.started_at[:19]}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Script commands
 # ---------------------------------------------------------------------------
 

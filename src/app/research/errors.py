@@ -25,3 +25,7 @@ class FetchError(ResearchError):
 
 class ExtractionError(ResearchError):
     """Content was retrieved but text extraction produced no usable output."""
+
+
+class ClaimExtractionError(ResearchError):
+    """Claim extraction failed or was blocked by an idempotency guard."""

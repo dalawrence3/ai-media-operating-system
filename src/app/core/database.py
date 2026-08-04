@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -430,6 +430,94 @@ CREATE INDEX IF NOT EXISTS sc_normalized_text_hash
 """
 
 
+_DDL_V8_CLAIMS = """
+CREATE TABLE IF NOT EXISTS claim_extraction_runs (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_content_id       INTEGER NOT NULL
+                                REFERENCES source_contents(id) ON DELETE CASCADE,
+    status                  TEXT    NOT NULL
+                                CHECK (status IN
+                                    ('running', 'completed', 'partial', 'failed')),
+    input_hash              TEXT    NOT NULL,
+    total_chunk_count       INTEGER NOT NULL,
+    completed_chunk_count   INTEGER NOT NULL DEFAULT 0,
+    failed_chunk_count      INTEGER NOT NULL DEFAULT 0,
+    accepted_claim_count    INTEGER,
+    was_truncated           INTEGER NOT NULL DEFAULT 0,
+    prompt_name             TEXT    NOT NULL DEFAULT '',
+    prompt_version          TEXT    NOT NULL DEFAULT '',
+    model                   TEXT    NOT NULL,
+    provider                TEXT    NOT NULL,
+    extraction_algo_version TEXT    NOT NULL,
+    error_message           TEXT,
+    superseded_at           TEXT,
+    superseded_by_run_id    INTEGER REFERENCES claim_extraction_runs(id),
+    started_at              TEXT    NOT NULL,
+    completed_at            TEXT,
+    created_at              TEXT    NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS claim_extraction_run_calls (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    claim_extraction_run_id INTEGER NOT NULL
+                                REFERENCES claim_extraction_runs(id) ON DELETE CASCADE,
+    ai_call_id              INTEGER
+                                REFERENCES ai_calls(id) ON DELETE SET NULL,
+    chunk_index             INTEGER NOT NULL,
+    chunk_hash              TEXT    NOT NULL,
+    input_char_start        INTEGER NOT NULL,
+    input_char_end          INTEGER NOT NULL,
+    status                  TEXT    NOT NULL
+                                CHECK (status IN ('running', 'completed', 'failed')),
+    retry_count             INTEGER NOT NULL DEFAULT 0,
+    accepted_claim_count    INTEGER,
+    error_message           TEXT,
+    started_at              TEXT    NOT NULL,
+    completed_at            TEXT,
+    created_at              TEXT    NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (claim_extraction_run_id, chunk_index)
+);
+
+CREATE TABLE IF NOT EXISTS claims (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    extraction_run_id       INTEGER NOT NULL
+                                REFERENCES claim_extraction_runs(id) ON DELETE CASCADE,
+    chunk_index             INTEGER NOT NULL,
+    claim_text              TEXT    NOT NULL,
+    claim_type              TEXT    NOT NULL
+                                CHECK (claim_type IN
+                                    ('factual', 'statistical', 'attribution', 'definition')),
+    supporting_quote        TEXT,
+    quote_support_status    TEXT    NOT NULL
+                                CHECK (quote_support_status IN
+                                    ('exact', 'normalized', 'unsupported', 'no_quote')),
+    quote_start             INTEGER,
+    quote_end               INTEGER,
+    page_number             INTEGER,
+    requires_date_review    INTEGER NOT NULL DEFAULT 0,
+    created_at              TEXT    NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cer_source_content
+    ON claim_extraction_runs(source_content_id);
+
+CREATE INDEX IF NOT EXISTS idx_cer_input_hash
+    ON claim_extraction_runs(input_hash);
+
+CREATE INDEX IF NOT EXISTS idx_cerc_run
+    ON claim_extraction_run_calls(claim_extraction_run_id);
+
+CREATE INDEX IF NOT EXISTS idx_cerc_ai_call
+    ON claim_extraction_run_calls(ai_call_id);
+
+CREATE INDEX IF NOT EXISTS idx_claims_run
+    ON claims(extraction_run_id);
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -459,6 +547,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
+        conn.executescript(_DDL_V8_CLAIMS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -470,6 +559,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
+        conn.executescript(_DDL_V8_CLAIMS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -480,6 +570,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
+        conn.executescript(_DDL_V8_CLAIMS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -489,6 +580,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
+        conn.executescript(_DDL_V8_CLAIMS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -497,6 +589,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V5_SCORING)
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
+        conn.executescript(_DDL_V8_CLAIMS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -504,12 +597,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 5 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
+        conn.executescript(_DDL_V8_CLAIMS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 6:
         logger.info("Migrating schema from version 6 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V7_RESEARCH)
+        conn.executescript(_DDL_V8_CLAIMS)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 7:
+        logger.info("Migrating schema from version 7 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V8_CLAIMS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

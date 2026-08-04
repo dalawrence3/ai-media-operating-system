@@ -25,12 +25,13 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 4 M4.1 complete)
+## Current state (Phase 4 M4.2 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=7): `topics`, `sources`, `scripts`,
-  `runs`, `ai_calls`, Phase 3 intelligence tables, plus `source_contents`.
+- Versioned schema (SCHEMA_VERSION=8): `topics`, `sources`, `scripts`,
+  `runs`, `ai_calls`, Phase 3 intelligence tables, `source_contents`,
+  plus Phase 4.2 claim extraction tables.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
 - Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
@@ -103,6 +104,29 @@ optional adapters after YouTube is stable.
   - Idempotency: compare `normalized_text_hash`; skip if unchanged
   - CLI: `ace sources fetch <url>`, `ace sources ingest-file <path>`,
     `ace sources quality <source_id>`
+- Phase 4 Milestone 4.2 — Evidence & Claim Extraction:
+  - New DB tables: `claim_extraction_runs`, `claim_extraction_run_calls`,
+    `claims` (SCHEMA_VERSION 8); v7→v8 migration
+  - Supersession model: `superseded_at` + `superseded_by_run_id` columns on
+    runs (not a status value); status CHECK: `running/completed/partial/failed`
+  - `src/app/research/chunking.py`: paragraph-aware chunker with exact offset
+    invariant (`chunk.text == raw_text[start:end]`); deduplication; input hash
+  - `src/app/research/claim_support.py`: exact → normalized (NFC + CRLF +
+    whitespace character-level map) → unsupported → no_quote classification;
+    PDF page derivation from `--- Page N ---\n` separators
+  - `src/app/research/claim_risk.py`: 4 deterministic date-review rules; Rule
+    4 suppressed by historical-year pattern `\bin (19|20)\d{2}\b`
+  - `src/app/research/schemas.py`: `ExtractedClaim`, `ClaimExtractionOutput`
+    (Pydantic, `extra="forbid"`)
+  - `src/app/research/extractor.py`: `extract_claims()` orchestrator;
+    idempotent (same input_hash returns existing run); `--replace` supersedes
+    prior; per-chunk AI call recorded regardless of outcome; atomic
+    finalization via single SAVEPOINT
+  - `src/app/ai/prompts/claim-extraction/v1.toml`: system + user_template
+  - Active evidence: `status='completed' AND superseded_at IS NULL AND
+    quote_support_status IN ('exact','normalized')`
+  - CLI: `ace sources extract-claims <source_id>`, `ace sources list-claims
+    <topic_id>`, `ace sources claim-runs <source_id>`
 - Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`,
   `discover`, `intelligence` subcommand groups and diagnostic `version`,
   `doctor` commands.
@@ -149,16 +173,21 @@ src/app/
 │       ├── weights.py        # Weight normalization and rebalancing
 │       ├── confidence.py     # Confidence calculation
 │       └── snapshot.py       # Score snapshot serialization
-├── research/                 # Phase 4: Source management (M4.1 implemented)
+├── research/                 # Phase 4: Source management (M4.1 + M4.2 implemented)
 │   ├── constants.py          # Named limits and configuration constants
-│   ├── errors.py             # ResearchError, SecurityError, FetchError, ExtractionError
+│   ├── errors.py             # ResearchError, SecurityError, FetchError, ExtractionError, ClaimExtractionError
 │   ├── hashing.py            # SHA-256 helpers; normalize_for_hash (NFC)
-│   ├── models.py             # SourceContent Pydantic model + enums
+│   ├── models.py             # SourceContent, Claim, ClaimExtractionRun, EvidenceClaim + enums
+│   ├── schemas.py            # ExtractedClaim, ClaimExtractionOutput (AI response schemas)
 │   ├── validate.py           # SSRF/scheme URL validation; file-path validation
 │   ├── extract.py            # HTML (BS4), PDF (pypdf), plaintext, markdown extraction
 │   ├── quality.py            # Deterministic 7-factor quality scorer
 │   ├── fetch.py              # HTTP acquisition with redirect and size enforcement
-│   └── repository.py         # get_or_create_source, create/get source_contents
+│   ├── chunking.py           # Paragraph-aware chunker; input hash; deduplication
+│   ├── claim_support.py      # Quote support classification; PDF page derivation
+│   ├── claim_risk.py         # Deterministic date-review risk flags
+│   ├── extractor.py          # extract_claims() orchestrator
+│   └── repository.py         # get_or_create_source, create/get source_contents, claim extraction layer
 ├── content/                  # Phase 5: Content generation
 │   ├── brief.py              # Content brief assembly
 │   ├── hooks.py              # Hook generation and scoring
@@ -220,9 +249,11 @@ opportunities); partial unique index `uq_topics_promoted_opportunity`
 Phase 4 M4.1: `source_contents` table — append-only per-attempt acquisition
 and extraction records; indexes `sc_source_id` and `sc_normalized_text_hash`
 
+Phase 4 M4.2: `claim_extraction_runs`, `claim_extraction_run_calls`, `claims`
+tables; indexes on source_content_id, input_hash, extraction_run_id, chunk_index;
+UNIQUE(claim_extraction_run_id, chunk_index) on run_calls
+
 Planned additions per phase:
-- Phase 4 M4.2: `claims`, `claim_extraction_runs` (deferred; requires LLM)
-- Phase 5: extend `scripts`; add `hooks`, `metadata_drafts`
 - Phase 5: extend `scripts`; add `hooks`, `metadata_drafts`
 - Phase 6: `narrations`, `captions`, `tts_calls`
 - Phase 7: `assets`, `scene_manifests`

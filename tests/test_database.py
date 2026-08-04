@@ -112,13 +112,129 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     conn2.close()
 
 
-def test_schema_version_is_7(tmp_path: Path) -> None:
+def test_schema_version_is_8(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version
 
     conn = open_db(tmp_path / "test.db")
-    assert SCHEMA_VERSION == 7
-    assert _get_version(conn) == 7
+    assert SCHEMA_VERSION == 8
+    assert _get_version(conn) == 8
     conn.close()
+
+
+def test_claim_extraction_tables_exist(db: sqlite3.Connection) -> None:
+    tables = {
+        r[0]
+        for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "claim_extraction_runs" in tables
+    assert "claim_extraction_run_calls" in tables
+    assert "claims" in tables
+
+
+def test_claim_extraction_runs_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(claim_extraction_runs)").fetchall()}
+    required = {
+        "id", "source_content_id", "status", "input_hash",
+        "total_chunk_count", "completed_chunk_count", "failed_chunk_count",
+        "accepted_claim_count", "was_truncated",
+        "prompt_name", "prompt_version", "model", "provider",
+        "extraction_algo_version", "error_message",
+        "superseded_at", "superseded_by_run_id",
+        "started_at", "completed_at", "created_at",
+    }
+    assert required <= cols
+
+
+def test_claim_extraction_run_calls_columns(db: sqlite3.Connection) -> None:
+    cols = {
+        row[1] for row in db.execute("PRAGMA table_info(claim_extraction_run_calls)").fetchall()
+    }
+    required = {
+        "id", "claim_extraction_run_id", "ai_call_id", "chunk_index", "chunk_hash",
+        "input_char_start", "input_char_end", "status", "retry_count",
+        "accepted_claim_count", "error_message", "started_at", "completed_at", "created_at",
+    }
+    assert required <= cols
+
+
+def test_claims_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(claims)").fetchall()}
+    required = {
+        "id", "extraction_run_id", "chunk_index", "claim_text", "claim_type",
+        "supporting_quote", "quote_support_status", "quote_start", "quote_end",
+        "page_number", "requires_date_review", "created_at",
+    }
+    assert required <= cols
+    assert "source_content_id" not in cols
+
+
+def test_claims_no_source_content_id_column(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(claims)").fetchall()}
+    assert "source_content_id" not in cols
+
+
+def test_v8_indexes_exist(db: sqlite3.Connection) -> None:
+    indexes = {
+        r[0]
+        for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    }
+    assert "idx_cer_source_content" in indexes
+    assert "idx_cer_input_hash" in indexes
+    assert "idx_cerc_run" in indexes
+    assert "idx_cerc_ai_call" in indexes
+    assert "idx_claims_run" in indexes
+
+
+def test_run_calls_unique_constraint(db: sqlite3.Connection) -> None:
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO claim_extraction_runs"
+        " (source_content_id, status, input_hash, total_chunk_count,"
+        " model, provider, extraction_algo_version, started_at)"
+        " VALUES (1, 'running', 'abc', 1, 'm', 'p', 'v', '2024-01-01T00:00:00')"
+    )
+    db.execute(
+        "INSERT INTO claim_extraction_run_calls"
+        " (claim_extraction_run_id, chunk_index, chunk_hash,"
+        " input_char_start, input_char_end, status, started_at)"
+        " VALUES (1, 0, 'h', 0, 100, 'running', '2024-01-01T00:00:00')"
+    )
+    db.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO claim_extraction_run_calls"
+            " (claim_extraction_run_id, chunk_index, chunk_hash,"
+            " input_char_start, input_char_end, status, started_at)"
+            " VALUES (1, 0, 'h2', 0, 100, 'running', '2024-01-01T00:00:00')"
+        )
+        db.commit()
+
+
+def test_migration_v7_to_v8(tmp_path: Path) -> None:
+    """A v7 database gains claim tables on next open_db."""
+    from app.core.database import SCHEMA_VERSION, _get_version, _set_version
+
+    conn = open_db(tmp_path / "v7.db")
+    _set_version(conn, 7)
+    for tbl in ("claims", "claim_extraction_run_calls", "claim_extraction_runs"):
+        conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    conn.commit()
+    conn.close()
+
+    conn2 = open_db(tmp_path / "v7.db")
+    assert _get_version(conn2) == SCHEMA_VERSION
+    tables = {
+        r[0]
+        for r in conn2.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "claim_extraction_runs" in tables
+    assert "claim_extraction_run_calls" in tables
+    assert "claims" in tables
+    conn2.close()
 
 
 def test_source_contents_table_exists(db: sqlite3.Connection) -> None:

@@ -786,3 +786,88 @@ DNS rebinding attacks, where a hostname resolves to a public IP at validation
 time and then to a private IP at connection time. This limitation is documented
 here so it is not forgotten: connect-time IP pinning is the hardening step,
 not a change to this design.
+
+---
+
+## Phase 4 Milestone 4.2 — Evidence & Claim Extraction
+
+---
+
+**D-M4.2-1 — Supersession via columns, not status**
+
+**Decision:** When a newer completed run replaces a prior one, the prior run's
+`superseded_at` and `superseded_by_run_id` columns are set. The run's `status`
+column (running/completed/partial/failed) records only the execution outcome
+and is not changed on supersession.
+
+**Reasoning:** Separating lifecycle metadata (superseded?) from execution
+outcome (what happened?) prevents overloading the status field and keeps the
+CHECK constraint to 4 values. A superseded run can be completed or partial;
+its execution outcome is still accurate and useful for audit.
+
+---
+
+**D-M4.2-2 — Active evidence excludes no_quote and unsupported**
+
+**Decision:** `list_active_evidence_for_topic()` and the active evidence query
+apply `quote_support_status IN ('exact', 'normalized')`. Claims with
+`no_quote` or `unsupported` status are never returned as active evidence.
+
+**Reasoning:** Claims without a locatable supporting quote cannot be verified
+against the source text. Serving them as active evidence would allow
+ungrounded claims to reach script generation. They remain queryable via
+`list_claims(include_unsupported=True)` for review, but are never surfaced
+as evidence without a quote.
+
+---
+
+**D-M4.2-3 — Chunk offset invariant: separator belongs to preceding paragraph**
+
+**Decision:** `_build_paragraph_spans()` sets each paragraph span's end to
+`m.end()` (the end of the `\n\n+` separator match), not `m.start()`. This
+means the trailing separator is included in the preceding span, not the next.
+
+**Reasoning:** The invariant `chunk.text == raw_text[start:end]` requires
+spans to tile the raw text without gaps. Including the separator in the
+preceding span ensures no characters are dropped between spans. The chunker
+never strips or modifies source characters.
+
+---
+
+**D-M4.2-4 — NFC offsets are NULL when character count changes**
+
+**Decision:** When Unicode NFC normalization changes the character count of
+the raw text, `classify_quote_support()` returns `(normalized, None, None)`
+rather than attempting to map positions through the NFC change.
+
+**Reasoning:** NFC normalization can merge or split code points (e.g.
+combining characters). A character-level index map built over NFC positions
+is not reliable for mapping back to raw positions when lengths differ. NULL
+offsets signal approximate provenance rather than presenting incorrect offsets
+as exact.
+
+---
+
+**D-M4.2-5 — record_ai_call() called for every chunk regardless of outcome**
+
+**Decision:** `_process_chunk()` calls `record_ai_call()` in its `finally`
+block for every chunk, even on failure. `response=None` is passed on failure;
+`status='failed'` is set.
+
+**Reasoning:** Token and cost accounting must reflect all API interaction
+attempts, including failures. A missing ai_calls row would undercount usage.
+The `record_ai_call()` function accepts `response=None` for exactly this case.
+
+---
+
+**D-M4.2-6 — finalize_claim_extraction_run uses one SAVEPOINT**
+
+**Decision:** All claim INSERTs, the optional supersession UPDATE, and the run
+status UPDATE are wrapped in a single SAVEPOINT. On failure, a separate
+transaction marks the run as failed (not inside the rolled-back SAVEPOINT).
+
+**Reasoning:** Atomicity requires that a partial set of claims is never
+committed without the corresponding run status update. Using one SAVEPOINT
+ensures either all claims and the status land together or none do. The
+fallback `UPDATE ... SET status='failed'` runs outside the SAVEPOINT so it
+can still commit even after the SAVEPOINT rolls back.

@@ -92,6 +92,32 @@
   `pypdf>=4.0,<6.0`. No LLM calls; no Phase 4.2 claim extraction; no live
   network or live LLM in any test. 696 tests pass.
 
+- **Phase 4 Milestone 4.2: Evidence & Claim Extraction** —
+  Three new DB tables (`claim_extraction_runs`, `claim_extraction_run_calls`,
+  `claims`) at SCHEMA_VERSION 8; v7→v8 migration. Supersession model via
+  `superseded_at`/`superseded_by_run_id` columns (not a status value);
+  4-value status CHECK (`running`, `completed`, `partial`, `failed`).
+  Paragraph-aware chunker (`chunking.py`): greedy accumulation with sentence
+  splitting and hard-cut fallback; exact chunk offset invariant
+  `chunk.text == raw_text[start:end]` enforced. Quote support classifier
+  (`claim_support.py`): exact → normalized (NFC + CRLF + whitespace map) →
+  unsupported → no_quote; offsets NULL when NFC changes character count.
+  PDF page derivation from `--- Page N ---\n` separators. Deterministic
+  date-review risk flags (`claim_risk.py`): 4 rules, Rule 4 suppressed by
+  historical-year pattern. Repository layer additions: `create_claim_extraction_run`,
+  `create_claim_extraction_run_call`, `update_claim_extraction_run_call`,
+  `finalize_claim_extraction_run` (single SAVEPOINT for all claim INSERTs +
+  optional supersession + status update), `list_claims`, `get_latest_completed_run`,
+  `list_active_evidence_for_topic`. Active evidence: `status='completed' AND
+  superseded_at IS NULL AND quote_support_status IN ('exact','normalized')`.
+  Prompt TOML: `src/app/ai/prompts/claim-extraction/v1.toml`. Extractor
+  orchestrator (`extractor.py`): idempotent (returns existing run on same
+  input_hash unless `--replace`); per-chunk AI call recorded regardless of
+  outcome; atomic finalization with failure-injection recovery. CLI: `ace
+  sources extract-claims`, `ace sources list-claims`, `ace sources claim-runs`.
+  No new runtime dependencies. No live LLM or live HTTP in any test.
+  825 tests pass.
+
 ---
 
 ## Roadmap
