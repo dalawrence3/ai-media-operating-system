@@ -242,3 +242,40 @@ class NarrationReviewEvent(BaseModel):
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> NarrationReviewEvent:
         return cls(**_row_to_dict(row))
+
+
+# ── Caption handoff models (frozen, caption pipeline reads these) ─────────────
+
+
+@dataclass(frozen=True)
+class ApprovedNarrationSegment:
+    """One synthesized segment ready to be captioned."""
+
+    asset_id: int
+    segment_id: int
+    narration_text: str
+    narration_text_hash: str
+    audio_sha256: str
+    audio_path: str
+    duration_ms: int
+    provider: str
+    model: str
+    voice_id: str
+
+
+@dataclass(frozen=True)
+class ApprovedNarrationRun:
+    """Full narration run handoff — everything the caption pipeline needs."""
+
+    run_id: int
+    plan_id: int
+    script_id: int
+    topic_id: int
+    experiment_id: str | None
+    input_hash: str
+    voice_profile_id: int
+    provider: str
+    model: str
+    voice_id: str
+    language: str
+    segments: tuple[ApprovedNarrationSegment, ...]

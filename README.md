@@ -14,12 +14,13 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 6 Milestone 6.2 (Narration Generation) is complete.**
+**Phase 6 Milestone 6.3A (Caption and Timing Artifacts) is complete.**
 
-The system can produce audio narration for every segment of an approved
-production plan: voice profiles, TTS synthesis (FakeTTSProvider for tests),
-atomic WAV writing, cost tracking, and exception-based review governance.
-1307 tests pass. SCHEMA_VERSION 11.
+The system can generate SRT, WebVTT, and JSON caption artifacts for every
+approved narration run: deterministic sentence-aware text segmentation,
+proportional timing allocation, immutable cue storage, and exception-based
+review governance (approve/reject runs and individual cues).
+1548 tests pass. SCHEMA_VERSION 12.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -104,11 +105,24 @@ Implemented phases:
   - `ACE_ARTIFACTS_PATH` config; `/artifacts/` excluded from Git
   - CLI: `ace narration voices/add-voice/narrate/runs/approve/reject-run/
     reject-segment/events`
+- **Phase 6 M6.3A** — Caption and timing artifacts:
+  - `src/app/captions/` package: constants, errors, hashing, models,
+    segmentation, timing, validation, exporters, storage, repository,
+    orchestrator
+  - SCHEMA_VERSION 12: `caption_runs`, `caption_cues`, `caption_review_events`
+  - Sentence-aware segmentation (abbreviation handling, 2-line/42-char limits,
+    text integrity invariant); proportional timing by display-char count
+  - Immutable `caption_cues` rows; append-only `caption_review_events`
+  - Exports: SRT, WebVTT, JSON — written atomically; SHA-256 hashes stored
+  - `generate_captions()`: idempotent; failed-run rule (no auto-restart)
+  - Exception-based review: `cue_rejected` events block run approval
+  - CLI: `ace captions generate/runs/approve/reject/reject-cue/events`
 
 End-to-end workflow: channel strategy → discovery → scoring → topic promotion
 → source ingestion → claim extraction → script generation → human approval
 → production plan creation → human review (approve/reject) → narration
-synthesis → narration review (approve/reject segments).
+synthesis → narration review (approve/reject segments) → caption generation
+→ caption review (approve/reject runs and cues).
 
 ## Requirements
 

@@ -358,19 +358,83 @@ and regenerate-segment CLI).
 updated. FakeTTSProvider only; no paid-provider SDK added; no live TTS calls
 in any test.
 
-**What waits:** Phase 6 M6.3 — live TTS provider integration (ElevenLabs or
-equivalent; requires operator approval of provider selection).
+**What waits:** Phase 6 M6.3A — Caption and Timing Artifacts (complete — see below).
 
 ---
 
-### Phase 6 M6.3 — Live TTS Provider Integration
+### Phase 6 Milestone 6.3A — Caption and Timing Artifacts ✅ COMPLETE
+
+**Objective:** Generate SRT, WebVTT, and JSON caption artifacts for every
+approved narration run using deterministic text segmentation and proportional
+timing estimation. No live TTS provider, no forced alignment, no network access.
+
+**Business value:** Captions are required for Shorts discoverability and
+accessibility. M6.3A delivers production-ready caption files (SRT/VTT/JSON)
+with a full review governance model, enabling human correction before M6.3B
+wires real TTS timestamps.
+
+**Technical scope (implemented):**
+- `src/app/captions/` package: `constants`, `errors`, `hashing`, `models`,
+  `segmentation`, `timing`, `validation`, `exporters`, `storage`,
+  `repository`, `orchestrator`
+- SCHEMA_VERSION 12: three new tables — `caption_runs` (34 cols;
+  `UNIQUE(narration_run_id, input_hash)`; two partial unique indexes for
+  normal/experiment active-run isolation), `caption_cues` (17 cols; immutable
+  after insert; segment-relative timestamps in integer milliseconds;
+  `timing_source='estimated'`), `caption_review_events` (10 cols; append-only;
+  `event_type` CHECK: `run_approved/run_rejected/cue_rejected`)
+- Five version constants (`CAPTION_SCHEMA_VERSION`, `CAPTION_SEGMENTATION_VERSION`,
+  `CAPTION_TIMING_ALGORITHM_VERSION`, `CAPTION_STYLE_VERSION`,
+  `CAPTION_EXPORTER_VERSION`) bound to `input_hash`; any version change
+  forces a new caption run row
+- `segment_narration_text()`: sentence-aware segmentation; abbreviation
+  handling (Dr., Mr., U.S., etc.); decimal number protection; max 2 lines
+  per cue; 42 char/line limit; text integrity invariant enforced
+- `allocate_timing()`: cumulative proportional allocation by display-char
+  count; all timestamps integer milliseconds; first cue starts at 0,
+  last cue ends at `duration_ms`; no overlap
+- `validate_caption_cues()`: per-cue geometry, non-negative start,
+  start<end, duration bounds, overlap, index gaps, text integrity,
+  timing source, asset/hash consistency; `ValidationResult` dataclass
+- `render_srt()`: 1-based index, HH:MM:SS,mmm → HH:MM:SS,mmm
+- `render_vtt()`: WEBVTT header, HH:MM:SS.mmm → HH:MM:SS.mmm
+- `render_json()`: provenance document with all version constants, cue array
+- Atomic export write: `.tmp` → `os.replace()`; SHA-256 of UTF-8 content;
+  export paths stored in DB; SQLite is canonical, files are derived
+- `generate_captions()` orchestrator: 9-step pipeline; idempotent (returns
+  existing completed/approved run on matching input hash); failed-run rule
+  (no auto-restart; raise `FailedCaptionRunError`); marks run `failed` on
+  any exception; `conn.commit()` only on clean completion
+- `ApprovedNarrationRun` + `ApprovedNarrationSegment` frozen dataclasses
+  added to `src/app/narration/models.py` as handoff models
+- `get_approved_narration_run_full()` added to narration repository;
+  assembles full handoff with all segments ordered by `segment_index`
+- Exception-based review: `cue_rejected` events block approval
+  (`CueRejectionBlocksApprovalError`); supersession is not rejection
+  (prior approved runs keep `status='approved'`)
+- CLI: `ace captions generate/runs/approve/reject/reject-cue/events`
+
+**Tests:** 1548 passing (+81 new vs M6.2 baseline: 27 exporters, 23 storage,
+35 repository, 12 orchestrator, 11 CLI, plus extended database tests for v12
+schema; segmentation/timing/validation tests from earlier stages).
+
+**Definition of done:** ✅ Ruff clean, 1548 tests passing, documentation
+updated. No live TTS provider added; no network access in any test; no
+forced alignment.
+
+**What waits:** Phase 6 M6.3B — Live TTS Provider Integration (requires
+operator approval of provider selection).
+
+---
+
+### Phase 6 M6.3B — Live TTS Provider Integration
 
 **Objective:** Wire a real TTS provider (ElevenLabs or equivalent) into the
 narration pipeline established in M6.2. M6.2 already supports the full
-synthesis lifecycle; M6.3 adds only the concrete provider implementation and
+synthesis lifecycle; M6.3B adds only the concrete provider implementation and
 loudness normalisation.
 
-**Business value:** M6.2 is FakeTTSProvider only. M6.3 produces real audio
+**Business value:** M6.2 is FakeTTSProvider only. M6.3B produces real audio
 that a human can listen to and approve before video assembly.
 
 **Technical scope:**
@@ -383,11 +447,10 @@ that a human can listen to and approve before video assembly.
 - Provider pricing registered in `TTSPricingRegistry`
 - Provider smoke-test CLI command (calls real API; opt-in only)
 
-**Dependencies:** Phase 6 M6.2 complete. Operator approval of provider
+**Dependencies:** Phase 6 M6.3A complete. Operator approval of provider
 selection required before this milestone begins.
 
-**What waits:** Phase 6 M6.4 — Caption generation (SRT/VTT from
-word-level TTS timestamps or forced alignment).
+**What waits:** Phase 7 — Licensed Assets and Scene Manifests.
 
 ---
 

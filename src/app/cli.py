@@ -1618,6 +1618,462 @@ def narration_events(
 
 
 # ---------------------------------------------------------------------------
+# Captions — Phase 6 M6.3A
+# ---------------------------------------------------------------------------
+
+captions_app = typer.Typer(help="Manage caption and timing artifacts.", no_args_is_help=True)
+app.add_typer(captions_app, name="captions")
+
+
+@captions_app.command("generate")
+def captions_generate(
+    plan_id: Annotated[int, typer.Option("--plan-id", "-p", help="Production plan ID.")],
+    artifacts_path: Annotated[
+        str, typer.Option("--artifacts-path", help="Root path for stored artifacts.")
+    ] = "artifacts",
+    language: Annotated[str, typer.Option("--language", help="BCP-47 language tag.")] = "en-US",
+    experiment_id: Annotated[
+        str | None, typer.Option("--experiment-id", help="Experiment label (optional).")
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Validate without writing to DB or filesystem.")
+    ] = False,
+) -> None:
+    """Generate SRT/VTT/JSON captions for an approved narration run.
+
+    With --dry-run, loads and validates the narration handoff, segments and
+    times all cues in memory, and reports the expected output — no DB writes
+    and no files are created.
+    """
+    from pathlib import Path
+
+    from app.captions.constants import (
+        CAPTION_EXPORTER_VERSION,
+        CAPTION_SCHEMA_VERSION,
+        CAPTION_SEGMENTATION_VERSION,
+        CAPTION_STYLE_VERSION,
+        CAPTION_TIMING_ALGORITHM_VERSION,
+    )
+    from app.captions.errors import CaptionError
+    from app.captions.hashing import NarrationSegmentHashInput, compute_caption_input_hash
+    from app.captions.orchestrator import _build_cues_for_segment, generate_captions
+    from app.captions.validation import validate_caption_cues
+    from app.narration.repository import get_approved_narration_run_full
+
+    if dry_run:
+        conn = _get_db()
+        try:
+            handoff = get_approved_narration_run_full(
+                conn, plan_id, experiment_id=experiment_id
+            )
+            if handoff is None:
+                typer.echo(
+                    f"No active approved narration run for plan {plan_id}.", err=True
+                )
+                raise typer.Exit(1) from None
+            seg_inputs = [
+                NarrationSegmentHashInput(
+                    segment_id=s.segment_id, asset_id=s.asset_id,
+                    audio_sha256=s.audio_sha256,
+                    narration_text_hash=s.narration_text_hash,
+                    duration_ms=s.duration_ms,
+                )
+                for s in handoff.segments
+            ]
+            input_hash = compute_caption_input_hash(
+                narration_run_id=handoff.run_id,
+                narration_run_input_hash=handoff.input_hash,
+                segments=seg_inputs,
+                caption_schema_version=CAPTION_SCHEMA_VERSION,
+                segmentation_version=CAPTION_SEGMENTATION_VERSION,
+                timing_algorithm_version=CAPTION_TIMING_ALGORITHM_VERSION,
+                style_version=CAPTION_STYLE_VERSION,
+                exporter_version=CAPTION_EXPORTER_VERSION,
+                language=language,
+                experiment_id=experiment_id,
+            )
+            all_cues = []
+            offset = 0
+            for seg in handoff.segments:
+                seg_cues = _build_cues_for_segment(seg, offset, run_id=0)
+                all_cues.extend(seg_cues)
+                offset += len(seg_cues)
+            seg_id_to_text = {s.segment_id: s.narration_text for s in handoff.segments}
+            seg_id_to_dur = {s.segment_id: s.duration_ms for s in handoff.segments}
+            seg_id_to_asset = {s.segment_id: s.asset_id for s in handoff.segments}
+            seg_id_to_hash = {s.segment_id: s.narration_text_hash for s in handoff.segments}
+            seg_id_to_audio = {s.segment_id: s.audio_sha256 for s in handoff.segments}
+            result = validate_caption_cues(
+                cues=all_cues,
+                segment_id_to_narration_text=seg_id_to_text,
+                segment_id_to_duration_ms=seg_id_to_dur,
+                segment_id_to_asset_id=seg_id_to_asset,
+                segment_id_to_text_hash=seg_id_to_hash,
+                segment_id_to_audio_sha256=seg_id_to_audio,
+            )
+            if not result.ok:
+                for err in result.errors:
+                    typer.echo(f"  ERROR: {err}", err=True)
+                raise typer.Exit(1) from None
+            total_ms = sum(s.duration_ms for s in handoff.segments)
+            typer.echo(
+                f"[dry-run] plan={plan_id}  narration_run={handoff.run_id}"
+                f"  cues={len(all_cues)}  duration_ms={total_ms}"
+                f"  input_hash={input_hash[:12]}..."
+            )
+            typer.echo("  Validation passed — no writes performed.")
+        except CaptionError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from None
+        return
+
+    conn = _get_db()
+    try:
+        run = generate_captions(
+            conn,
+            plan_id=plan_id,
+            artifacts_path=Path(artifacts_path),
+            language=language,
+            experiment_id=experiment_id,
+        )
+    except CaptionError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(
+        f"Caption run id={run.id}  status={run.status}"
+        f"  cues={run.total_cue_count}  duration_ms={run.total_duration_ms}"
+    )
+    if run.srt_path:
+        typer.echo(f"  SRT  → {run.srt_path}")
+    if run.vtt_path:
+        typer.echo(f"  VTT  → {run.vtt_path}")
+    if run.json_path:
+        typer.echo(f"  JSON → {run.json_path}")
+
+
+@captions_app.command("runs")
+def captions_runs(
+    plan_id: Annotated[int, typer.Argument(help="Production plan ID.")],
+) -> None:
+    """List caption runs for a plan (newest first).
+
+    Shows all caption runs across all narration runs for the plan,
+    distinguishing running, completed, approved, rejected, failed, and
+    superseded approved runs.
+    """
+    from app.captions.repository import list_caption_runs_by_plan
+
+    conn = _get_db()
+    runs = list_caption_runs_by_plan(conn, plan_id)
+    if not runs:
+        typer.echo(f"No caption runs for plan id={plan_id}.")
+        return
+    for r in runs:
+        sup = "  [superseded]" if r.superseded_at else ""
+        exp = f"  exp={r.experiment_id}" if r.experiment_id else ""
+        typer.echo(
+            f"[{r.id}] status={r.status}  cues={r.total_cue_count}"
+            f"  duration_ms={r.total_duration_ms}{exp}{sup}"
+        )
+
+
+@captions_app.command("show")
+def captions_show(
+    run_id: Annotated[int, typer.Argument(help="Caption run ID.")],
+) -> None:
+    """Show detailed metadata, cue timeline, and review status for a caption run."""
+    from app.captions.repository import (
+        get_caption_cues,
+        get_caption_run,
+        list_caption_review_events,
+    )
+
+    conn = _get_db()
+    run = get_caption_run(conn, run_id)
+    if run is None:
+        typer.echo(f"Caption run {run_id} not found.", err=True)
+        raise typer.Exit(1) from None
+
+    typer.echo(f"Caption run [{run.id}]")
+    typer.echo(f"  status          : {run.status}")
+    typer.echo(f"  narration_run   : {run.narration_run_id}")
+    typer.echo(f"  plan            : {run.plan_id}")
+    typer.echo(f"  script          : {run.script_id}")
+    typer.echo(f"  topic           : {run.topic_id}")
+    typer.echo(f"  experiment      : {run.experiment_id or '(none)'}")
+    typer.echo(f"  language        : {run.language}")
+    typer.echo(f"  total_cues      : {run.total_cue_count}")
+    typer.echo(f"  duration_ms     : {run.total_duration_ms}")
+    typer.echo(f"  created_at      : {run.created_at}")
+    typer.echo(f"  updated_at      : {run.updated_at}")
+    if run.approved_at:
+        typer.echo(f"  approved_at     : {run.approved_at}")
+    if run.rejected_at:
+        typer.echo(f"  rejected_at     : {run.rejected_at}")
+    if run.superseded_at:
+        typer.echo(f"  superseded_at   : {run.superseded_at}")
+        typer.echo(f"  superseded_by   : {run.superseded_by_run_id}")
+    if run.failure_reason:
+        typer.echo(f"  failure_reason  : {run.failure_reason}")
+    typer.echo("  --- versions ---")
+    typer.echo(f"  schema          : {run.caption_schema_version}")
+    typer.echo(f"  segmentation    : {run.segmentation_version}")
+    typer.echo(f"  timing          : {run.timing_algorithm_version}")
+    typer.echo(f"  style           : {run.style_version}")
+    typer.echo(f"  exporter        : {run.exporter_version}")
+    typer.echo(f"  input_hash      : {run.input_hash}")
+    typer.echo("  --- exports ---")
+    typer.echo(f"  SRT   path      : {run.srt_path or '(none)'}")
+    typer.echo(f"  SRT   sha256    : {run.srt_sha256 or '(none)'}")
+    typer.echo(f"  VTT   path      : {run.vtt_path or '(none)'}")
+    typer.echo(f"  VTT   sha256    : {run.vtt_sha256 or '(none)'}")
+    typer.echo(f"  JSON  path      : {run.json_path or '(none)'}")
+    typer.echo(f"  JSON  sha256    : {run.json_sha256 or '(none)'}")
+
+    # Review-blocking cue rejections
+    events = list_caption_review_events(conn, run_id)
+    rejections = [ev for ev in events if ev.event_type == "cue_rejected"]
+    if rejections:
+        typer.echo(
+            f"  *** {len(rejections)} cue rejection(s) — approval is blocked ***"
+        )
+        for ev in rejections:
+            typer.echo(f"    cue {ev.cue_id}  reason={ev.reason_code}  sev={ev.severity}")
+
+    # Cue timeline
+    cues = get_caption_cues(conn, run_id)
+    if not cues:
+        typer.echo("  (no cues)")
+        return
+    typer.echo(f"  --- cues ({len(cues)}) ---")
+    for cue in cues:
+        warn_str = "  !" + ",".join(cue.warnings) if cue.warnings else ""
+        typer.echo(
+            f"  [{cue.cue_index:>3}] seg={cue.segment_id}"
+            f"  asset={cue.narration_asset_id}"
+            f"  {cue.start_ms}–{cue.end_ms}ms"
+            f"  src={cue.timing_source}"
+            f"{warn_str}"
+        )
+        for line in cue.lines:
+            typer.echo(f"         {line!r}")
+
+
+@captions_app.command("approve")
+def captions_approve(
+    run_id: Annotated[int, typer.Argument(help="Caption run ID to approve.")],
+    actor: Annotated[str | None, typer.Option("--actor", help="Reviewer name.")] = None,
+    notes: Annotated[str | None, typer.Option("--notes", help="Approval notes.")] = None,
+) -> None:
+    """Approve a completed caption run."""
+    from app.captions.errors import CaptionError
+    from app.captions.repository import approve_caption_run
+
+    conn = _get_db()
+    try:
+        run = approve_caption_run(conn, run_id, actor=actor, notes=notes)
+        conn.commit()
+    except CaptionError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Caption run {run_id} approved at {run.approved_at}.")
+
+
+@captions_app.command("reject-run")
+def captions_reject_run(
+    run_id: Annotated[int, typer.Argument(help="Caption run ID to reject.")],
+    reason_code: Annotated[
+        str | None, typer.Option("--reason-code", "-r", help="Rejection reason code.")
+    ] = None,
+    notes: Annotated[str | None, typer.Option("--notes", help="Rejection notes.")] = None,
+    severity: Annotated[
+        int | None, typer.Option("--severity", help="Severity 1–5.")
+    ] = None,
+    actor: Annotated[str | None, typer.Option("--actor", help="Reviewer name.")] = None,
+) -> None:
+    """Reject a completed or approved caption run."""
+    from app.captions.errors import CaptionError
+    from app.captions.repository import reject_caption_run
+
+    conn = _get_db()
+    try:
+        run = reject_caption_run(
+            conn, run_id,
+            reason_code=reason_code, notes=notes, severity=severity, actor=actor,
+        )
+        conn.commit()
+    except CaptionError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Caption run {run_id} rejected at {run.rejected_at}.")
+
+
+@captions_app.command("reject-cue")
+def captions_reject_cue(
+    run_id: Annotated[int, typer.Argument(help="Caption run ID.")],
+    cue_id: Annotated[int, typer.Argument(help="Caption cue ID.")],
+    reason_code: Annotated[
+        str, typer.Option("--reason-code", "-r", help="Rejection reason code.")
+    ],
+    notes: Annotated[str | None, typer.Option("--notes", help="Rejection notes.")] = None,
+    severity: Annotated[
+        int | None, typer.Option("--severity", help="Severity 1–5.")
+    ] = None,
+    actor: Annotated[str | None, typer.Option("--actor", help="Reviewer name.")] = None,
+    expected_correction: Annotated[
+        str | None, typer.Option("--correction", help="Expected correction text.")
+    ] = None,
+) -> None:
+    """Flag a specific caption cue for rejection."""
+    from app.captions.errors import CaptionError
+    from app.captions.repository import record_cue_rejection
+
+    conn = _get_db()
+    try:
+        event = record_cue_rejection(
+            conn, run_id, cue_id,
+            reason_code=reason_code, notes=notes, severity=severity,
+            actor=actor, expected_correction=expected_correction,
+        )
+        conn.commit()
+    except CaptionError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(
+        f"Cue rejection recorded: event id={event.id}"
+        f"  reason={event.reason_code}  cue={cue_id}"
+    )
+
+
+@captions_app.command("export")
+def captions_export(
+    run_id: Annotated[int, typer.Argument(help="Caption run ID.")],
+    artifacts_path: Annotated[
+        str, typer.Option("--artifacts-path", help="Root path for stored artifacts.")
+    ] = "artifacts",
+    fmt: Annotated[
+        str, typer.Option("--format", "-f", help="Format: srt, vtt, json, or all.")
+    ] = "all",
+) -> None:
+    """Regenerate export files from canonical DB cues (repair or recreate exports).
+
+    Reads canonical caption_cues rows, renders the requested format(s),
+    writes through .tmp → atomic replace, recalculates SHA-256, and
+    updates the stored metadata.  Never alters cue rows or run status.
+    """
+    from pathlib import Path
+
+    from app.captions.errors import CaptionError
+    from app.captions.exporters import render_json, render_srt, render_vtt
+    from app.captions.repository import (
+        get_caption_cues,
+        require_caption_run,
+        update_caption_run_export_metadata,
+    )
+    from app.captions.storage import (
+        cleanup_stale_temp_files,
+        compute_export_sha256,
+        relative_artifact_path,
+        resolve_artifacts_path,
+        write_export_atomic,
+    )
+    from app.captions.storage import json_path as _json_path
+    from app.captions.storage import srt_path as _srt_path
+    from app.captions.storage import vtt_path as _vtt_path
+
+    valid_formats = {"srt", "vtt", "json", "all"}
+    if fmt not in valid_formats:
+        typer.echo(f"Unknown format {fmt!r}. Choose from: srt, vtt, json, all.", err=True)
+        raise typer.Exit(1) from None
+
+    conn = _get_db()
+    try:
+        run = require_caption_run(conn, run_id)
+    except CaptionError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+    arts = resolve_artifacts_path(Path(artifacts_path))
+    cleanup_stale_temp_files(arts, max_age_seconds=3600)
+
+    cues = get_caption_cues(conn, run_id)
+
+    do_srt = fmt in ("srt", "all")
+    do_vtt = fmt in ("vtt", "all")
+    do_json = fmt in ("json", "all")
+
+    kwargs: dict = {}
+    try:
+        if do_srt:
+            srt_content = render_srt(cues)
+            srt_dest = _srt_path(arts, run.plan_id, run.narration_run_id, run_id)
+            write_export_atomic(srt_dest, srt_content)
+            kwargs["srt_path"] = relative_artifact_path(arts, srt_dest)
+            kwargs["srt_sha256"] = compute_export_sha256(srt_content)
+            typer.echo(f"  SRT  → {kwargs['srt_path']}")
+
+        if do_vtt:
+            vtt_content = render_vtt(cues)
+            vtt_dest = _vtt_path(arts, run.plan_id, run.narration_run_id, run_id)
+            write_export_atomic(vtt_dest, vtt_content)
+            kwargs["vtt_path"] = relative_artifact_path(arts, vtt_dest)
+            kwargs["vtt_sha256"] = compute_export_sha256(vtt_content)
+            typer.echo(f"  VTT  → {kwargs['vtt_path']}")
+
+        if do_json:
+            json_content = render_json(
+                cues,
+                caption_run_id=run.id,
+                narration_run_id=run.narration_run_id,
+                plan_id=run.plan_id,
+                script_id=run.script_id,
+                topic_id=run.topic_id,
+                experiment_id=run.experiment_id,
+                caption_schema_version=run.caption_schema_version,
+                segmentation_version=run.segmentation_version,
+                timing_algorithm_version=run.timing_algorithm_version,
+                style_version=run.style_version,
+                exporter_version=run.exporter_version,
+                language=run.language,
+            )
+            json_dest = _json_path(arts, run.plan_id, run.narration_run_id, run_id)
+            write_export_atomic(json_dest, json_content)
+            kwargs["json_path"] = relative_artifact_path(arts, json_dest)
+            kwargs["json_sha256"] = compute_export_sha256(json_content)
+            typer.echo(f"  JSON → {kwargs['json_path']}")
+
+        if kwargs:
+            update_caption_run_export_metadata(conn, run_id, **kwargs)
+            conn.commit()
+    except CaptionError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+    typer.echo(f"Export complete for caption run {run_id}.")
+
+
+@captions_app.command("events")
+def captions_events(
+    run_id: Annotated[int, typer.Argument(help="Caption run ID.")],
+) -> None:
+    """List review events for a caption run."""
+    from app.captions.repository import list_caption_review_events
+
+    conn = _get_db()
+    events = list_caption_review_events(conn, run_id)
+    if not events:
+        typer.echo(f"No review events for caption run id={run_id}.")
+        return
+    for ev in events:
+        cue_str = f"  cue={ev.cue_id}" if ev.cue_id else ""
+        code_str = f"  reason={ev.reason_code}" if ev.reason_code else ""
+        actor_str = f"  actor={ev.actor}" if ev.actor else ""
+        typer.echo(
+            f"[{ev.id}] {ev.event_type}{cue_str}{code_str}{actor_str}  {ev.created_at}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

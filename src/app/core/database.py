@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -896,6 +896,158 @@ CREATE INDEX IF NOT EXISTS idx_nre_experiment
 """
 
 
+_DDL_V12_CAPTIONS = """
+CREATE TABLE IF NOT EXISTS caption_runs (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    narration_run_id            INTEGER NOT NULL
+                                    REFERENCES narration_runs(id) ON DELETE RESTRICT,
+    plan_id                     INTEGER NOT NULL
+                                    REFERENCES production_plans(id) ON DELETE RESTRICT,
+    script_id                   INTEGER NOT NULL
+                                    REFERENCES scripts(id) ON DELETE RESTRICT,
+    topic_id                    INTEGER NOT NULL
+                                    REFERENCES topics(id) ON DELETE RESTRICT,
+    experiment_id               TEXT,
+    input_hash                  TEXT    NOT NULL,
+    caption_schema_version      TEXT    NOT NULL,
+    segmentation_version        TEXT    NOT NULL,
+    timing_algorithm_version    TEXT    NOT NULL,
+    style_version               TEXT    NOT NULL,
+    exporter_version            TEXT    NOT NULL,
+    language                    TEXT    NOT NULL DEFAULT 'en-US',
+    status                      TEXT    NOT NULL DEFAULT 'running'
+                                        CHECK (status IN (
+                                            'running', 'completed', 'failed',
+                                            'approved', 'rejected')),
+    total_cue_count             INTEGER NOT NULL DEFAULT 0,
+    total_duration_ms           INTEGER NOT NULL DEFAULT 0,
+    failure_reason              TEXT,
+    srt_path                    TEXT,
+    vtt_path                    TEXT,
+    json_path                   TEXT,
+    srt_sha256                  TEXT,
+    vtt_sha256                  TEXT,
+    json_sha256                 TEXT,
+    approved_at                 TEXT,
+    rejected_at                 TEXT,
+    superseded_at               TEXT,
+    superseded_by_run_id        INTEGER REFERENCES caption_runs(id),
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (narration_run_id, input_hash)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cr_one_active_normal
+    ON caption_runs (narration_run_id)
+    WHERE status = 'approved'
+      AND superseded_at IS NULL
+      AND experiment_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cr_one_active_experiment
+    ON caption_runs (narration_run_id, experiment_id)
+    WHERE status = 'approved'
+      AND superseded_at IS NULL
+      AND experiment_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_cr_narration_run
+    ON caption_runs (narration_run_id, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_cr_plan
+    ON caption_runs (plan_id, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS caption_cues (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id              INTEGER NOT NULL
+                            REFERENCES caption_runs(id) ON DELETE RESTRICT,
+    segment_id          INTEGER NOT NULL
+                            REFERENCES production_segments(id) ON DELETE RESTRICT,
+    narration_asset_id  INTEGER NOT NULL
+                            REFERENCES narration_segment_assets(id) ON DELETE RESTRICT,
+    narration_text_hash TEXT    NOT NULL,
+    audio_sha256        TEXT    NOT NULL,
+    cue_index           INTEGER NOT NULL,
+    segment_cue_index   INTEGER NOT NULL,
+    text                TEXT    NOT NULL,
+    start_ms            INTEGER NOT NULL,
+    end_ms              INTEGER NOT NULL,
+    line_count          INTEGER NOT NULL,
+    char_count          INTEGER NOT NULL,
+    timing_source       TEXT    NOT NULL
+                            CHECK (timing_source IN (
+                                'estimated', 'provider_native', 'forced_alignment')),
+    warnings_json       TEXT    NOT NULL DEFAULT '[]',
+    superseded_at       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (run_id, cue_index),
+    UNIQUE (run_id, segment_id, segment_cue_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cc_run
+    ON caption_cues (run_id, cue_index);
+
+CREATE INDEX IF NOT EXISTS idx_cc_segment
+    ON caption_cues (segment_id, segment_cue_index);
+
+CREATE TABLE IF NOT EXISTS caption_review_events (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                      INTEGER NOT NULL
+                                    REFERENCES caption_runs(id) ON DELETE RESTRICT,
+    cue_id                      INTEGER
+                                    REFERENCES caption_cues(id) ON DELETE RESTRICT,
+    segment_id                  INTEGER
+                                    REFERENCES production_segments(id) ON DELETE RESTRICT,
+    narration_asset_id          INTEGER
+                                    REFERENCES narration_segment_assets(id) ON DELETE RESTRICT,
+    narration_run_id            INTEGER NOT NULL
+                                    REFERENCES narration_runs(id) ON DELETE RESTRICT,
+    plan_id                     INTEGER NOT NULL
+                                    REFERENCES production_plans(id) ON DELETE RESTRICT,
+    script_id                   INTEGER NOT NULL
+                                    REFERENCES scripts(id) ON DELETE RESTRICT,
+    topic_id                    INTEGER NOT NULL
+                                    REFERENCES topics(id) ON DELETE RESTRICT,
+    voice_profile_id            INTEGER NOT NULL
+                                    REFERENCES voice_profiles(id) ON DELETE RESTRICT,
+    provider                    TEXT    NOT NULL,
+    model                       TEXT    NOT NULL,
+    voice_id                    TEXT    NOT NULL,
+    experiment_id               TEXT,
+    caption_schema_version      TEXT    NOT NULL,
+    segmentation_version        TEXT    NOT NULL,
+    timing_algorithm_version    TEXT    NOT NULL,
+    style_version               TEXT    NOT NULL,
+    exporter_version            TEXT    NOT NULL,
+    event_type                  TEXT    NOT NULL
+                                    CHECK (event_type IN (
+                                        'run_approved', 'run_rejected', 'cue_rejected')),
+    reason_code                 TEXT,
+    severity                    INTEGER CHECK (severity BETWEEN 1 AND 5),
+    expected_correction         TEXT,
+    notes                       TEXT,
+    actor                       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cre_run
+    ON caption_review_events (run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_cre_cue
+    ON caption_review_events (cue_id, created_at)
+    WHERE cue_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_cre_narration_run
+    ON caption_review_events (narration_run_id);
+
+CREATE INDEX IF NOT EXISTS idx_cre_reason_code
+    ON caption_review_events (reason_code)
+    WHERE reason_code IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_cre_experiment
+    ON caption_review_events (experiment_id)
+    WHERE experiment_id IS NOT NULL;
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -929,6 +1081,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -944,6 +1097,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -958,6 +1112,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -971,6 +1126,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -983,6 +1139,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -994,6 +1151,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1004,6 +1162,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1013,6 +1172,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1021,6 +1181,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1028,12 +1189,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 9 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 10:
         logger.info("Migrating schema from version 10 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V11_NARRATION)
+        conn.executescript(_DDL_V12_CAPTIONS)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 11:
+        logger.info("Migrating schema from version 11 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V12_CAPTIONS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

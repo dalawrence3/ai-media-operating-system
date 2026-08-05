@@ -25,18 +25,20 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 6 M6.2 complete)
+## Current state (Phase 6 M6.3A complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=11): `topics`, `sources`, `scripts`,
+- Versioned schema (SCHEMA_VERSION=12): `topics`, `sources`, `scripts`,
   `runs`, `ai_calls`, Phase 3 intelligence tables, `source_contents`,
   Phase 4.2 claim extraction tables, Phase 5 `script_generation_runs`
   and `script_citations` tables, Phase 6 M6.1 `production_plans`,
   `production_segments`, `production_segment_citations`, and
-  `production_plan_review_events` tables, plus Phase 6 M6.2
+  `production_plan_review_events` tables, Phase 6 M6.2
   `voice_profiles`, `narration_runs`, `narration_segment_assets`,
-  `tts_calls`, and `narration_review_events` tables.
+  `tts_calls`, and `narration_review_events` tables, plus Phase 6
+  M6.3A `caption_runs`, `caption_cues`, and `caption_review_events`
+  tables.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
 - Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
@@ -245,9 +247,49 @@ optional adapters after YouTube is stable.
     reject-segment/events/regenerate-segment`
   - Config: `ACE_TTS_PROVIDER` (default `fake`), `ACE_TTS_MODEL` (default
     `fake/FAKE`)
+- Phase 6 Milestone 6.3A — Caption and Timing Artifacts:
+  - SCHEMA_VERSION 12: three new tables — `caption_runs` (34 cols;
+    `UNIQUE(narration_run_id, input_hash)` hard idempotency; status CHECK:
+    `running/completed/failed/approved/rejected`; supersession via
+    `superseded_at` + `superseded_by_run_id`; partial unique index
+    `WHERE status='approved' AND superseded_at IS NULL` — superseded runs
+    retain `status='approved'`), `caption_cues` (17 cols; immutable after
+    insert — no application UPDATE/DELETE; `cue_index` global sequential
+    index; segment-relative `start_ms`/`end_ms` in integer milliseconds;
+    `timing_source='estimated'` for M6.3A), `caption_review_events` (10 cols;
+    append-only; `event_type` CHECK: `run_approved/run_rejected/cue_rejected`)
+  - `src/app/captions/` package: `constants`, `errors`, `hashing`, `models`,
+    `segmentation`, `timing`, `validation`, `exporters`, `storage`,
+    `repository`, `orchestrator`
+  - Five version constants (`CAPTION_SCHEMA_VERSION`, `CAPTION_SEGMENTATION_VERSION`,
+    `CAPTION_TIMING_ALGORITHM_VERSION`, `CAPTION_STYLE_VERSION`,
+    `CAPTION_EXPORTER_VERSION`) — all bound to `input_hash`; any version
+    change forces a new caption run
+  - `segment_narration_text()`: sentence-aware segmentation with
+    abbreviation list; 2-line, 42-char-per-line limits; text integrity
+    invariant preserved (`normalize_for_integrity(joined) == normalize_for_integrity(original)`)
+  - `allocate_timing()`: cumulative proportional allocation by display-char
+    count; integer milliseconds; no overlap; `timing_source='estimated'`
+  - `validate_caption_cues()`: per-cue geometry, overlap, index-gap, text
+    integrity, asset/hash consistency checks; `ValidationResult` type
+  - `render_srt()` / `render_vtt()` / `render_json()`: SRT (1-based index,
+    HH:MM:SS,mmm), VTT (WEBVTT header, HH:MM:SS.mmm), JSON provenance doc
+  - Atomic export write: `.tmp` → `os.replace()`; SHA-256 of UTF-8 content
+  - `generate_captions()`: full 9-step pipeline; idempotent (returns existing
+    completed/approved run); failed-run rule (no auto-restart); SAVEPOINTs
+    throughout; `conn.commit()` only on clean completion
+  - `ApprovedNarrationRun` + `ApprovedNarrationSegment` frozen dataclasses:
+    handoff models from narration → captions; `duration_ms = round(
+    duration_seconds * 1000)`
+  - Exception-based review: `cue_rejected` events block run approval
+    (`CueRejectionBlocksApprovalError`); supersession is not rejection
+  - `ACE_ARTIFACTS_PATH`: caption exports at
+    `{artifacts_path}/captions/plan_{id}/narration_{id}/run_{id}/captions.{srt,vtt,json}`;
+    relative paths stored in DB; SQLite is canonical, exports are derived
+  - CLI: `ace captions generate/runs/approve/reject/reject-cue/events`
 - Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`,
-  `discover`, `intelligence`, `production`, `narration` subcommand groups and
-  diagnostic `version`, `doctor` commands.
+  `discover`, `intelligence`, `production`, `narration`, `captions` subcommand
+  groups and diagnostic `version`, `doctor` commands.
 - Stdlib structured logging via `ACE_LOG_LEVEL`.
 
 ## Package layout (target — populated phase by phase)
@@ -329,15 +371,27 @@ src/app/
 │   ├── constants.py          # Version strings; stale-temp age; default format/sample rate
 │   ├── errors.py             # NarrationError hierarchy (SynthesisError, AudioValidationError, etc.)
 │   ├── hashing.py            # compute_narration_text/segment/run/settings_hash()
-│   ├── models.py             # VoiceProfileCreate/NarrationRunDraft/NarrationSegmentAssetDraft dataclasses; Pydantic DB models
+│   ├── models.py             # VoiceProfileCreate/NarrationRunDraft/NarrationSegmentAssetDraft dataclasses; Pydantic DB models; ApprovedNarrationRun/Segment handoff
 │   ├── protocol.py           # TTSProvider @runtime_checkable Protocol; TTSRequest/TTSResponse dataclasses
 │   ├── fake.py               # FakeTTSProvider: deterministic WAV silence; fail_on injection
 │   ├── pricing.py            # TTSPricingRegistry; character-based cost estimation; singleton
 │   ├── storage.py            # Artifact path resolution; atomic WAV write; WAV validation; SHA-256
-│   ├── repository.py         # Voice profile CRUD; narration run/segment CRUD; approve/reject SAVEPOINTs; record_tts_call
+│   ├── repository.py         # Voice profile CRUD; narration run/segment CRUD; approve/reject SAVEPOINTs; record_tts_call; get_approved_narration_run_full()
 │   └── orchestrator.py       # narrate_plan() entry point; idempotency; per-segment synthesis; dry-run; regenerate_segment()
-├── media/                    # Phases 6 M6.3+: Captions, assets, video rendering
-│   ├── captions.py           # SRT/VTT caption generation
+├── captions/                 # Phase 6 M6.3A: Caption and timing artifacts (implemented)
+│   ├── __init__.py
+│   ├── constants.py          # Version strings; timing source values; rejection reason codes
+│   ├── errors.py             # CaptionError hierarchy (ValidationError, NoApprovedNarrationRunError, etc.)
+│   ├── hashing.py            # NarrationSegmentHashInput; compute_caption_input_hash()
+│   ├── models.py             # CaptionRunDraft/CaptionCueDraft dataclasses; Pydantic DB models; SegmentedCue
+│   ├── segmentation.py       # segment_narration_text(): sentence-aware, 2-line/42-char limits
+│   ├── timing.py             # allocate_timing(): proportional by display-char count; integer ms
+│   ├── validation.py         # validate_caption_cues(): geometry, overlap, index, integrity checks
+│   ├── exporters.py          # render_srt(), render_vtt(), render_json()
+│   ├── storage.py            # Path helpers; write_export_atomic(); compute_export_sha256(); cleanup_stale_temp_files()
+│   ├── repository.py         # Full CRUD + lifecycle (create/complete/fail/approve/reject/supersede); persist_caption_cues(); review events
+│   └── orchestrator.py       # generate_captions() entry point; 9-step pipeline; idempotency; failed-run rule
+├── media/                    # Phases 7+: Assets, video rendering
 │   ├── assets.py             # Asset library, licence enforcement
 │   ├── manifest.py           # Scene manifest assembly and validation
 │   └── renderer.py           # FFmpeg rendering and validation
@@ -405,8 +459,13 @@ Phase 6 M6.2: `voice_profiles`, `narration_runs`, `narration_segment_assets`,
 narration_runs; partial unique index on segment assets
 (WHERE status != 'rejected' AND superseded_at IS NULL)
 
+Phase 6 M6.3A: `caption_runs`, `caption_cues`, `caption_review_events` tables;
+UNIQUE(narration_run_id, input_hash) on caption_runs; immutable caption_cues
+(no UPDATE/DELETE by application); append-only caption_review_events; partial
+unique index on caption_runs (WHERE status='approved' AND superseded_at IS NULL)
+for one-active-approved-per-narration-run enforcement
+
 Planned additions per phase:
-- Phase 6 M6.3+: `captions`
 - Phase 7: `assets`, `scene_manifests`
 - Phase 8: `renders`, `thumbnails`
 - Phase 9: extend `runs`

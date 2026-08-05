@@ -38,6 +38,8 @@ from app.narration.errors import (
     RejectedSegmentsError,
 )
 from app.narration.models import (
+    ApprovedNarrationRun,
+    ApprovedNarrationSegment,
     NarrationReviewEvent,
     NarrationRun,
     NarrationRunDraft,
@@ -713,3 +715,79 @@ def list_narration_review_events(
         (run_id,),
     ).fetchall()
     return [NarrationReviewEvent.from_row(r) for r in rows]
+
+
+# ── Caption handoff ───────────────────────────────────────────────────────────
+
+
+def get_approved_narration_run_full(
+    conn: sqlite3.Connection,
+    plan_id: int,
+    *,
+    experiment_id: str | None = None,
+) -> ApprovedNarrationRun | None:
+    """Return the fully-loaded approved narration run for the caption pipeline.
+
+    Returns None when no active approved run exists.  Segments are ordered
+    by production_segments.segment_index ascending.
+    """
+    run = get_active_approved_narration_run(conn, plan_id, experiment_id=experiment_id)
+    if run is None:
+        return None
+
+    script_id, topic_id = _get_plan_script_topic(conn, plan_id)
+    provider, model, voice_id = _get_voice_context(conn, run.voice_profile_id)
+
+    rows = conn.execute(
+        """
+        SELECT
+            nsa.id          AS asset_id,
+            nsa.segment_id  AS segment_id,
+            ps.narration_text AS narration_text,
+            nsa.narration_text_hash AS narration_text_hash,
+            nsa.audio_sha256 AS audio_sha256,
+            nsa.audio_path   AS audio_path,
+            nsa.duration_seconds AS duration_seconds,
+            nsa.provider     AS provider,
+            nsa.model        AS model,
+            nsa.voice_id     AS voice_id
+        FROM narration_segment_assets nsa
+        JOIN production_segments ps ON ps.id = nsa.segment_id
+        WHERE nsa.run_id = ?
+          AND nsa.status = 'synthesized'
+          AND nsa.superseded_at IS NULL
+        ORDER BY ps.segment_index ASC
+        """,
+        (run.id,),
+    ).fetchall()
+
+    segments = tuple(
+        ApprovedNarrationSegment(
+            asset_id=r[0],
+            segment_id=r[1],
+            narration_text=r[2],
+            narration_text_hash=r[3],
+            audio_sha256=r[4],
+            audio_path=r[5],
+            duration_ms=round(r[6] * 1000) if r[6] is not None else 0,
+            provider=r[7],
+            model=r[8],
+            voice_id=r[9],
+        )
+        for r in rows
+    )
+
+    return ApprovedNarrationRun(
+        run_id=run.id,
+        plan_id=plan_id,
+        script_id=script_id,
+        topic_id=topic_id,
+        experiment_id=run.experiment_id,
+        input_hash=run.input_hash,
+        voice_profile_id=run.voice_profile_id,
+        provider=provider,
+        model=model,
+        voice_id=voice_id,
+        language=run.language,
+        segments=segments,
+    )

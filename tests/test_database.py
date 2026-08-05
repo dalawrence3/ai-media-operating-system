@@ -126,12 +126,12 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     conn2.close()
 
 
-def test_schema_version_is_11(tmp_path: Path) -> None:
+def test_schema_version_is_12(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version
 
     conn = open_db(tmp_path / "test.db")
-    assert SCHEMA_VERSION == 11
-    assert _get_version(conn) == 11
+    assert SCHEMA_VERSION == 12
+    assert _get_version(conn) == 12
     conn.close()
 
 
@@ -801,7 +801,7 @@ def test_migration_v9_to_v10(tmp_path: Path) -> None:
 
     conn2 = open_db(tmp_path / "v9.db")
     assert _get_version(conn2) == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 11
+    assert SCHEMA_VERSION == 12
     tables = {
         r[0]
         for r in conn2.execute(
@@ -814,4 +814,162 @@ def test_migration_v9_to_v10(tmp_path: Path) -> None:
     assert "production_plan_review_events" in tables
     assert "narration_runs" in tables
     assert "voice_profiles" in tables
+    conn2.close()
+
+
+def test_v12_caption_tables_exist(db: sqlite3.Connection) -> None:
+    tables = {
+        r[0]
+        for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "caption_runs" in tables
+    assert "caption_cues" in tables
+    assert "caption_review_events" in tables
+
+
+def test_v12_caption_runs_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(caption_runs)").fetchall()}
+    required = {
+        "id", "narration_run_id", "plan_id", "script_id", "topic_id", "experiment_id",
+        "input_hash", "caption_schema_version", "segmentation_version",
+        "timing_algorithm_version", "style_version", "exporter_version", "language",
+        "status", "total_cue_count", "total_duration_ms", "failure_reason",
+        "srt_path", "vtt_path", "json_path", "srt_sha256", "vtt_sha256", "json_sha256",
+        "approved_at", "rejected_at", "superseded_at", "superseded_by_run_id",
+        "created_at", "updated_at",
+    }
+    assert required <= cols, f"Missing columns: {required - cols}"
+
+
+def test_v12_caption_cues_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(caption_cues)").fetchall()}
+    required = {
+        "id", "run_id", "segment_id", "narration_asset_id",
+        "narration_text_hash", "audio_sha256",
+        "cue_index", "segment_cue_index", "text", "start_ms", "end_ms",
+        "line_count", "char_count", "timing_source", "warnings_json",
+        "superseded_at", "created_at",
+    }
+    assert required <= cols, f"Missing columns: {required - cols}"
+
+
+def test_v12_caption_review_events_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(caption_review_events)").fetchall()}
+    required = {
+        "id", "run_id", "cue_id", "segment_id", "narration_asset_id", "narration_run_id",
+        "plan_id", "script_id", "topic_id", "voice_profile_id",
+        "provider", "model", "voice_id", "experiment_id",
+        "caption_schema_version", "segmentation_version", "timing_algorithm_version",
+        "style_version", "exporter_version",
+        "event_type", "reason_code", "severity", "expected_correction", "notes", "actor",
+        "created_at",
+    }
+    assert required <= cols, f"Missing columns: {required - cols}"
+
+
+def test_v12_caption_runs_unique_input_hash(db: sqlite3.Connection) -> None:
+    """UNIQUE(narration_run_id, input_hash) is enforced on caption_runs."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO caption_runs"
+        " (narration_run_id, plan_id, script_id, topic_id, input_hash,"
+        "  caption_schema_version, segmentation_version, timing_algorithm_version,"
+        "  style_version, exporter_version, created_at, updated_at)"
+        " VALUES (1, 1, 1, 1, 'hash-abc',"
+        "  'Caption-v1', 'seg-v1', 'timing-v1', 'style-v1', 'exp-v1',"
+        "  '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.commit()
+    import pytest as _pytest
+    with _pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO caption_runs"
+            " (narration_run_id, plan_id, script_id, topic_id, input_hash,"
+            "  caption_schema_version, segmentation_version, timing_algorithm_version,"
+            "  style_version, exporter_version, created_at, updated_at)"
+            " VALUES (1, 1, 1, 1, 'hash-abc',"
+            "  'Caption-v1', 'seg-v1', 'timing-v1', 'style-v1', 'exp-v1',"
+            "  '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+        )
+        db.commit()
+
+
+def test_v12_caption_cues_unique_cue_index_per_run(db: sqlite3.Connection) -> None:
+    """UNIQUE(run_id, cue_index) is enforced on caption_cues."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO caption_runs"
+        " (id, narration_run_id, plan_id, script_id, topic_id, input_hash,"
+        "  caption_schema_version, segmentation_version, timing_algorithm_version,"
+        "  style_version, exporter_version, created_at, updated_at)"
+        " VALUES (1, 1, 1, 1, 1, 'h1',"
+        "  'Caption-v1', 'sv1', 'tv1', 'stv1', 'ev1',"
+        "  '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.execute(
+        "INSERT INTO caption_cues"
+        " (run_id, segment_id, narration_asset_id, narration_text_hash, audio_sha256,"
+        "  cue_index, segment_cue_index, text, start_ms, end_ms,"
+        "  line_count, char_count, timing_source, created_at)"
+        " VALUES (1, 1, 1, 'th1', 'ah1', 0, 0, 'Hello', 0, 2000, 1, 5, 'estimated',"
+        "  '2024-01-01T00:00:00')"
+    )
+    db.commit()
+    import pytest as _pytest
+    with _pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO caption_cues"
+            " (run_id, segment_id, narration_asset_id, narration_text_hash, audio_sha256,"
+            "  cue_index, segment_cue_index, text, start_ms, end_ms,"
+            "  line_count, char_count, timing_source, created_at)"
+            " VALUES (1, 1, 1, 'th1', 'ah1', 0, 1, 'World', 2000, 4000, 1, 5, 'estimated',"
+            "  '2024-01-01T00:00:00')"
+        )
+        db.commit()
+
+
+def test_v12_caption_cues_event_type_check(db: sqlite3.Connection) -> None:
+    """event_type CHECK constraint rejects unknown event types on caption_review_events."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    import pytest as _pytest
+    with _pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO caption_review_events"
+            " (run_id, narration_run_id, plan_id, script_id, topic_id, voice_profile_id,"
+            "  provider, model, voice_id,"
+            "  caption_schema_version, segmentation_version, timing_algorithm_version,"
+            "  style_version, exporter_version, event_type, created_at)"
+            " VALUES (1, 1, 1, 1, 1, 1,"
+            "  'mock', 'm1', 'v1',"
+            "  'Caption-v1', 'sv1', 'tv1', 'stv1', 'ev1', 'unknown_event',"
+            "  '2024-01-01T00:00:00')"
+        )
+        db.commit()
+
+
+def test_migration_v11_to_v12(tmp_path: Path) -> None:
+    """A v11 database gains caption tables on next open_db."""
+    from app.core.database import SCHEMA_VERSION, _get_version, _set_version
+
+    conn = open_db(tmp_path / "v11.db")
+    for tbl in ("caption_review_events", "caption_cues", "caption_runs"):
+        conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    _set_version(conn, 11)
+    conn.commit()
+    conn.close()
+
+    conn2 = open_db(tmp_path / "v11.db")
+    assert _get_version(conn2) == SCHEMA_VERSION
+    assert SCHEMA_VERSION == 12
+    tables = {
+        r[0]
+        for r in conn2.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "caption_runs" in tables
+    assert "caption_cues" in tables
+    assert "caption_review_events" in tables
     conn2.close()
