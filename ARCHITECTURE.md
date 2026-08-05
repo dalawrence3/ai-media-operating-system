@@ -25,13 +25,14 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 4 M4.2 complete)
+## Current state (Phase 5 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=8): `topics`, `sources`, `scripts`,
+- Versioned schema (SCHEMA_VERSION=9): `topics`, `sources`, `scripts`,
   `runs`, `ai_calls`, Phase 3 intelligence tables, `source_contents`,
-  plus Phase 4.2 claim extraction tables.
+  Phase 4.2 claim extraction tables, plus Phase 5 `script_generation_runs`
+  and `script_citations` tables.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
 - Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
@@ -107,6 +108,29 @@ optional adapters after YouTube is stable.
 - Phase 4 Milestone 4.2 — Evidence & Claim Extraction:
   - New DB tables: `claim_extraction_runs`, `claim_extraction_run_calls`,
     `claims` (SCHEMA_VERSION 8); v7→v8 migration
+- Phase 5 — Script Generation:
+  - SCHEMA_VERSION 9: `scripts` extended with `body_json`, `format`,
+    `approved_at`, `superseded_at`; new `script_generation_runs` (26 cols)
+    and `script_citations` (6 cols) tables; v8→v9 migration
+  - `src/app/content/` package: `constants`, `errors`, `schemas` (Pydantic
+    strict models for LLM output + internal representations), `hashing`
+    (SHA-256 evidence/prompt/input hashes; canonical `sort_evidence()`),
+    `renderer` (deterministic `render_body()`; word count; duration),
+    `validator` (12-step validation pipeline; `ValidationResult`),
+    `models` (`ScriptGenerationRun`, `ScriptGenerationRunStatus`),
+    `repository` (generation run CRUD; atomic `finalize_generation_run()`
+    SAVEPOINT; `get_active_approved_generated_script()` Phase 6 handoff),
+    `generator` (`generate_script()` orchestrator)
+  - Prompt: `src/app/ai/prompts/script-generation/v1.toml`
+  - Evidence hash is independent of prompt/settings; input hash combines all
+    behavior-affecting versions; idempotency via `input_hash` lookup
+  - `approve_script()` in core repository: atomic SAVEPOINT supersession of
+    prior active approved Scripts; `superseded_at` set on prior Scripts
+  - CLI: `ace scripts generate <topic_id>`, `ace scripts approve <script_id>`,
+    `ace scripts show <script_id>`, `ace scripts runs <topic_id>`,
+    `ace scripts citations <script_id>`
+  - Phase 6 boundary: `get_active_approved_generated_script()` raises
+    `UnstructuredApprovedScriptError` for manually created scripts
   - Supersession model: `superseded_at` + `superseded_by_run_id` columns on
     runs (not a status value); status CHECK: `running/completed/partial/failed`
   - `src/app/research/chunking.py`: paragraph-aware chunker with exact offset
@@ -188,14 +212,17 @@ src/app/
 │   ├── claim_risk.py         # Deterministic date-review risk flags
 │   ├── extractor.py          # extract_claims() orchestrator
 │   └── repository.py         # get_or_create_source, create/get source_contents, claim extraction layer
-├── content/                  # Phase 5: Content generation
-│   ├── brief.py              # Content brief assembly
-│   ├── hooks.py              # Hook generation and scoring
-│   ├── generator.py          # Script generation
-│   ├── critique.py           # Script critique
-│   ├── revision.py           # Revision loop
-│   ├── metadata.py           # Title, description, tags
-│   └── originality.py        # Originality check
+├── content/                  # Phase 5: Script generation (implemented)
+│   ├── __init__.py
+│   ├── constants.py          # Named constants: WPM, duration bounds, versions, defaults
+│   ├── errors.py             # Typed exception hierarchy (ScriptGenerationError, etc.)
+│   ├── schemas.py            # LLMGeneratedScript, GeneratedScript, ScriptCitation, ApprovedScript
+│   ├── hashing.py            # sort_evidence(), compute_evidence/prompt/input_hash()
+│   ├── renderer.py           # render_body(), strip_markers(), count_words(), compute_duration_s()
+│   ├── validator.py          # validate_script() 12-step pipeline; ValidationResult
+│   ├── models.py             # ScriptGenerationRun, ScriptGenerationRunStatus
+│   ├── repository.py         # Generation run CRUD; finalize_generation_run() SAVEPOINT; Phase 6 handoff
+│   └── generator.py          # generate_script() orchestrator; GenerationResult
 ├── media/                    # Phases 6–8: Production
 │   ├── narration.py          # TTS provider abstraction and audio generation
 │   ├── captions.py           # SRT/VTT caption generation

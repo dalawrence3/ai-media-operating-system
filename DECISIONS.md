@@ -871,3 +871,55 @@ committed without the corresponding run status update. Using one SAVEPOINT
 ensures either all claims and the status land together or none do. The
 fallback `UPDATE ... SET status='failed'` runs outside the SAVEPOINT so it
 can still commit even after the SAVEPOINT rolls back.
+
+---
+
+## Phase 5 — Script Generation
+
+---
+
+**D-P5-1 — Single canonical sort_evidence() used everywhere**
+
+**Decision:** `sort_evidence()` (5-key: quality DESC NULL-last, requires_date_review ASC, claim_type ASC, source_id ASC, claim_id ASC) is the sole ordering function for evidence. It is called by `compute_evidence_hash()` internally, by the prompt-context formatter, and by the evidence IDs JSON in generation runs.
+
+**Reasoning:** Any drift between the ordering used for hashing and the ordering used for prompt construction would break reproducibility and idempotency. A single function enforced everywhere eliminates that class of bug.
+
+---
+
+**D-P5-2 — body_json as canonical script representation**
+
+**Decision:** `body_json` stores the full `GeneratedScript` as a JSON blob (Pydantic model_dump_json). `body` is produced only by deterministic `render_body()` and is derived from `body_json`. Manual scripts retain `body_json = NULL`.
+
+**Reasoning:** Downstream phases (Phase 6 narration, Phase 10 publishing) need structured access to sections and cited_claim_ids. Storing the raw JSON allows re-rendering, re-validation, and structured access without re-parsing free text.
+
+---
+
+**D-P5-3 — approve_script() supersedes via SAVEPOINT, no partial unique index**
+
+**Decision:** There is no partial unique index on `scripts(topic_id) WHERE status='approved'`. Approval uniqueness is enforced transactionally: `approve_script()` sets `superseded_at` on all prior active approved Scripts within a SAVEPOINT before approving the new one. Prior approved Scripts keep `status='approved'`.
+
+**Reasoning:** A partial unique index would reject historical data (v8 had multiple approved scripts per topic) and would conflict with the non-destructive supersession model. Transactional enforcement is sufficient and more flexible.
+
+---
+
+**D-P5-4 — Evidence hash independent of prompt hash and generation settings**
+
+**Decision:** `compute_evidence_hash()` depends only on claim fields. `compute_prompt_hash()` depends only on prompt name/version/system/user_template. `compute_script_input_hash()` combines both plus all behavior-affecting settings (model, temperature, versions, tone, audience, target_duration_s).
+
+**Reasoning:** Independence allows detecting which axis changed when a re-run is triggered. If only settings changed, the evidence hash is unchanged, which is useful for audit. Combined into input_hash for idempotency lookup.
+
+---
+
+**D-P5-5 — record_ai_call() called outside any SAVEPOINT**
+
+**Decision:** In `generate_script()`, `record_ai_call()` is always called before `finalize_generation_run()` and outside any SAVEPOINT. The `ai_call_id` is passed into `finalize_generation_run()` as a parameter.
+
+**Reasoning:** `record_ai_call()` auto-commits, which would implicitly release any open SAVEPOINT. Calling it inside a SAVEPOINT would silently commit partial state. Calling it first ensures the call is recorded even if finalization fails.
+
+---
+
+**D-P5-6 — UnstructuredApprovedScriptError at Phase 6 boundary**
+
+**Decision:** `get_active_approved_generated_script()` raises `UnstructuredApprovedScriptError` if the active approved Script has `body_json=NULL` (manually created via `ace scripts add`). It does not attempt to parse `body` as JSON.
+
+**Reasoning:** Phase 6 narration requires structured section data that only exists in `body_json`. A manual script's `body` field is free text with no guaranteed structure. Failing loudly at the boundary forces the operator to generate a new script rather than silently producing malformed narration.

@@ -800,16 +800,91 @@ def scripts_list(
         typer.echo(f"[{s.id}] v{s.version}  status={s.status.value}  {preview!r}")
 
 
+@scripts_app.command("generate")
+def scripts_generate(
+    topic_id: Annotated[int, typer.Argument(help="Topic ID to generate a script for.")],
+    allow_no_evidence: Annotated[
+        bool,
+        typer.Option("--allow-no-evidence", help="Generate even when no evidence exists."),
+    ] = False,
+    replace: Annotated[
+        int | None,
+        typer.Option("--replace", help="Generation run ID to supersede with this run."),
+    ] = None,
+    tone: Annotated[str, typer.Option("--tone", help="Script tone.")] = "conversational",
+    audience: Annotated[str, typer.Option("--audience", help="Target audience description.")] = "",
+    target_duration: Annotated[
+        int, typer.Option("--target-duration", help="Target duration in seconds.")
+    ] = 45,
+    prompt_version: Annotated[
+        str, typer.Option("--prompt-version", help="Prompt version to use.")
+    ] = "1",
+) -> None:
+    """Generate a script for TOPIC_ID using active evidence and an LLM."""
+    from app.content.errors import NoActiveEvidenceError, ScriptGenerationError
+    from app.content.generator import generate_script
+    from app.core.repository import get_topic
+    from app.research.errors import AIError
+    from app.research.extractor import _build_provider
+    from app.research.repository import list_active_evidence_for_topic
+
+    cfg = get_config()
+    configure_logging(cfg.log_level)
+    conn = _get_db()
+
+    topic = get_topic(conn, topic_id)
+    if topic is None:
+        typer.echo(f"Error: Topic {topic_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    evidence = list_active_evidence_for_topic(conn, topic_id)
+
+    provider = _build_provider(cfg)
+
+    try:
+        result = generate_script(
+            conn,
+            provider,
+            topic,
+            evidence,
+            allow_no_evidence=allow_no_evidence,
+            replace_run_id=replace,
+            target_duration_s=target_duration,
+            tone=tone,
+            audience=audience,
+            prompt_version=prompt_version,
+        )
+    except NoActiveEvidenceError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        typer.echo("Tip: use --allow-no-evidence to generate without evidence.", err=True)
+        raise typer.Exit(1) from None
+    except (ScriptGenerationError, AIError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    if result.was_idempotent:
+        typer.echo(f"Idempotent: returning existing run {result.run_id}.")
+    typer.echo(
+        f"Script {result.script_id} generated  "
+        f"(run {result.run_id}, {result.word_count} words, ~{result.duration_s}s)"
+    )
+    if result.warnings:
+        for w in result.warnings:
+            typer.echo(f"  Warning: {w}", err=True)
+
+
 @scripts_app.command("approve")
 def scripts_approve(
     script_id: Annotated[int, typer.Argument(help="Script ID to approve.")],
 ) -> None:
-    """Mark a script as approved."""
+    """Approve a script (atomically supersedes the previous approved script)."""
+    from app.core.repository import approve_script, get_script
+
     conn = _get_db()
-    s = update_script_status(conn, script_id, ScriptStatus.approved)
-    if s is None:
+    if get_script(conn, script_id) is None:
         typer.echo(f"Script {script_id} not found.", err=True)
         raise typer.Exit(1)
+    approve_script(conn, script_id)
     typer.echo(f"Script {script_id} approved.")
 
 
@@ -824,6 +899,96 @@ def scripts_reject(
         typer.echo(f"Script {script_id} not found.", err=True)
         raise typer.Exit(1)
     typer.echo(f"Script {script_id} rejected.")
+
+
+@scripts_app.command("show")
+def scripts_show(
+    script_id: Annotated[int, typer.Argument(help="Script ID to display.")],
+) -> None:
+    """Display full details and body of a script."""
+    import json as _json
+
+    from app.content.schemas import GeneratedScript
+    from app.core.repository import get_script
+
+    conn = _get_db()
+    s = get_script(conn, script_id)
+    if s is None:
+        typer.echo(f"Script {script_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Script {s.id}  v{s.version}  [{s.status.value}]  topic={s.topic_id}")
+    if s.approved_at:
+        typer.echo(f"  Approved at:   {s.approved_at}")
+    if s.superseded_at:
+        typer.echo(f"  Superseded at: {s.superseded_at}")
+    typer.echo("")
+
+    if s.body_json:
+        try:
+            gs = GeneratedScript.model_validate(_json.loads(s.body_json))
+            typer.echo(f"Title: {gs.title}")
+            typer.echo("")
+            for sec in gs.sections:
+                typer.echo(f"[{sec.section_type.upper()}]")
+                typer.echo(sec.text)
+                if sec.cited_claim_ids:
+                    typer.echo(f"  Citations: {sec.cited_claim_ids}")
+                typer.echo("")
+        except Exception:
+            typer.echo(s.body)
+    else:
+        typer.echo(s.body)
+
+
+@scripts_app.command("runs")
+def scripts_runs(
+    topic_id: Annotated[int, typer.Argument(help="Topic ID.")],
+) -> None:
+    """List script generation runs for a topic."""
+    from app.content.repository import list_generation_runs
+
+    conn = _get_db()
+    runs = list_generation_runs(conn, topic_id)
+    if not runs:
+        typer.echo(f"No generation runs for topic {topic_id}.")
+        return
+
+    typer.echo(f"{'ID':>6}  {'Status':<10}  {'Script':>7}  {'Words':>5}  {'Dur':>4}  Started")
+    typer.echo("-" * 70)
+    for r in runs:
+        sup = " [superseded]" if r.superseded_at else ""
+        words = str(r.computed_word_count) if r.computed_word_count is not None else "-"
+        dur = f"{r.computed_duration_s}s" if r.computed_duration_s is not None else "-"
+        script_col = str(r.script_id) if r.script_id else "-"
+        typer.echo(
+            f"{r.id:>6}  {r.status.value:<10}  {script_col:>7}"
+            f"  {words:>5}  {dur:>4}  {r.started_at[:19]}{sup}"
+        )
+
+
+@scripts_app.command("citations")
+def scripts_citations(
+    script_id: Annotated[int, typer.Argument(help="Script ID.")],
+) -> None:
+    """List citations for a script."""
+    from app.content.repository import list_citations
+    from app.core.repository import get_script
+
+    conn = _get_db()
+    if get_script(conn, script_id) is None:
+        typer.echo(f"Script {script_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    cits = list_citations(conn, script_id)
+    if not cits:
+        typer.echo(f"No citations for script {script_id}.")
+        return
+
+    typer.echo(f"{'Order':>5}  {'Section':>7}  ClaimID")
+    typer.echo("-" * 30)
+    for c in cits:
+        typer.echo(f"{c.citation_order:>5}  {c.section_index:>7}  {c.claim_id}")
 
 
 # ---------------------------------------------------------------------------

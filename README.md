@@ -14,11 +14,12 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 4 Milestone 4.1 (Source Ingestion) is complete.**
+**Phase 5 (Script Generation) is complete.**
 
-The system can fetch URLs, ingest local files, extract content, compute
-deterministic quality scores, and persist source content with full
-idempotency and SSRF protection. 696 tests pass.
+The system can research a topic end-to-end — from channel strategy through
+source ingestion, claim extraction, and LLM-driven script generation — with
+full deterministic validation, citation tracking, and atomic human approval.
+999 tests pass. SCHEMA_VERSION 9.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -46,9 +47,37 @@ Implemented phases:
   - Deterministic quality scoring (7 factors, weights sum to 1.0)
   - Idempotency via `normalized_text_hash`; `--force` to override
   - CLI: `ace sources fetch`, `ace sources ingest-file`, `ace sources quality`
+- **Phase 4 M4.2** — Evidence and claim extraction:
+  - Paragraph-aware chunking with exact offset invariant and input hash
+  - LLM-driven claim extraction (Pydantic strict output, per-chunk AI calls)
+  - Quote support classification: exact → normalized → unsupported → no_quote
+  - Deterministic date-review risk flags (4 rules)
+  - Atomic finalization with supersession model (`superseded_at` + `superseded_by_run_id`)
+  - SCHEMA_VERSION 8: `claim_extraction_runs`, `claim_extraction_run_calls`, `claims`
+  - CLI: `ace sources extract-claims`, `ace sources list-claims`, `ace sources claim-runs`
+- **Phase 5** — Script generation:
+  - `src/app/content/` package: constants, errors, schemas, hashing, renderer,
+    validator, models, repository, generator
+  - SCHEMA_VERSION 9: `scripts` extended with `body_json`, `format`, `approved_at`,
+    `superseded_at`; new `script_generation_runs` and `script_citations` tables
+  - Canonical `sort_evidence()` ordering used for prompt context, evidence hash,
+    and reproducibility
+  - 12-step `validate_script()` pipeline: malformed-marker rejection, bidirectional
+    citation marker/ID equivalence, claim existence, duration bounds (15–90 s),
+    zero-evidence mode
+  - Atomic `finalize_generation_run()`: SAVEPOINT covers script insert, citation
+    insert, run completion, and optional prior-run supersession
+  - Atomic `approve_script()`: supersedes prior active approved script before
+    approving; prior scripts retain `status='approved'` and receive `superseded_at`
+  - Idempotency via SHA-256 `input_hash` (evidence + prompt + all settings)
+  - Phase 6 handoff: `get_active_approved_generated_script()` raises
+    `UnstructuredApprovedScriptError` for manually created scripts
+  - Prompt: `src/app/ai/prompts/script-generation/v1.toml`
+  - CLI: `ace scripts generate`, `ace scripts approve`, `ace scripts show`,
+    `ace scripts runs`, `ace scripts citations`
 
-End-to-end workflow: channel strategy → discovery → scoring → topic
-promotion → source ingestion → quality review.
+End-to-end workflow: channel strategy → discovery → scoring → topic promotion
+→ source ingestion → claim extraction → script generation → human approval.
 
 ## Requirements
 

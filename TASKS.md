@@ -193,72 +193,54 @@ claims with source provenance.
 
 ---
 
-### Phase 5 — Content Generation
+### Phase 5 — Script Generation ✅ COMPLETE
 
-**Objective:** Generate original, source-grounded scripts, hooks, titles,
-descriptions, and YouTube metadata with LLM critique and human approval.
+**Objective:** Generate source-grounded short-form scripts with deterministic
+validation, citation tracking, and atomic approval.
 
-**Business value:** This is the primary content output. Quality here
-determines watch time, retention, and algorithmic distribution.
+**Business value:** This is the primary content output for Shorts. Quality
+here — grounding in evidence, citation accuracy, duration fit — determines
+watch time, retention, and algorithmic distribution.
 
-**Technical scope:**
-- `src/app/content/` package
-- Content brief: structured summary of topic, angle, target audience,
-  format (Shorts/long-form), available claims, key sources
-- Hook generation: 3–5 hook options per brief, scored against hook rubric
-  (clarity, curiosity, specificity, platform fit)
-- Script generation: structured output — hook, body sections, call to action;
-  target word count based on format (Shorts ≈ 60–90 words spoken)
-- Script critique: LLM evaluates against fixed rubric (accuracy, originality,
-  hook strength, pacing, claim support, platform fit); returns structured
-  critique with pass/fail per criterion
-- Revision loop: up to N attempts (configurable) if critique fails; each
-  attempt stored as a new script version
-- Human approval: CLI presents script + critique; human approves, rejects,
-  or requests manual revision
-- Title generation: 3–5 options; scored against YouTube title rubric (≤60
-  chars, front-loaded keyword, curiosity gap, no clickbait)
-- Description generation: structured description with hook sentence, key
-  points, call to action, source credits, hashtags
-- Tags: keyword list respecting YouTube tag guidelines
-- Originality check: compare script against recent published scripts in DB
-  using token overlap; flag if similarity exceeds threshold
-- Prompt versioning: all generation prompts tracked via Phase 2 registry
+**Technical scope (implemented):**
+- `src/app/content/` package: `constants`, `errors`, `schemas`, `hashing`,
+  `renderer`, `validator`, `models`, `repository`, `generator`
+- SCHEMA_VERSION 9: `scripts` extended with `body_json`, `format`,
+  `approved_at`, `superseded_at`; new `script_generation_runs` and
+  `script_citations` tables; v8→v9 migration
+- `sort_evidence()`: canonical 5-key ordering used for prompt context,
+  evidence hash, reproducibility (invariant 4)
+- `validate_script()`: 12-step pipeline; bidirectional marker/ID equivalence,
+  duration bounds (15–90 s), zero-evidence mode (invariant 11)
+- `finalize_generation_run()`: SAVEPOINT — INSERT script → INSERT citations →
+  UPDATE run → optional supersede prior run → RELEASE → commit once
+- `approve_script()`: SAVEPOINT — supersede prior active approved Scripts →
+  set `approved_at` → RELEASE; prior scripts retain `status='approved'` and
+  receive `superseded_at` (invariants 18–20)
+- Idempotency: `find_completed_run_by_input_hash()` returns existing completed
+  non-superseded run; `was_idempotent=True` in result
+- Phase 6 handoff: `get_active_approved_generated_script()` raises
+  `UnstructuredApprovedScriptError` for manual scripts (invariants 24–25)
+- Prompt: `src/app/ai/prompts/script-generation/v1.toml`
 
 **Dependencies:** Phase 1, Phase 2 (LLM), Phase 4 (claims and sources).
 
-**Database changes:**
-- Extend `scripts` table: `format`, `word_count`, `hook_id`,
-  `critique_passed`, `critique_json`, `originality_score`
-- New `hooks` table: `(id, topic_id, hook_text, score, selected, created_at)`
-- New `metadata_drafts` table: `(id, script_id, title, description, tags_json,
-  created_at, approved_at)`
-
 **Interfaces:**
-- `ace content brief <topic_id>` — generate and display content brief
-- `ace content generate <topic_id>` — run full generation pipeline
-- `ace content approve <script_id>` — human approval gate
-- `ace content metadata <script_id>` — generate title/description/tags
+- `ace scripts generate <topic_id>` — generate from active evidence
+- `ace scripts approve <script_id>` — atomic approval with supersession
+- `ace scripts show <script_id>` — display script body and metadata
+- `ace scripts runs <topic_id>` — list generation run history
+- `ace scripts citations <script_id>` — list evidence citations
 
-**Tests:** Mock LLM; test brief assembly; test critique pass/fail logic;
-test revision loop termination; test originality threshold; test metadata
-schema validation.
+**Tests:** 999 passing (17 generator tests, 22 content-repository tests,
+34 validator tests, 25 renderer tests, 31 hashing tests, 20 schema tests,
+6 constant tests, plus extended database and core repository tests).
 
-**Human approval gates:** Script approval (after critique); metadata review
-before proceeding to production.
+**Definition of done:** ✅ All 26 invariants enforced, Ruff clean, 999 tests
+passing, documentation updated.
 
-**Risks:** LLM producing non-grounded claims; revision loop not converging;
-originality check being too strict or too lenient; Shorts scripts being too
-long.
-
-**Definition of done:** Full pipeline runs from topic to approved script and
-metadata; critique failures trigger revision; originality flags fire at
-threshold; all tests pass; ruff clean.
-
-**Demonstrable capability:** `ace content generate <topic_id>` → human
-reviews critique → `ace content approve <script_id>` → metadata generated.
-
-**What waits:** Narration, video production, publishing.
+**What waits:** Phase 6 narration (receives `ApprovedScript` from
+`get_active_approved_generated_script()`).
 
 ---
 

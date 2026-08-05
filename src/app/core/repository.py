@@ -41,6 +41,7 @@ def _row_to_source(row: sqlite3.Row) -> Source:
 
 
 def _row_to_script(row: sqlite3.Row) -> Script:
+    keys = row.keys()
     return Script(
         id=row["id"],
         topic_id=row["topic_id"],
@@ -49,6 +50,10 @@ def _row_to_script(row: sqlite3.Row) -> Script:
         status=ScriptStatus(row["status"]),
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
+        body_json=row["body_json"] if "body_json" in keys else None,
+        format=row["format"] if "format" in keys else "short",
+        approved_at=row["approved_at"] if "approved_at" in keys else None,
+        superseded_at=row["superseded_at"] if "superseded_at" in keys else None,
     )
 
 
@@ -209,6 +214,66 @@ def next_script_version(conn: sqlite3.Connection, topic_id: int) -> int:
         "SELECT MAX(version) FROM scripts WHERE topic_id = ?", (topic_id,)
     ).fetchone()
     return (row[0] or 0) + 1
+
+
+def approve_script(conn: sqlite3.Connection, script_id: int) -> Script | None:
+    """Atomically supersede any prior active approved Script then approve this one.
+
+    SAVEPOINT order (invariant 19):
+      1. supersede prior active approved Scripts for this topic
+      2. set approved_at on the selected Script
+      3. RELEASE — commit once
+
+    Superseded Scripts retain status='approved' and receive superseded_at (invariant 20).
+    No partial unique index is used — enforcement is transactional only (invariant 21).
+    """
+    now = _now()
+    script_row = conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone()
+    if script_row is None:
+        return None
+
+    topic_id = script_row["topic_id"]
+
+    conn.execute("SAVEPOINT approve_script")
+    try:
+        conn.execute(
+            """
+            UPDATE scripts
+               SET superseded_at = ?
+             WHERE topic_id = ?
+               AND id != ?
+               AND status = 'approved'
+               AND superseded_at IS NULL
+            """,
+            (now, topic_id, script_id),
+        )
+        conn.execute(
+            "UPDATE scripts SET status='approved', approved_at=?, updated_at=? WHERE id=?",
+            (now, now, script_id),
+        )
+        conn.execute("RELEASE approve_script")
+    except Exception:
+        conn.execute("ROLLBACK TO approve_script")
+        conn.execute("RELEASE approve_script")
+        raise
+    conn.commit()
+    return get_script(conn, script_id)
+
+
+def get_active_approved_script(conn: sqlite3.Connection, topic_id: int) -> Script | None:
+    """Return the most-recently approved, non-superseded Script for a Topic, or None."""
+    row = conn.execute(
+        """
+        SELECT * FROM scripts
+         WHERE topic_id = ?
+           AND status = 'approved'
+           AND superseded_at IS NULL
+         ORDER BY approved_at DESC, id DESC
+         LIMIT 1
+        """,
+        (topic_id,),
+    ).fetchone()
+    return _row_to_script(row) if row else None
 
 
 # ---------------------------------------------------------------------------

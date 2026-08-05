@@ -76,8 +76,10 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     # open_db already migrates to SCHEMA_VERSION; reset it to 2 to simulate a pre-v3 DB
     conn.execute("DELETE FROM schema_version")
     conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-    # Drop Phase 3/4/5/6 tables and columns to simulate a real v2 state
+    # Drop Phase 3–9 tables and columns to simulate a real v2 state
     for tbl in (
+        "script_citations",
+        "script_generation_runs",
         "opportunity_state_events",
         "opportunity_source_evidence",
         "opportunity_observations",
@@ -92,7 +94,10 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
         "channels",
     ):
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
-    # Remove v6 additions from topics (SQLite 3.35+ required for DROP COLUMN)
+    # Remove v9 script columns (SQLite 3.35+ required for DROP COLUMN)
+    for col in ("body_json", "format", "approved_at", "superseded_at"):
+        conn.execute(f"ALTER TABLE scripts DROP COLUMN {col}")
+    # Remove v6 additions from topics
     conn.execute("DROP INDEX IF EXISTS uq_topics_promoted_opportunity")
     conn.execute("ALTER TABLE topics DROP COLUMN promoted_opportunity_id")
     conn.commit()
@@ -112,12 +117,12 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     conn2.close()
 
 
-def test_schema_version_is_8(tmp_path: Path) -> None:
+def test_schema_version_is_9(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version
 
     conn = open_db(tmp_path / "test.db")
-    assert SCHEMA_VERSION == 8
-    assert _get_version(conn) == 8
+    assert SCHEMA_VERSION == 9
+    assert _get_version(conn) == 9
     conn.close()
 
 
@@ -213,13 +218,16 @@ def test_run_calls_unique_constraint(db: sqlite3.Connection) -> None:
 
 
 def test_migration_v7_to_v8(tmp_path: Path) -> None:
-    """A v7 database gains claim tables on next open_db."""
+    """A v7 database gains claim tables and v9 script columns on next open_db."""
     from app.core.database import SCHEMA_VERSION, _get_version, _set_version
 
     conn = open_db(tmp_path / "v7.db")
     _set_version(conn, 7)
-    for tbl in ("claims", "claim_extraction_run_calls", "claim_extraction_runs"):
+    for tbl in ("script_citations", "script_generation_runs",
+                "claims", "claim_extraction_run_calls", "claim_extraction_runs"):
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    for col in ("body_json", "format", "approved_at", "superseded_at"):
+        conn.execute(f"ALTER TABLE scripts DROP COLUMN {col}")
     conn.commit()
     conn.close()
 
@@ -234,6 +242,7 @@ def test_migration_v7_to_v8(tmp_path: Path) -> None:
     assert "claim_extraction_runs" in tables
     assert "claim_extraction_run_calls" in tables
     assert "claims" in tables
+    assert "script_generation_runs" in tables
     conn2.close()
 
 
@@ -272,13 +281,18 @@ def test_source_contents_indexes_exist(db: sqlite3.Connection) -> None:
 
 
 def test_migration_v6_to_v7(tmp_path: Path) -> None:
-    """A v6 database gains source_contents on next open_db."""
+    """A v6 database gains source_contents and v9 script columns on next open_db."""
     from app.core.database import SCHEMA_VERSION, _get_version, _set_version
 
     conn = open_db(tmp_path / "v6.db")
-    # Simulate v6 state: reset version and drop the v7 table
+    # Simulate v6 state: reset version and drop v7+ tables/columns
     _set_version(conn, 6)
-    conn.execute("DROP TABLE IF EXISTS source_contents")
+    for tbl in ("script_citations", "script_generation_runs",
+                "claims", "claim_extraction_run_calls", "claim_extraction_runs",
+                "source_contents"):
+        conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    for col in ("body_json", "format", "approved_at", "superseded_at"):
+        conn.execute(f"ALTER TABLE scripts DROP COLUMN {col}")
     conn.commit()
     conn.close()
 
@@ -325,9 +339,15 @@ def test_migration_v5_to_v6_preserves_existing_topics(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version
 
     conn = open_db(tmp_path / "v5.db")
-    # Simulate v5 state: reset version, remove v6 column
+    # Simulate v5 state: reset version, remove v6+ tables/columns
     conn.execute("DELETE FROM schema_version")
     conn.execute("INSERT INTO schema_version (version) VALUES (5)")
+    for tbl in ("script_citations", "script_generation_runs",
+                "claims", "claim_extraction_run_calls", "claim_extraction_runs",
+                "source_contents"):
+        conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    for col in ("body_json", "format", "approved_at", "superseded_at"):
+        conn.execute(f"ALTER TABLE scripts DROP COLUMN {col}")
     conn.execute("DROP INDEX IF EXISTS uq_topics_promoted_opportunity")
     conn.execute("ALTER TABLE topics DROP COLUMN promoted_opportunity_id")
     # Insert a manual topic in this simulated v5 state
@@ -357,3 +377,104 @@ def test_unknown_schema_version_raises(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="Unsupported schema version"):
         open_db(tmp_path / "test.db")
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 (Script generation) schema tests
+# ---------------------------------------------------------------------------
+
+
+def test_migration_v8_to_v9(tmp_path: Path) -> None:
+    """A v8 database gains script_generation_runs, script_citations, and new script columns."""
+    from app.core.database import SCHEMA_VERSION, _get_version, _set_version
+
+    conn = open_db(tmp_path / "v8.db")
+    _set_version(conn, 8)
+    for tbl in ("script_citations", "script_generation_runs"):
+        conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    for col in ("body_json", "format", "approved_at", "superseded_at"):
+        conn.execute(f"ALTER TABLE scripts DROP COLUMN {col}")
+    conn.commit()
+    conn.close()
+
+    conn2 = open_db(tmp_path / "v8.db")
+    assert _get_version(conn2) == SCHEMA_VERSION
+    tables = {
+        r[0]
+        for r in conn2.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "script_generation_runs" in tables
+    assert "script_citations" in tables
+    cols = {row[1] for row in conn2.execute("PRAGMA table_info(scripts)").fetchall()}
+    assert {"body_json", "format", "approved_at", "superseded_at"} <= cols
+    conn2.close()
+
+
+def test_v9_scripts_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(scripts)").fetchall()}
+    assert {"body_json", "format", "approved_at", "superseded_at"} <= cols
+
+
+def test_v9_script_generation_runs_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(script_generation_runs)").fetchall()}
+    required = {
+        "id", "topic_id", "script_id", "status", "input_hash", "evidence_hash",
+        "prompt_hash", "prompt_name", "prompt_version", "model", "temperature",
+        "max_tokens", "tone", "audience", "target_duration_s",
+        "computed_word_count", "computed_duration_s", "warnings_json",
+        "requires_evidence_review", "ai_call_id", "error_message",
+        "superseded_at", "superseded_by_run_id", "started_at", "completed_at", "created_at",
+    }
+    assert required <= cols
+
+
+def test_v9_script_citations_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(script_citations)").fetchall()}
+    assert {"id", "script_id", "claim_id", "section_index", "citation_order", "created_at"} <= cols
+
+
+def test_v9_no_partial_unique_approval_index(db: sqlite3.Connection) -> None:
+    indexes = {
+        r[0]
+        for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    }
+    assert not any("approved" in n for n in indexes)
+
+
+def test_v9_scripts_format_default(db: sqlite3.Connection) -> None:
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO scripts (topic_id, version, body, status, created_at, updated_at)"
+        " VALUES (1, 1, 'body', 'draft', '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.commit()
+    row = db.execute("SELECT format FROM scripts WHERE version=1").fetchone()
+    assert row["format"] == "short"
+
+
+def test_v9_multiple_approved_scripts_per_topic_allowed(db: sqlite3.Connection) -> None:
+    """No DB-level constraint prevents multiple approved scripts per topic (invariant 21)."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    for v in (1, 2):
+        db.execute(
+            "INSERT INTO scripts (topic_id, version, body, status, created_at, updated_at)"
+            f" VALUES (1, {v}, 'body', 'approved', '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+        )
+    db.commit()
+    count = db.execute(
+        "SELECT COUNT(*) FROM scripts WHERE topic_id=1 AND status='approved'"
+    ).fetchone()[0]
+    assert count == 2
+
+
+def test_v9_indexes_exist(db: sqlite3.Connection) -> None:
+    indexes = {
+        r[0]
+        for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    }
+    assert "idx_sgr_topic" in indexes
+    assert "idx_sgr_input_hash" in indexes
+    assert "idx_sgr_script" in indexes
+    assert "idx_sc_script" in indexes

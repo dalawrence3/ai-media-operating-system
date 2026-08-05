@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -518,6 +518,72 @@ CREATE INDEX IF NOT EXISTS idx_claims_run
 """
 
 
+# Phase 9 DDL — script generation runs and citations; new Script columns.
+# Migration order: ALTER scripts columns first (scripts table already exists from v1),
+# then script_generation_runs (references scripts(id)), then script_citations.
+# No partial unique index on scripts(topic_id) WHERE status='approved' — historical
+# v8 data may contain multiple approved scripts per topic.
+_DDL_V9_SCRIPTS = """
+ALTER TABLE scripts ADD COLUMN body_json TEXT;
+ALTER TABLE scripts ADD COLUMN format TEXT NOT NULL DEFAULT 'short'
+    CHECK(format IN ('short', 'long_form'));
+ALTER TABLE scripts ADD COLUMN approved_at TEXT;
+ALTER TABLE scripts ADD COLUMN superseded_at TEXT;
+
+CREATE TABLE IF NOT EXISTS script_generation_runs (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id                    INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
+    script_id                   INTEGER REFERENCES scripts(id) ON DELETE SET NULL,
+    status                      TEXT    NOT NULL
+                                    CHECK (status IN ('running', 'completed', 'failed')),
+    input_hash                  TEXT    NOT NULL,
+    evidence_hash               TEXT    NOT NULL,
+    prompt_hash                 TEXT    NOT NULL,
+    prompt_name                 TEXT    NOT NULL,
+    prompt_version              TEXT    NOT NULL,
+    model                       TEXT    NOT NULL,
+    temperature                 REAL    NOT NULL,
+    max_tokens                  INTEGER NOT NULL,
+    tone                        TEXT    NOT NULL DEFAULT '',
+    audience                    TEXT    NOT NULL DEFAULT '',
+    target_duration_s           INTEGER NOT NULL,
+    computed_word_count         INTEGER,
+    computed_duration_s         INTEGER,
+    warnings_json               TEXT,
+    requires_evidence_review    INTEGER NOT NULL DEFAULT 0,
+    ai_call_id                  INTEGER REFERENCES ai_calls(id) ON DELETE SET NULL,
+    error_message               TEXT,
+    superseded_at               TEXT,
+    superseded_by_run_id        INTEGER REFERENCES script_generation_runs(id),
+    started_at                  TEXT    NOT NULL,
+    completed_at                TEXT,
+    created_at                  TEXT    NOT NULL
+                                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS script_citations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    script_id       INTEGER NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+    claim_id        INTEGER NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+    section_index   INTEGER NOT NULL,
+    citation_order  INTEGER NOT NULL,
+    created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sgr_topic
+    ON script_generation_runs(topic_id, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_sgr_input_hash
+    ON script_generation_runs(input_hash);
+
+CREATE INDEX IF NOT EXISTS idx_sgr_script
+    ON script_generation_runs(script_id);
+
+CREATE INDEX IF NOT EXISTS idx_sc_script
+    ON script_citations(script_id, section_index, citation_order);
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -548,6 +614,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
+        conn.executescript(_DDL_V9_SCRIPTS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -560,6 +627,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
+        conn.executescript(_DDL_V9_SCRIPTS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -571,6 +639,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
+        conn.executescript(_DDL_V9_SCRIPTS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -581,6 +650,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
+        conn.executescript(_DDL_V9_SCRIPTS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -590,6 +660,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
+        conn.executescript(_DDL_V9_SCRIPTS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -598,6 +669,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V6_PROMOTE)
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
+        conn.executescript(_DDL_V9_SCRIPTS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -605,12 +677,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 6 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
+        conn.executescript(_DDL_V9_SCRIPTS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 7:
         logger.info("Migrating schema from version 7 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V8_CLAIMS)
+        conn.executescript(_DDL_V9_SCRIPTS)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 8:
+        logger.info("Migrating schema from version 8 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V9_SCRIPTS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
