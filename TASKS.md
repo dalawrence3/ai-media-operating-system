@@ -239,8 +239,59 @@ watch time, retention, and algorithmic distribution.
 **Definition of done:** ✅ All 26 invariants enforced, Ruff clean, 999 tests
 passing, documentation updated.
 
-**What waits:** Phase 6 narration (receives `ApprovedScript` from
-`get_active_approved_generated_script()`).
+**What waits:** Phase 6 M6.1 Production Plan (complete — see below).
+
+---
+
+### Phase 6 Milestone 6.1 — Production Plan ✅ COMPLETE
+
+**Objective:** Convert an approved script into a production plan: a structured,
+segment-by-segment breakdown with estimated durations, word counts, and citation
+mappings, ready for narration generation in M6.2.
+
+**Business value:** The production plan is the atomic unit for platform analytics
+(each segment is the granular retention attribution target), review governance
+(approval/rejection workflow with structured review events), and the M6.2
+narration handoff.
+
+**Technical scope (implemented):**
+- `src/app/production/` package: `constants`, `errors`, `hashing`, `models`,
+  `renderer`, `repository`
+- SCHEMA_VERSION 10: four new tables — `production_plans`, `production_segments`,
+  `production_segment_citations`, `production_plan_review_events`; v9→v10
+  migration applied to all existing migration branches
+- Two partial unique indexes for active-plan isolation (normal vs. experiment):
+  `idx_pp_one_active_normal` (WHERE experiment_id IS NULL),
+  `idx_pp_one_active_experiment` (WHERE experiment_id IS NOT NULL)
+- Three version constants bound to `input_hash`; any version change invalidates
+  old plans and forces a new plan row
+- `build_production_plan(approved_script) → ProductionPlanDraft` — pure
+  deterministic function; hard invariant: `segment.narration_text ==
+  strip_markers(section.text)`; unclamped segment duration (no [15,90] clamp)
+- `create_production_plan()` SAVEPOINT (plan → segments → citations);
+  `UNIQUE(script_id, input_hash)` enforces idempotency
+- `approve_production_plan()` SAVEPOINT (supersede prior active normal plan →
+  set approved → insert approved review event)
+- `reject_production_plan()` SAVEPOINT (set rejected → insert rejected review
+  event); prior approved plan is NOT touched
+- `experiment_id TEXT` nullable: all M6.1 plans NULL; enables A/B testing
+  without future migration
+- `production_plan_review_events`: denormalized training-label fields
+  (topic_id, script_id, evidence_hash, model, prompt_hash, experiment_id) for
+  platform-neutral analytics
+- `ApprovedProductionPlan` — frozen Pydantic handoff for M6.2 narration
+- `require_active_approved_production_plan()` raises `NoApprovedProductionPlanError`;
+  `get_active_approved_production_plan()` returns None
+- CLI: `ace production plan/show/list/approve/reject/feedback`
+
+**Tests:** 1155 passing (+156 new: 7 constants, 18 hashing, 22 models, 46
+renderer, 36 repository, 15 CLI, plus extended database tests for v10 schema).
+
+**Definition of done:** ✅ All 39 frozen invariants enforced, Ruff clean, 1155
+tests passing, documentation updated. No M6.2 code written.
+
+**What waits:** Phase 6 M6.2 — narration generation (receives
+`ApprovedProductionPlan` from `get_approved_production_plan_full()`).
 
 ---
 

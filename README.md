@@ -14,12 +14,13 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 5 (Script Generation) is complete.**
+**Phase 6 Milestone 6.1 (Production Plan) is complete.**
 
 The system can research a topic end-to-end — from channel strategy through
-source ingestion, claim extraction, and LLM-driven script generation — with
-full deterministic validation, citation tracking, and atomic human approval.
-999 tests pass. SCHEMA_VERSION 9.
+source ingestion, claim extraction, LLM-driven script generation, and now
+production plan creation with segment-level duration estimation, citation
+mapping, and approval/rejection governance.
+1155 tests pass. SCHEMA_VERSION 10.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -75,9 +76,23 @@ Implemented phases:
   - Prompt: `src/app/ai/prompts/script-generation/v1.toml`
   - CLI: `ace scripts generate`, `ace scripts approve`, `ace scripts show`,
     `ace scripts runs`, `ace scripts citations`
+- **Phase 6 M6.1** — Production plan:
+  - `src/app/production/` package: constants, errors, hashing, models,
+    renderer, repository
+  - SCHEMA_VERSION 10: `production_plans`, `production_segments`,
+    `production_segment_citations`, `production_plan_review_events`
+  - Pure `build_production_plan()` renderer: deterministic segment breakdown,
+    unclamped per-segment durations, narration text = `strip_markers(section.text)`
+  - Atomic SAVEPOINT for creation (plan+segments+citations), approval
+    (supersede prior → approve → review event), rejection (reject → review event)
+  - `UNIQUE(script_id, input_hash)` idempotency; two partial unique indexes
+    for normal/experiment active-plan isolation
+  - `ApprovedProductionPlan` frozen handoff for M6.2 narration
+  - CLI: `ace production plan/show/list/approve/reject/feedback`
 
 End-to-end workflow: channel strategy → discovery → scoring → topic promotion
-→ source ingestion → claim extraction → script generation → human approval.
+→ source ingestion → claim extraction → script generation → human approval
+→ production plan creation → human review (approve/reject).
 
 ## Requirements
 

@@ -25,14 +25,16 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 5 complete)
+## Current state (Phase 6 M6.1 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=9): `topics`, `sources`, `scripts`,
+- Versioned schema (SCHEMA_VERSION=10): `topics`, `sources`, `scripts`,
   `runs`, `ai_calls`, Phase 3 intelligence tables, `source_contents`,
-  Phase 4.2 claim extraction tables, plus Phase 5 `script_generation_runs`
-  and `script_citations` tables.
+  Phase 4.2 claim extraction tables, Phase 5 `script_generation_runs`
+  and `script_citations` tables, plus Phase 6 M6.1 `production_plans`,
+  `production_segments`, `production_segment_citations`, and
+  `production_plan_review_events` tables.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
 - Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
@@ -131,6 +133,37 @@ optional adapters after YouTube is stable.
     `ace scripts citations <script_id>`
   - Phase 6 boundary: `get_active_approved_generated_script()` raises
     `UnstructuredApprovedScriptError` for manually created scripts
+- Phase 6 Milestone 6.1 — Production Plan:
+  - SCHEMA_VERSION 10: four new tables — `production_plans` (24 cols,
+    `UNIQUE(script_id, input_hash)`, two partial unique indexes for
+    active-plan enforcement per normal/experiment isolation),
+    `production_segments` (9 cols, `UNIQUE(plan_id, segment_index)`),
+    `production_segment_citations` (5 cols, normalized, `UNIQUE(segment_id,
+    claim_id)` + `UNIQUE(segment_id, citation_order)`),
+    `production_plan_review_events` (14 cols with denormalized training-label
+    fields for platform-neutral analytics); v9→v10 migration
+  - `src/app/production/` package: `constants`, `errors`, `hashing`,
+    `models`, `renderer`, `repository`
+  - Three version constants (`PRODUCTION_PLAN_SCHEMA_VERSION`,
+    `PRODUCTION_PLAN_RENDERER_VERSION`, `PRODUCTION_DURATION_VERSION`);
+    any change bumps `input_hash`
+  - `compute_script_body_hash()`: SHA-256 of canonical Pydantic body_json
+  - `compute_production_plan_input_hash()`: SHA-256 of compact sorted JSON
+    of 9 fields (script_id, version, body_hash, schema_version,
+    renderer_version, duration_version, format, evidence_hash,
+    requires_evidence_review)
+  - `build_production_plan()`: pure deterministic function; hard invariant
+    `segment.narration_text == strip_markers(section.text)`; unclamped
+    segment duration `max(1, ceil(word_count / 150 * 60))` (no [15,90] clamp)
+  - Lifecycle: draft → approved (supersedes prior active normal plan) or
+    draft → rejected (terminal); rejected leaves approved plan untouched
+  - SAVEPOINTs: `create_pp` (plan+segments+citations), `approve_pp`
+    (supersede+approve+review event), `reject_pp` (reject+review event)
+  - `experiment_id TEXT` nullable: all M6.1 plans NULL; isolation by
+    NULL/non-NULL so normal and experiment plans don't supersede each other
+  - `ApprovedProductionPlan`: frozen Pydantic handoff for M6.2
+  - `require_active_approved_production_plan()` / `get_active_approved_production_plan()`
+  - CLI: `ace production plan/show/list/approve/reject/feedback`
   - Supersession model: `superseded_at` + `superseded_by_run_id` columns on
     runs (not a status value); status CHECK: `running/completed/partial/failed`
   - `src/app/research/chunking.py`: paragraph-aware chunker with exact offset
@@ -152,8 +185,8 @@ optional adapters after YouTube is stable.
   - CLI: `ace sources extract-claims <source_id>`, `ace sources list-claims
     <topic_id>`, `ace sources claim-runs <source_id>`
 - Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`,
-  `discover`, `intelligence` subcommand groups and diagnostic `version`,
-  `doctor` commands.
+  `discover`, `intelligence`, `production` subcommand groups and diagnostic
+  `version`, `doctor` commands.
 - Stdlib structured logging via `ACE_LOG_LEVEL`.
 
 ## Package layout (target — populated phase by phase)
@@ -223,7 +256,15 @@ src/app/
 │   ├── models.py             # ScriptGenerationRun, ScriptGenerationRunStatus
 │   ├── repository.py         # Generation run CRUD; finalize_generation_run() SAVEPOINT; Phase 6 handoff
 │   └── generator.py          # generate_script() orchestrator; GenerationResult
-├── media/                    # Phases 6–8: Production
+├── production/               # Phase 6 M6.1: Production plan (implemented)
+│   ├── __init__.py
+│   ├── constants.py          # Version strings; REJECTION_REASON_CODES
+│   ├── errors.py             # ProductionPlanError hierarchy (NoPlanError, IllegalTransitionError, etc.)
+│   ├── hashing.py            # compute_script_body_hash(), compute_production_plan_input_hash()
+│   ├── models.py             # Draft dataclasses; Pydantic DB models; ApprovedProductionPlan handoff
+│   ├── renderer.py           # build_production_plan() pure function; plan_draft_to_json_summary()
+│   └── repository.py         # CRUD + approve/reject SAVEPOINTs; get_approved_production_plan_full()
+├── media/                    # Phases 6 M6.2+: Production
 │   ├── narration.py          # TTS provider abstraction and audio generation
 │   ├── captions.py           # SRT/VTT caption generation
 │   ├── assets.py             # Asset library, licence enforcement

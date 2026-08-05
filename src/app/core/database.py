@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -584,6 +584,135 @@ CREATE INDEX IF NOT EXISTS idx_sc_script
 """
 
 
+# Phase 10 DDL — production plans, segments, citations, and review events.
+# Creation order: production_plans → production_segments → production_segment_citations
+#   → production_plan_review_events
+# production_plans.script_id uses ON DELETE RESTRICT: a Script with plans cannot be deleted.
+# production_plan_review_events.topic_id/script_id use ON DELETE RESTRICT: review events
+#   are training labels and must not be destroyed by parent-row deletion.
+_DDL_V10_PRODUCTION = """
+CREATE TABLE IF NOT EXISTS production_plans (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id                    INTEGER NOT NULL
+                                    REFERENCES topics(id) ON DELETE CASCADE,
+    script_id                   INTEGER NOT NULL
+                                    REFERENCES scripts(id) ON DELETE RESTRICT,
+    script_version              INTEGER NOT NULL,
+    input_hash                  TEXT    NOT NULL,
+    script_body_hash            TEXT    NOT NULL,
+    plan_schema_version         TEXT    NOT NULL,
+    renderer_version            TEXT    NOT NULL,
+    duration_algorithm_version  TEXT    NOT NULL,
+    title                       TEXT    NOT NULL DEFAULT '',
+    format                      TEXT    NOT NULL DEFAULT 'short'
+                                        CHECK (format IN ('short', 'long_form')),
+    total_estimated_duration_s  INTEGER NOT NULL DEFAULT 0,
+    total_word_count            INTEGER NOT NULL DEFAULT 0,
+    warnings_json               TEXT    NOT NULL DEFAULT '[]',
+    requires_evidence_review    INTEGER NOT NULL DEFAULT 0,
+    evidence_hash               TEXT    NOT NULL DEFAULT '',
+    generation_run_id           INTEGER
+                                    REFERENCES script_generation_runs(id)
+                                    ON DELETE SET NULL,
+    experiment_id               TEXT,
+    status                      TEXT    NOT NULL DEFAULT 'draft'
+                                        CHECK (status IN ('draft', 'approved', 'rejected')),
+    approved_at                 TEXT,
+    superseded_at               TEXT,
+    rejected_at                 TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (script_id, input_hash)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pp_one_active_normal
+    ON production_plans(topic_id)
+    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pp_one_active_experiment
+    ON production_plans(topic_id, experiment_id)
+    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_pp_topic_created
+    ON production_plans(topic_id, created_at DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_pp_script
+    ON production_plans(script_id, script_version);
+
+CREATE TABLE IF NOT EXISTS production_segments (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id                 INTEGER NOT NULL
+                                REFERENCES production_plans(id) ON DELETE CASCADE,
+    segment_index           INTEGER NOT NULL,
+    section_index           INTEGER NOT NULL,
+    section_type            TEXT    NOT NULL,
+    narration_text          TEXT    NOT NULL,
+    estimated_duration_s    INTEGER NOT NULL DEFAULT 0,
+    estimated_word_count    INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (plan_id, segment_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ps_plan
+    ON production_segments(plan_id, segment_index);
+
+CREATE TABLE IF NOT EXISTS production_segment_citations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    segment_id      INTEGER NOT NULL
+                        REFERENCES production_segments(id) ON DELETE CASCADE,
+    claim_id        INTEGER NOT NULL
+                        REFERENCES claims(id) ON DELETE RESTRICT,
+    citation_order  INTEGER NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (segment_id, claim_id),
+    UNIQUE (segment_id, citation_order)
+);
+
+CREATE INDEX IF NOT EXISTS idx_psc_segment
+    ON production_segment_citations(segment_id, citation_order);
+
+CREATE INDEX IF NOT EXISTS idx_psc_claim
+    ON production_segment_citations(claim_id);
+
+CREATE TABLE IF NOT EXISTS production_plan_review_events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id       INTEGER NOT NULL
+                      REFERENCES production_plans(id) ON DELETE CASCADE,
+    topic_id      INTEGER NOT NULL
+                      REFERENCES topics(id) ON DELETE RESTRICT,
+    script_id     INTEGER NOT NULL
+                      REFERENCES scripts(id) ON DELETE RESTRICT,
+    evidence_hash TEXT    NOT NULL,
+    model         TEXT,
+    prompt_hash   TEXT,
+    experiment_id TEXT,
+    decision      TEXT NOT NULL
+                      CHECK (decision IN ('approved', 'rejected')),
+    reason_code   TEXT
+                      CHECK (reason_code IS NULL OR reason_code IN (
+                          'segment_structure', 'narration_wording', 'pacing',
+                          'duration', 'citation_mapping', 'evidence_concern',
+                          'format_mismatch', 'other'
+                      )),
+    notes         TEXT,
+    actor         TEXT,
+    created_at    TEXT NOT NULL
+                      DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ppre_plan
+    ON production_plan_review_events(plan_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ppre_model_prompt
+    ON production_plan_review_events(model, prompt_hash)
+    WHERE model IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_ppre_experiment
+    ON production_plan_review_events(experiment_id)
+    WHERE experiment_id IS NOT NULL;
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -615,6 +744,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
+        conn.executescript(_DDL_V10_PRODUCTION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -628,6 +758,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
+        conn.executescript(_DDL_V10_PRODUCTION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -640,6 +771,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
+        conn.executescript(_DDL_V10_PRODUCTION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -651,6 +783,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
+        conn.executescript(_DDL_V10_PRODUCTION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -661,6 +794,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
+        conn.executescript(_DDL_V10_PRODUCTION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -670,6 +804,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
+        conn.executescript(_DDL_V10_PRODUCTION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -678,6 +813,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V7_RESEARCH)
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
+        conn.executescript(_DDL_V10_PRODUCTION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -685,12 +821,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 7 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
+        conn.executescript(_DDL_V10_PRODUCTION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 8:
         logger.info("Migrating schema from version 8 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V9_SCRIPTS)
+        conn.executescript(_DDL_V10_PRODUCTION)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 9:
+        logger.info("Migrating schema from version 9 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V10_PRODUCTION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

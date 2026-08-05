@@ -923,3 +923,56 @@ can still commit even after the SAVEPOINT rolls back.
 **Decision:** `get_active_approved_generated_script()` raises `UnstructuredApprovedScriptError` if the active approved Script has `body_json=NULL` (manually created via `ace scripts add`). It does not attempt to parse `body` as JSON.
 
 **Reasoning:** Phase 6 narration requires structured section data that only exists in `body_json`. A manual script's `body` field is free text with no guaranteed structure. Failing loudly at the boundary forces the operator to generate a new script rather than silently producing malformed narration.
+
+
+---
+
+## Phase 6 Milestone 6.1 — Production Plan
+
+---
+
+**D-M6.1-1 — Unclamped per-segment duration**
+
+**Decision:** `_segment_duration_s()` uses `max(1, ceil(word_count / 150 * 60))` with no upper bound. The content renderer's `compute_duration_s()` clamps to [15, 90] s but is NOT used for individual segments.
+
+**Reasoning:** A 3-word CTA genuinely takes ~1 second, not 15. The [15,90] clamp was designed for whole-script duration validation, not per-segment estimation. Applying it per-segment would produce incorrect retention attribution: a 3-word segment shown as 15 s in analytics would mislead platform optimization. Total plan duration remains unclamped and is expected to fall within the script's validated [15,90] range via the sum of realistic per-segment values.
+
+---
+
+**D-M6.1-2 — Two partial unique indexes (not one) for active-plan isolation**
+
+**Decision:** Two partial unique indexes enforce at most one active approved plan: `idx_pp_one_active_normal` (WHERE experiment_id IS NULL) and `idx_pp_one_active_experiment` (WHERE experiment_id IS NOT NULL, additionally unique on experiment_id). Normal and experiment plans do not interfere with each other.
+
+**Reasoning:** A single index on `(topic_id)` would prevent having any active experiment alongside a normal plan. The two-index design is the minimal change that enables future A/B testing without a schema migration. All M6.1 plans have `experiment_id = NULL`.
+
+---
+
+**D-M6.1-3 — Normalized production_segment_citations table**
+
+**Decision:** `production_segment_citations` is a separate table with `UNIQUE(segment_id, claim_id)` and `UNIQUE(segment_id, citation_order)`. No `citation_ids_json` column on segments.
+
+**Reasoning:** Normalization enables `claim_id REFERENCES claims(id) ON DELETE RESTRICT` (training-label preservation), `idx_psc_claim` for reverse lookup (all segments citing a claim), and independent citation ordering enforcement. A JSON column would require application-layer parsing for every FK operation and would make claim deletion dangerously silent.
+
+---
+
+**D-M6.1-4 — Denormalized training-label fields on review events**
+
+**Decision:** `production_plan_review_events` copies `topic_id`, `script_id`, `evidence_hash`, `model`, `prompt_hash`, `experiment_id` from the plan row at event creation time. Both `topic_id` and `script_id` use `ON DELETE RESTRICT`.
+
+**Reasoning:** Review events are training labels. If the plan row is deleted, the label must survive. `ON DELETE RESTRICT` prevents accidental destruction. Denormalizing means queries for "all rejections for this model/prompt pair" need no join and remain efficient as data grows. The extra storage cost is negligible.
+
+---
+
+**D-M6.1-5 — Platform-neutral analytics terminology**
+
+**Decision:** `production_segment.id` is the granular analytics unit. Tables and columns use "platform" not "YouTube". No YouTube-specific columns exist in the production schema.
+
+**Reasoning:** YouTube is the first delivery platform, but the production pipeline (plan → narration → rendering) is platform-agnostic. Baking YouTube into the production schema would require a migration when TikTok or Instagram support is added. Platform-specific retention data belongs in a future `platform_analytics` table with a `platform` discriminator column, not in `production_segments`.
+
+---
+
+**D-M6.1-6 — experiment_id nullable on production_plans**
+
+**Decision:** `experiment_id TEXT` is nullable and defaults to NULL for all M6.1 plans. It is included now rather than added in a future migration.
+
+**Reasoning:** Adding a nullable column via `ALTER TABLE` is a schema change that requires a new SCHEMA_VERSION and affects all migration branches. Adding it now, with a known-safe NULL default, is the minimal incremental cost. The alternative (adding it in M6.2 or a dedicated A/B phase) would require re-testing the entire migration path. NULL is a valid state, not a placeholder.

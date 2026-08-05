@@ -1208,6 +1208,201 @@ def ai_demo(
 
 
 # ---------------------------------------------------------------------------
+# Production plan commands (Phase 6 M6.1)
+# ---------------------------------------------------------------------------
+
+production_app = typer.Typer(help="Manage production plans.", no_args_is_help=True)
+app.add_typer(production_app, name="production")
+
+
+@production_app.command("plan")
+def production_plan(
+    topic_id: Annotated[int, typer.Argument(help="Topic ID.")],
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Show the plan without persisting it."),
+    ] = False,
+) -> None:
+    """Build a production plan from the active approved script for TOPIC_ID."""
+    from app.content.repository import get_active_approved_generated_script
+    from app.production.renderer import build_production_plan, plan_draft_to_json_summary
+    from app.production.repository import get_or_create_production_plan
+
+    conn = _get_db()
+    approved = get_active_approved_generated_script(conn, topic_id)
+    if approved is None:
+        typer.echo(f"No active approved script for topic_id={topic_id}.", err=True)
+        raise typer.Exit(1)
+
+    draft = build_production_plan(approved)
+
+    if dry_run:
+        typer.echo(plan_draft_to_json_summary(draft))
+        return
+
+    plan, created = get_or_create_production_plan(conn, draft)
+    conn.commit()
+    if created:
+        typer.echo(f"Created production plan id={plan.id} topic_id={topic_id} status={plan.status}")
+    else:
+        typer.echo(
+            f"Production plan already exists id={plan.id} topic_id={topic_id} status={plan.status}"
+        )
+    typer.echo(f"  segments={len(plan.title and [1] or [])}  input_hash={plan.input_hash[:12]}…")
+
+
+@production_app.command("show")
+def production_show(
+    plan_id: Annotated[int, typer.Argument(help="Production plan ID.")],
+) -> None:
+    """Show a production plan and its segments."""
+    from app.production.repository import (
+        get_production_plan_by_id,
+        get_production_segments,
+    )
+
+    conn = _get_db()
+    plan = get_production_plan_by_id(conn, plan_id)
+    if plan is None:
+        typer.echo(f"Production plan id={plan_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(
+        f"Plan id={plan.id}  status={plan.status}"
+        f"  topic={plan.topic_id}  script={plan.script_id} v{plan.script_version}"
+    )
+    typer.echo(f"  title={plan.title!r}  format={plan.format}")
+    typer.echo(f"  duration={plan.total_estimated_duration_s}s  words={plan.total_word_count}")
+    typer.echo(f"  input_hash={plan.input_hash[:16]}…")
+    if plan.warnings:
+        typer.echo(f"  warnings={plan.warnings}")
+
+    segments = get_production_segments(conn, plan.id)
+    typer.echo(f"  segments ({len(segments)}):")
+    for seg in segments:
+        typer.echo(
+            f"    [{seg.segment_index}] {seg.section_type}  {seg.estimated_duration_s}s"
+            f"  {seg.narration_text[:60]!r}"
+        )
+
+
+@production_app.command("list")
+def production_list(
+    topic_id: Annotated[int, typer.Argument(help="Topic ID.")],
+) -> None:
+    """List production plans for a topic."""
+    from app.production.repository import list_production_plans
+
+    conn = _get_db()
+    plans = list_production_plans(conn, topic_id)
+    if not plans:
+        typer.echo("No production plans found.")
+        return
+    for plan in plans:
+        active = " [active]" if plan.status == "approved" and plan.superseded_at is None else ""
+        typer.echo(f"[{plan.id}] status={plan.status}{active}  created={plan.created_at}")
+
+
+@production_app.command("approve")
+def production_approve(
+    plan_id: Annotated[int, typer.Argument(help="Production plan ID.")],
+    actor: Annotated[str | None, typer.Option("--actor", help="Reviewer name.")] = None,
+    model: Annotated[str | None, typer.Option("--model", help="Model used for review.")] = None,
+    prompt_hash: Annotated[
+        str | None, typer.Option("--prompt-hash", help="Prompt hash used for review.")
+    ] = None,
+) -> None:
+    """Approve a draft production plan."""
+    from app.production.errors import IllegalTransitionError, NoPlanError
+    from app.production.repository import approve_production_plan
+
+    conn = _get_db()
+    try:
+        plan = approve_production_plan(
+            conn, plan_id, actor=actor, model=model, prompt_hash=prompt_hash
+        )
+        conn.commit()
+        typer.echo(
+            f"Approved plan id={plan.id}  topic={plan.topic_id}  approved_at={plan.approved_at}"
+        )
+    except NoPlanError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    except IllegalTransitionError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+
+@production_app.command("reject")
+def production_reject(
+    plan_id: Annotated[int, typer.Argument(help="Production plan ID.")],
+    reason: Annotated[str, typer.Argument(help="Rejection reason code.")],
+    notes: Annotated[str | None, typer.Option("--notes", help="Additional notes.")] = None,
+    actor: Annotated[str | None, typer.Option("--actor", help="Reviewer name.")] = None,
+    model: Annotated[str | None, typer.Option("--model", help="Model used for review.")] = None,
+    prompt_hash: Annotated[
+        str | None, typer.Option("--prompt-hash", help="Prompt hash used for review.")
+    ] = None,
+) -> None:
+    """Reject a draft production plan.
+
+    REASON must be one of: segment_structure, narration_wording, pacing,
+    duration, citation_mapping, evidence_concern, format_mismatch, other.
+    (Requires --notes when reason is 'other'.)
+    """
+    from app.production.errors import (
+        IllegalTransitionError,
+        InvalidReasonCodeError,
+        NoPlanError,
+    )
+    from app.production.repository import reject_production_plan
+
+    conn = _get_db()
+    try:
+        plan = reject_production_plan(
+            conn,
+            plan_id,
+            reason_code=reason,
+            notes=notes,
+            actor=actor,
+            model=model,
+            prompt_hash=prompt_hash,
+        )
+        conn.commit()
+        typer.echo(f"Rejected plan id={plan.id}  reason={reason}  rejected_at={plan.rejected_at}")
+    except (NoPlanError, IllegalTransitionError, InvalidReasonCodeError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+
+
+@production_app.command("feedback")
+def production_feedback(
+    plan_id: Annotated[int, typer.Argument(help="Production plan ID.")],
+) -> None:
+    """Show review events (feedback history) for a production plan."""
+    from app.production.repository import (
+        get_production_plan_by_id,
+        list_production_plan_review_events,
+    )
+
+    conn = _get_db()
+    plan = get_production_plan_by_id(conn, plan_id)
+    if plan is None:
+        typer.echo(f"Production plan id={plan_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    events = list_production_plan_review_events(conn, plan_id)
+    if not events:
+        typer.echo(f"No review events for plan id={plan_id}.")
+        return
+    for ev in events:
+        code = f"  reason={ev.reason_code}" if ev.reason_code else ""
+        notes_str = f"  notes={ev.notes!r}" if ev.notes else ""
+        actor_str = f"  actor={ev.actor}" if ev.actor else ""
+        typer.echo(f"[{ev.id}] {ev.decision}{code}{notes_str}{actor_str}  {ev.created_at}")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

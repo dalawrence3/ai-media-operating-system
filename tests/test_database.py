@@ -76,8 +76,12 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     # open_db already migrates to SCHEMA_VERSION; reset it to 2 to simulate a pre-v3 DB
     conn.execute("DELETE FROM schema_version")
     conn.execute("INSERT INTO schema_version (version) VALUES (2)")
-    # Drop Phase 3–9 tables and columns to simulate a real v2 state
+    # Drop Phase 3–10 tables and columns to simulate a real v2 state
     for tbl in (
+        "production_plan_review_events",
+        "production_segment_citations",
+        "production_segments",
+        "production_plans",
         "script_citations",
         "script_generation_runs",
         "opportunity_state_events",
@@ -117,12 +121,12 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     conn2.close()
 
 
-def test_schema_version_is_9(tmp_path: Path) -> None:
+def test_schema_version_is_10(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version
 
     conn = open_db(tmp_path / "test.db")
-    assert SCHEMA_VERSION == 9
-    assert _get_version(conn) == 9
+    assert SCHEMA_VERSION == 10
+    assert _get_version(conn) == 10
     conn.close()
 
 
@@ -218,13 +222,22 @@ def test_run_calls_unique_constraint(db: sqlite3.Connection) -> None:
 
 
 def test_migration_v7_to_v8(tmp_path: Path) -> None:
-    """A v7 database gains claim tables and v9 script columns on next open_db."""
+    """A v7 database gains claim tables and v9/v10 tables on next open_db."""
     from app.core.database import SCHEMA_VERSION, _get_version, _set_version
 
     conn = open_db(tmp_path / "v7.db")
     _set_version(conn, 7)
-    for tbl in ("script_citations", "script_generation_runs",
-                "claims", "claim_extraction_run_calls", "claim_extraction_runs"):
+    for tbl in (
+        "production_plan_review_events",
+        "production_segment_citations",
+        "production_segments",
+        "production_plans",
+        "script_citations",
+        "script_generation_runs",
+        "claims",
+        "claim_extraction_run_calls",
+        "claim_extraction_runs",
+    ):
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     for col in ("body_json", "format", "approved_at", "superseded_at"):
         conn.execute(f"ALTER TABLE scripts DROP COLUMN {col}")
@@ -281,15 +294,24 @@ def test_source_contents_indexes_exist(db: sqlite3.Connection) -> None:
 
 
 def test_migration_v6_to_v7(tmp_path: Path) -> None:
-    """A v6 database gains source_contents and v9 script columns on next open_db."""
+    """A v6 database gains source_contents and v9/v10 tables on next open_db."""
     from app.core.database import SCHEMA_VERSION, _get_version, _set_version
 
     conn = open_db(tmp_path / "v6.db")
     # Simulate v6 state: reset version and drop v7+ tables/columns
     _set_version(conn, 6)
-    for tbl in ("script_citations", "script_generation_runs",
-                "claims", "claim_extraction_run_calls", "claim_extraction_runs",
-                "source_contents"):
+    for tbl in (
+        "production_plan_review_events",
+        "production_segment_citations",
+        "production_segments",
+        "production_plans",
+        "script_citations",
+        "script_generation_runs",
+        "claims",
+        "claim_extraction_run_calls",
+        "claim_extraction_runs",
+        "source_contents",
+    ):
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     for col in ("body_json", "format", "approved_at", "superseded_at"):
         conn.execute(f"ALTER TABLE scripts DROP COLUMN {col}")
@@ -342,9 +364,18 @@ def test_migration_v5_to_v6_preserves_existing_topics(tmp_path: Path) -> None:
     # Simulate v5 state: reset version, remove v6+ tables/columns
     conn.execute("DELETE FROM schema_version")
     conn.execute("INSERT INTO schema_version (version) VALUES (5)")
-    for tbl in ("script_citations", "script_generation_runs",
-                "claims", "claim_extraction_run_calls", "claim_extraction_runs",
-                "source_contents"):
+    for tbl in (
+        "production_plan_review_events",
+        "production_segment_citations",
+        "production_segments",
+        "production_plans",
+        "script_citations",
+        "script_generation_runs",
+        "claims",
+        "claim_extraction_run_calls",
+        "claim_extraction_runs",
+        "source_contents",
+    ):
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     for col in ("body_json", "format", "approved_at", "superseded_at"):
         conn.execute(f"ALTER TABLE scripts DROP COLUMN {col}")
@@ -385,12 +416,19 @@ def test_unknown_schema_version_raises(tmp_path: Path) -> None:
 
 
 def test_migration_v8_to_v9(tmp_path: Path) -> None:
-    """A v8 database gains script_generation_runs, script_citations, and new script columns."""
+    """A v8 database gains script_generation_runs, script_citations, and v9/v10 tables."""
     from app.core.database import SCHEMA_VERSION, _get_version, _set_version
 
     conn = open_db(tmp_path / "v8.db")
     _set_version(conn, 8)
-    for tbl in ("script_citations", "script_generation_runs"):
+    for tbl in (
+        "production_plan_review_events",
+        "production_segment_citations",
+        "production_segments",
+        "production_plans",
+        "script_citations",
+        "script_generation_runs",
+    ):
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     for col in ("body_json", "format", "approved_at", "superseded_at"):
         conn.execute(f"ALTER TABLE scripts DROP COLUMN {col}")
@@ -478,3 +516,280 @@ def test_v9_indexes_exist(db: sqlite3.Connection) -> None:
     assert "idx_sgr_input_hash" in indexes
     assert "idx_sgr_script" in indexes
     assert "idx_sc_script" in indexes
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 (Production Plan) schema tests
+# ---------------------------------------------------------------------------
+
+
+def test_v10_production_tables_exist(db: sqlite3.Connection) -> None:
+    tables = {
+        r[0]
+        for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "production_plans" in tables
+    assert "production_segments" in tables
+    assert "production_segment_citations" in tables
+    assert "production_plan_review_events" in tables
+
+
+def test_v10_production_plans_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(production_plans)").fetchall()}
+    required = {
+        "id", "topic_id", "script_id", "script_version",
+        "input_hash", "script_body_hash", "plan_schema_version",
+        "renderer_version", "duration_algorithm_version",
+        "title", "format", "total_estimated_duration_s", "total_word_count",
+        "warnings_json", "requires_evidence_review", "evidence_hash",
+        "generation_run_id", "experiment_id",
+        "status", "approved_at", "superseded_at", "rejected_at",
+        "created_at", "updated_at",
+    }
+    assert required <= cols
+    # Speculative columns must NOT exist
+    for banned in ("visual_intent", "shot_type", "music_direction", "transition",
+                   "asset_path", "narration_path", "caption"):
+        assert banned not in cols, f"speculative column {banned!r} must not exist"
+
+
+def test_v10_production_segments_columns(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(production_segments)").fetchall()}
+    required = {
+        "id", "plan_id", "segment_index", "section_index", "section_type",
+        "narration_text", "estimated_duration_s", "estimated_word_count", "created_at",
+    }
+    assert required <= cols
+    for banned in ("visual_intent", "shot_type", "music_direction", "transition",
+                   "asset_path", "narration_path", "caption", "citation_ids_json"):
+        assert banned not in cols, f"speculative column {banned!r} must not exist"
+
+
+def test_v10_production_segment_citations_columns(db: sqlite3.Connection) -> None:
+    cols = {
+        row[1]
+        for row in db.execute("PRAGMA table_info(production_segment_citations)").fetchall()
+    }
+    assert {"id", "segment_id", "claim_id", "citation_order", "created_at"} <= cols
+
+
+def test_v10_production_plan_review_events_columns(db: sqlite3.Connection) -> None:
+    cols = {
+        row[1]
+        for row in db.execute("PRAGMA table_info(production_plan_review_events)").fetchall()
+    }
+    required = {
+        "id", "plan_id", "topic_id", "script_id",
+        "evidence_hash", "model", "prompt_hash", "experiment_id",
+        "decision", "reason_code", "notes", "actor", "created_at",
+    }
+    assert required <= cols
+
+
+def test_v10_indexes_exist(db: sqlite3.Connection) -> None:
+    indexes = {
+        r[0]
+        for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+    }
+    assert "idx_pp_one_active_normal" in indexes
+    assert "idx_pp_one_active_experiment" in indexes
+    assert "idx_pp_topic_created" in indexes
+    assert "idx_pp_script" in indexes
+    assert "idx_ps_plan" in indexes
+    assert "idx_psc_segment" in indexes
+    assert "idx_psc_claim" in indexes
+    assert "idx_ppre_plan" in indexes
+    assert "idx_ppre_model_prompt" in indexes
+    assert "idx_ppre_experiment" in indexes
+
+
+def test_v10_unique_script_id_input_hash_enforced(db: sqlite3.Connection) -> None:
+    """UNIQUE(script_id, input_hash) prevents duplicate plans with same hash."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO production_plans"
+        " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+        "  plan_schema_version, renderer_version, duration_algorithm_version,"
+        "  created_at, updated_at)"
+        " VALUES (1, 1, 1, 'hash-abc', 'body-hash', 'v1', 'rv1', 'dv1',"
+        "  '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO production_plans"
+            " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+            "  plan_schema_version, renderer_version, duration_algorithm_version,"
+            "  created_at, updated_at)"
+            " VALUES (1, 1, 2, 'hash-abc', 'body-hash2', 'v1', 'rv1', 'dv1',"
+            "  '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+        )
+        db.commit()
+
+
+def test_v10_partial_unique_index_blocks_two_active_normal_plans(
+    db: sqlite3.Connection,
+) -> None:
+    """idx_pp_one_active_normal: at most one approved non-experiment plan per topic."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO production_plans"
+        " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+        "  plan_schema_version, renderer_version, duration_algorithm_version,"
+        "  status, approved_at, created_at, updated_at)"
+        " VALUES (1, 1, 1, 'hash-1', 'bh1', 'v1', 'rv1', 'dv1',"
+        "  'approved', '2024-01-01T00:00:00', '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO production_plans"
+            " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+            "  plan_schema_version, renderer_version, duration_algorithm_version,"
+            "  status, approved_at, created_at, updated_at)"
+            " VALUES (1, 2, 2, 'hash-2', 'bh2', 'v1', 'rv1', 'dv1',"
+            "  'approved', '2024-01-01T00:00:00', '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+        )
+        db.commit()
+
+
+def test_v10_partial_unique_index_allows_superseded_plus_new_active(
+    db: sqlite3.Connection,
+) -> None:
+    """A superseded plan plus a new active approved plan for the same topic is allowed."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO production_plans"
+        " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+        "  plan_schema_version, renderer_version, duration_algorithm_version,"
+        "  status, approved_at, superseded_at, created_at, updated_at)"
+        " VALUES (1, 1, 1, 'hash-1', 'bh1', 'v1', 'rv1', 'dv1',"
+        "  'approved', '2024-01-01T00:00:00', '2024-01-02T00:00:00',"
+        "  '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.execute(
+        "INSERT INTO production_plans"
+        " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+        "  plan_schema_version, renderer_version, duration_algorithm_version,"
+        "  status, approved_at, created_at, updated_at)"
+        " VALUES (1, 2, 2, 'hash-2', 'bh2', 'v1', 'rv1', 'dv1',"
+        "  'approved', '2024-01-02T00:00:00', '2024-01-02T00:00:00', '2024-01-02T00:00:00')"
+    )
+    db.commit()
+    count = db.execute(
+        "SELECT COUNT(*) FROM production_plans WHERE topic_id=1 AND status='approved'"
+    ).fetchone()[0]
+    assert count == 2
+
+
+def test_v10_experiment_plans_allowed_alongside_normal_plan(
+    db: sqlite3.Connection,
+) -> None:
+    """A normal plan and an experiment plan may both be active for the same topic."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO production_plans"
+        " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+        "  plan_schema_version, renderer_version, duration_algorithm_version,"
+        "  status, approved_at, created_at, updated_at)"
+        " VALUES (1, 1, 1, 'hash-normal', 'bh1', 'v1', 'rv1', 'dv1',"
+        "  'approved', '2024-01-01T00:00:00', '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.execute(
+        "INSERT INTO production_plans"
+        " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+        "  plan_schema_version, renderer_version, duration_algorithm_version,"
+        "  experiment_id, status, approved_at, created_at, updated_at)"
+        " VALUES (1, 2, 2, 'hash-exp', 'bh2', 'v1', 'rv1', 'dv1',"
+        "  'hook-style-v1-arm-a', 'approved', '2024-01-01T00:00:00',"
+        "  '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.commit()
+
+
+def test_v10_segment_citations_unique_constraints(db: sqlite3.Connection) -> None:
+    """UNIQUE(segment_id, claim_id) and UNIQUE(segment_id, citation_order) enforced."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO production_plans"
+        " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+        "  plan_schema_version, renderer_version, duration_algorithm_version,"
+        "  created_at, updated_at)"
+        " VALUES (1, 1, 1, 'h', 'bh', 'v1', 'rv1', 'dv1',"
+        "  '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.execute(
+        "INSERT INTO production_segments"
+        " (plan_id, segment_index, section_index, section_type, narration_text,"
+        "  created_at)"
+        " VALUES (1, 0, 0, 'hook', 'Hello world.', '2024-01-01T00:00:00')"
+    )
+    db.commit()
+    db.execute(
+        "INSERT INTO production_segment_citations"
+        " (segment_id, claim_id, citation_order, created_at)"
+        " VALUES (1, 42, 0, '2024-01-01T00:00:00')"
+    )
+    db.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO production_segment_citations"
+            " (segment_id, claim_id, citation_order, created_at)"
+            " VALUES (1, 42, 1, '2024-01-01T00:00:00')"
+        )
+        db.commit()
+
+
+def test_v10_review_event_decision_check(db: sqlite3.Connection) -> None:
+    """decision CHECK constraint rejects values outside ('approved','rejected')."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO production_plans"
+        " (topic_id, script_id, script_version, input_hash, script_body_hash,"
+        "  plan_schema_version, renderer_version, duration_algorithm_version,"
+        "  created_at, updated_at)"
+        " VALUES (1, 1, 1, 'h', 'bh', 'v1', 'rv1', 'dv1',"
+        "  '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
+    )
+    db.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO production_plan_review_events"
+            " (plan_id, topic_id, script_id, evidence_hash, decision, created_at)"
+            " VALUES (1, 1, 1, 'eh', 'pending', '2024-01-01T00:00:00')"
+        )
+        db.commit()
+
+
+def test_migration_v9_to_v10(tmp_path: Path) -> None:
+    """A v9 database gains all four production tables on next open_db."""
+    from app.core.database import SCHEMA_VERSION, _get_version, _set_version
+
+    conn = open_db(tmp_path / "v9.db")
+    _set_version(conn, 9)
+    for tbl in (
+        "production_plan_review_events",
+        "production_segment_citations",
+        "production_segments",
+        "production_plans",
+    ):
+        conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    conn.commit()
+    conn.close()
+
+    conn2 = open_db(tmp_path / "v9.db")
+    assert _get_version(conn2) == SCHEMA_VERSION
+    assert SCHEMA_VERSION == 10
+    tables = {
+        r[0]
+        for r in conn2.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "production_plans" in tables
+    assert "production_segments" in tables
+    assert "production_segment_citations" in tables
+    assert "production_plan_review_events" in tables
+    conn2.close()
