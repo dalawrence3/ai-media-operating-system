@@ -239,7 +239,8 @@ watch time, retention, and algorithmic distribution.
 **Definition of done:** ✅ All 26 invariants enforced, Ruff clean, 999 tests
 passing, documentation updated.
 
-**What waits:** Phase 6 M6.1 Production Plan (complete — see below).
+**What waits:** Phase 6 M6.1 Production Plan (complete), Phase 6 M6.2
+Narration (complete — see below).
 
 ---
 
@@ -288,65 +289,105 @@ narration handoff.
 renderer, 36 repository, 15 CLI, plus extended database tests for v10 schema).
 
 **Definition of done:** ✅ All 39 frozen invariants enforced, Ruff clean, 1155
-tests passing, documentation updated. No M6.2 code written.
+tests passing, documentation updated.
 
-**What waits:** Phase 6 M6.2 — narration generation (receives
-`ApprovedProductionPlan` from `get_approved_production_plan_full()`).
+**What waits:** Phase 6 M6.2 — narration generation (complete — see below).
 
 ---
 
-### Phase 6 — Narration and Captions
+### Phase 6 Milestone 6.2 — Narration Generation ✅ COMPLETE
 
-**Objective:** Convert approved scripts to audio narration and generate
-accurate captions.
+**Objective:** Synthesise audio narration for every segment in an approved
+production plan using an injectable TTS provider abstraction. No live TTS
+provider integrated; `FakeTTSProvider` used for all tests (M6.3 wires a real
+provider).
 
-**Business value:** Narration quality directly affects watch time and
-retention. Accurate captions improve accessibility and on-screen text
-engagement (critical for Shorts).
+**Business value:** Narration is the audio backbone of the finished Short.
+The M6.2 pipeline establishes cost tracking, idempotency, exception-based
+review governance, and artifact management so M6.3 can simply swap in a live
+provider.
+
+**Technical scope (implemented):**
+- `src/app/narration/` package: `constants`, `errors`, `hashing`, `models`,
+  `protocol`, `fake`, `pricing`, `storage`, `repository`, `orchestrator`
+- SCHEMA_VERSION 11: five new tables — `voice_profiles`, `narration_runs`,
+  `narration_segment_assets`, `tts_calls`, `narration_review_events`;
+  v10→v11 migration applied to all existing migration branches
+- `TTSProvider` `@runtime_checkable` Protocol — same pattern as `AIProvider`;
+  `FakeTTSProvider` deterministic silence WAV via stdlib `wave`; no new deps
+- `TTSPricingRegistry`: character-based pricing; fake model = $0.00;
+  `get_default_registry()` singleton; `register()` for extension
+- Two input hashes: segment hash (19 fields), run hash (14 fields) — both
+  SHA-256 of compact sorted JSON; any field change forces re-synthesis
+- `NARRATION_SCHEMA_VERSION = "Narration-v1"`;
+  `NARRATION_ALGORITHM_VERSION = "narration-segment-v1"`
+- `ACE_ARTIFACTS_PATH` config; WAV files under
+  `{artifacts_path}/narration/{plan_id}/{run_id}/segment_{id}.wav`;
+  relative paths in DB; `/artifacts/` in `.gitignore`
+- Atomic audio write: `.tmp` → validate WAV (stdlib `wave`) → SHA-256 →
+  `os.replace()`; `AudioValidationError` on corrupt bytes
+- `narrate_plan()`: idempotent on completed/approved run; resumes running
+  run; TTS call OUTSIDE DB transaction; `record_tts_call()` auto-commits
+  outside SAVEPOINT; SAVEPOINTs: `create_vp`, `approve_nr`, `reject_nr`,
+  `finalize_nsa`, `reject_nsa`
+- Exception-based review: segments start `synthesized`; operator rejects
+  only; approval requires zero rejected segments and all plan segments covered;
+  severity validated 1–5 BEFORE SAVEPOINT (`InvalidNarrationSeverityError`)
+- Supersession contract: prior approved run keeps `status='approved'`;
+  `superseded_at` + `superseded_by_run_id` mark it historical; partial unique
+  index `WHERE status='approved' AND superseded_at IS NULL` enforces at-most-one
+- `regenerate_segment()`: rejected asset → pending asset (committed) → TTS
+  OUTSIDE SAVEPOINT → WAV write → `finalize_narration_segment_asset()` SAVEPOINT;
+  pending asset deleted + committed on TTS or finalization failure
+- `narration_review_events`: 21 cols; denormalized training context frozen at
+  insert (`plan_id`, `script_id`, `topic_id`, `voice_profile_id`, `provider`,
+  `model`, `voice_id`, `experiment_id`); `actor` field; `severity` 1–5 CHECK;
+  `expected_correction`; `replacement_asset_id` for `segment_regenerated`
+- `dry_run=True`: skips all synthesis; returns segment IDs as skipped
+- `experiment_id` threading from run to segment assets
+- Config: `ACE_TTS_PROVIDER` (default `fake`), `ACE_TTS_MODEL`
+  (default `fake/FAKE`)
+- CLI: `ace narration voices/add-voice/narrate/runs/approve/reject-run/
+  reject-segment/events/regenerate-segment`
+
+**Tests:** 1326 passing (+171 new vs baseline: including 19 corrections-phase
+tests covering supersession contract, severity boundary, immutable event context,
+and regenerate-segment CLI).
+
+**Definition of done:** ✅ Ruff clean, 1326 tests passing, documentation
+updated. FakeTTSProvider only; no paid-provider SDK added; no live TTS calls
+in any test.
+
+**What waits:** Phase 6 M6.3 — live TTS provider integration (ElevenLabs or
+equivalent; requires operator approval of provider selection).
+
+---
+
+### Phase 6 M6.3 — Live TTS Provider Integration
+
+**Objective:** Wire a real TTS provider (ElevenLabs or equivalent) into the
+narration pipeline established in M6.2. M6.2 already supports the full
+synthesis lifecycle; M6.3 adds only the concrete provider implementation and
+loudness normalisation.
+
+**Business value:** M6.2 is FakeTTSProvider only. M6.3 produces real audio
+that a human can listen to and approve before video assembly.
 
 **Technical scope:**
-- `src/app/media/narration.py`
-- TTS provider abstraction (same pattern as LLM provider): protocol,
-  concrete provider (ElevenLabs or equivalent), mock provider for tests
-- Voice configuration: voice ID, speed, stability settings stored per channel
-- Audio output: WAV or MP3, normalised to YouTube's preferred loudness
-  standard (−14 LUFS integrated)
-- Duration validation: generated audio duration consistent with script word
-  count; flag if materially outside expected range
-- Caption generation: word-level timestamps from TTS provider (if available)
-  or forced alignment; output as SRT and VTT
-- Caption schema validation: verify line length, reading speed, sync accuracy
-- Cost tracking: TTS characters billed, cost per narration stored in a new
-  `tts_calls` table
+- Concrete `TTSProvider` implementation for the operator-approved provider
+  (provider selection is a separate operator decision)
+- SDK installation and credential plumbing (`ACE_TTS_API_KEY` or similar)
+- Loudness normalisation: target −14 LUFS integrated (YouTube Shorts spec)
+- Duration-deviation validation: flag if actual audio duration differs
+  materially from word-count estimate
+- Provider pricing registered in `TTSPricingRegistry`
+- Provider smoke-test CLI command (calls real API; opt-in only)
 
-**Dependencies:** Phase 1, Phase 5 (approved script).
+**Dependencies:** Phase 6 M6.2 complete. Operator approval of provider
+selection required before this milestone begins.
 
-**Database changes:**
-- New `narrations` table: `(id, script_id, provider, voice_id, audio_path,
-  duration_s, lufs, cost_usd, created_at)`
-- New `captions` table: `(id, narration_id, format, file_path, created_at)`
-- New `tts_calls` table: cost tracking parallel to `llm_calls`
-
-**Interfaces:**
-- `ace narration generate <script_id>` — produce audio and captions
-- `ace narration play <narration_id>` — open audio file in system player
-
-**Tests:** Mock TTS provider; test loudness validation logic; test duration
-range check; test caption schema; no live TTS calls in CI.
-
-**Human approval gates:** Listen and approve narration before video assembly.
-
-**Risks:** TTS provider API changes; voice quality degrading between provider
-versions; loudness normalisation edge cases; caption sync quality.
-
-**Definition of done:** Mock TTS produces valid audio fixture; loudness
-check and duration check pass; captions written as SRT and VTT; cost stored;
-real provider smoke test succeeds; ruff clean.
-
-**Demonstrable capability:** `ace narration generate <script_id>` → audio
-file and SRT produced; duration and loudness validated.
-
-**What waits:** Scene manifests, video rendering.
+**What waits:** Phase 6 M6.4 — Caption generation (SRT/VTT from
+word-level TTS timestamps or forced alignment).
 
 ---
 

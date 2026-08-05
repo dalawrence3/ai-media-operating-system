@@ -976,3 +976,89 @@ can still commit even after the SAVEPOINT rolls back.
 **Decision:** `experiment_id TEXT` is nullable and defaults to NULL for all M6.1 plans. It is included now rather than added in a future migration.
 
 **Reasoning:** Adding a nullable column via `ALTER TABLE` is a schema change that requires a new SCHEMA_VERSION and affects all migration branches. Adding it now, with a known-safe NULL default, is the minimal incremental cost. The alternative (adding it in M6.2 or a dedicated A/B phase) would require re-testing the entire migration path. NULL is a valid state, not a placeholder.
+
+---
+
+## Phase 6 M6.2 Decisions
+
+---
+
+**D-ARCH-1 — Every human correction is a future training signal (permanent architectural principle)**
+
+**Decision:** The system must preserve every approval, rejection, structured reason, optional note, corrective action, and future performance outcome in append-only history. Human feedback must never be silently discarded, overwritten, or reduced to only the current state. Future optimization phases will combine operator feedback with Platform Analytics to learn preferences, quality standards, and performance patterns while retaining complete provenance and rollback capability.
+
+This principle applies across: Scripts, Production Plans, Narration, Captions, Visual assets, Scene manifests, Rendered videos, Publishing decisions, Platform Analytics, Experiment results, and future preference and optimization models.
+
+Operationally: review event tables are insert-only; no application `UPDATE` or `DELETE` may target review events; rejected artifacts and their feedback remain permanently inspectable; regeneration creates a new artifact rather than rewriting the rejected one; supersession is tracked via `superseded_at` timestamps, not by deletion.
+
+**Reasoning:** A content production system that learns requires complete, unambiguous history. A single rejected narration segment, with its reason code, severity, expected correction, voice profile ID, and provider, is one data point toward learning which voices suit which topics. Discarding that data — even for "convenience" — destroys the future optimizer's training set. Append-only history also enables rollback: if a preference model produces bad recommendations, the prior approved artifacts and human decisions are still present and can be restored or reanalyzed.
+
+---
+
+**D-M6.2-1 — Exception-based narration review workflow**
+
+**Decision:** Synthesized segment assets are provisionally acceptable unless explicitly rejected. Run approval does not require per-segment approval events. Segment rejection is explicit, structured, and append-only. Rejected segments must be regenerated before run approval. Run approval inserts one run-level event and atomically supersedes the prior active approved run.
+
+**Reasoning:** Requiring explicit per-segment approval for a 4-segment narration run creates 4 unnecessary clicks for the common case where synthesis is acceptable. Exception-based review is faster for the operator, reduces review event noise, and preserves the same audit trail since rejections are still fully recorded. If a segment is not rejected, the run-level approval event serves as the documented acceptance of all active synthesized assets.
+
+---
+
+**D-M6.2-2 — Segment-level audio assets**
+
+**Decision:** One narration asset per Production Segment. No full-plan combined audio asset in M6.2. Every asset references its `production_segment.id` as the Platform Analytics granular unit.
+
+**Reasoning:** Platform Analytics attribution to individual segments is a first-class requirement (D-M6.1-5). Segment-level assets enable regenerating only a single failing segment rather than the whole narration. Phase 7 scene manifests reference `narration_segment_id` per scene. Phase 8 rendering will concatenate segments. The concat step belongs in Phase 8, not M6.2.
+
+---
+
+**D-M6.2-3 — Separate tts_calls table (not ai_calls)**
+
+**Decision:** TTS cost records go in a dedicated `tts_calls` table. The existing `ai_calls` table is not reused.
+
+**Reasoning:** `ai_calls` is token-oriented (input_tokens, output_tokens). TTS is character-billed. Forcing TTS into `ai_calls` would require NULL-filling the token columns, polluting the table with semantically wrong data. A dedicated table with `characters_submitted`, `characters_billed`, and `price_per_1k_chars` (stored at call time) accurately represents TTS billing and remains correct even when the pricing registry changes.
+
+---
+
+**D-M6.2-4 — WAV output format for MVP audio validation**
+
+**Decision:** Default audio format is WAV. Audio validation uses the Python stdlib `wave` module. LUFS normalisation, MP3 parsing, and FFmpeg are deferred to Phase 8.
+
+**Reasoning:** WAV can be fully validated (sample rate, channel count, frame count, duration) without any new dependency using the stdlib `wave` module. MP3 duration measurement requires frame-counting or a third-party library. Since Phase 8 already introduces FFmpeg for rendering, LUFS normalisation and format conversion are natural Phase 8 concerns. WAV files are larger but the operator audience is a single-machine portfolio system where storage cost is negligible compared to correctness guarantees.
+
+---
+
+**D-M6.2-5 — No API keys or secrets in voice_profiles**
+
+**Decision:** `voice_profiles.provider_voice_id` stores a non-secret provider identifier (e.g., `"alloy"` for OpenAI, a UUID for ElevenLabs). API keys are never stored in the database; they are read from environment variables at runtime.
+
+**Reasoning:** Database rows are logged, backed up, and inspected. An API key in a voice_profiles row would be visible in any DB dump, log, or migration script. Provider voice IDs are not credentials; they are reference strings that identify which voice to request. The distinction between "voice identity" and "authentication" must be maintained permanently.
+
+**D-M6.2-6 — Narration run supersession is not rejection**
+
+**Decision:** When `approve_narration_run()` supersedes a prior active approved run, the prior run keeps `status='approved'`. Only `superseded_at` and `superseded_by_run_id` are set on the prior run. The partial unique index (`WHERE status='approved' AND superseded_at IS NULL`) enforces at-most-one active approved run per plan without touching the prior run's status.
+
+**Reasoning:** Supersession and rejection are orthogonal lifecycle events. A superseded run was legitimately approved; it was replaced by a newer run, not found to be defective. Changing its status to `rejected` would break audit queries ("what was approved and when"), contaminate rejection analytics with non-defective events, and misrepresent operator decisions in the training dataset. The `superseded_at` timestamp is the canonical marker. Four status values (`running/completed/failed/approved/rejected`) are sufficient; no `superseded` status is needed.
+
+**D-M6.2-7 — Review events preserve immutable training context at insert time**
+
+**Decision:** Every row in `narration_review_events` stores a denormalized snapshot of the full provenance at the moment the event is recorded: `plan_id`, `script_id`, `topic_id`, `voice_profile_id`, `provider`, `model`, `voice_id`, `experiment_id`. These fields are frozen at INSERT and never updated.
+
+**Reasoning:** Voice profiles are versioned and supersedeable; topics and scripts can be edited after narration is approved. If review events only stored foreign keys, a future query reconstructing "which voice/model/topic led to this rejection" would return current state, not historical state — making the event useless for learning. Denormalized provenance ensures that each review event is a self-contained training datum regardless of how the referenced entities evolve.
+
+**D-M6.2-8 — FakeTTSProvider is the only TTS provider in M6.2**
+
+**Decision:** M6.2 ships with `FakeTTSProvider` only. No ElevenLabs, OpenAI TTS, Google, AWS Polly, or Azure Cognitive Services SDK is added. Provider selection is deferred to M6.3 pending explicit operator approval of a concrete production provider.
+
+**Reasoning:** Selecting a provider requires cost negotiation, API key management, latency profiling, and quality evaluation. Those decisions are out of scope for M6.2, which is concerned with establishing the pipeline architecture. `FakeTTSProvider` generates valid WAV bytes deterministically, covering the full pipeline end-to-end without incurring cost or introducing provider-specific dependencies.
+
+**D-M6.2-9 — Severity validated before any SAVEPOINT**
+
+**Decision:** `_validate_severity()` is called before any database SAVEPOINT is opened in `reject_narration_run()` and `reject_narration_segment_asset()`. An out-of-range severity (outside 1–5) raises `InvalidNarrationSeverityError` immediately without touching the database.
+
+**Reasoning:** A SAVEPOINT that fails mid-execution due to a programmer error (bad severity value) would leave the connection in a partial transaction state. Validating inputs at the function boundary, before any side effects, is the correct contract: either the call succeeds atomically or it fails with no side effects.
+
+**D-M6.2-10 — `actor` field; no `reviewer` field**
+
+**Decision:** The human identity field in `narration_review_events` and in all review API signatures is named `actor`, not `reviewer`.
+
+**Reasoning:** Future review events may be generated by automated systems, not human reviewers. `actor` is neutral and correct in both contexts. `reviewer` implies human review only and would require a rename or a second field when machine-generated events are introduced.

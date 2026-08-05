@@ -25,16 +25,18 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 6 M6.1 complete)
+## Current state (Phase 6 M6.2 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=10): `topics`, `sources`, `scripts`,
+- Versioned schema (SCHEMA_VERSION=11): `topics`, `sources`, `scripts`,
   `runs`, `ai_calls`, Phase 3 intelligence tables, `source_contents`,
   Phase 4.2 claim extraction tables, Phase 5 `script_generation_runs`
-  and `script_citations` tables, plus Phase 6 M6.1 `production_plans`,
+  and `script_citations` tables, Phase 6 M6.1 `production_plans`,
   `production_segments`, `production_segment_citations`, and
-  `production_plan_review_events` tables.
+  `production_plan_review_events` tables, plus Phase 6 M6.2
+  `voice_profiles`, `narration_runs`, `narration_segment_assets`,
+  `tts_calls`, and `narration_review_events` tables.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
 - Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
@@ -184,9 +186,68 @@ optional adapters after YouTube is stable.
     quote_support_status IN ('exact','normalized')`
   - CLI: `ace sources extract-claims <source_id>`, `ace sources list-claims
     <topic_id>`, `ace sources claim-runs <source_id>`
+- Phase 6 Milestone 6.2 — Narration Generation:
+  - SCHEMA_VERSION 11: five new tables — `voice_profiles` (17 cols; nullable
+    `channel_id` scoping; versioned; `is_default` enforced via `is_default=1`
+    uniqueness constraint per channel/global scope), `narration_runs` (25 cols;
+    `UNIQUE(plan_id, input_hash)` hard idempotency; status CHECK:
+    `running/completed/failed/approved/rejected`; supersession via
+    `superseded_at` + `superseded_by_run_id`; partial unique index
+    `WHERE status='approved' AND superseded_at IS NULL` — superseded runs
+    retain `status='approved'`; one active approved run per plan at a time),
+    `narration_segment_assets` (27 cols; partial unique index
+    `WHERE status != 'rejected' AND superseded_at IS NULL`; supersession via
+    `superseded_at` timestamps), `tts_calls` (20 cols; auto-commits outside
+    SAVEPOINT, same pattern as `ai_calls`), `narration_review_events` (21 cols;
+    event_type CHECK: `run_approved/run_rejected/segment_rejected/
+    segment_regenerated`; denormalized training context — `plan_id`,
+    `script_id`, `topic_id`, `voice_profile_id`, `provider`, `model`,
+    `voice_id`, `experiment_id` — frozen at insert time; `actor` field;
+    `severity` 1–5 CHECK; `expected_correction`; `replacement_asset_id` for
+    `segment_regenerated` events); v10→v11 migration
+  - `src/app/narration/` package: `constants`, `errors`, `hashing`, `models`,
+    `protocol`, `fake`, `pricing`, `storage`, `repository`, `orchestrator`
+  - `TTSProvider` `@runtime_checkable` Protocol: `synthesize(TTSRequest) →
+    TTSResponse`; `provider_name: str`; `default_model: str`
+  - `FakeTTSProvider`: deterministic silence WAV bytes via stdlib `wave`;
+    word-count-based duration; `fail_on: set[int]` for test injection; no
+    new runtime dependencies; only TTS provider in M6.2
+  - `TTSPricingRegistry`: character-based pricing (`price_per_1k_chars`);
+    `estimate_cost()`; singleton `get_default_registry()`; fake model = $0.00
+  - Segment input hash: SHA-256 of compact sorted JSON of 19 fields; run input
+    hash: SHA-256 of compact sorted JSON of 14 fields
+  - `NARRATION_SCHEMA_VERSION = "Narration-v1"`;
+    `NARRATION_ALGORITHM_VERSION = "narration-segment-v1"` — both bound to
+    hashes; any change invalidates existing runs
+  - `ACE_ARTIFACTS_PATH` config: WAV files stored at
+    `{artifacts_path}/narration/{plan_id}/{run_id}/segment_{id}.wav`;
+    relative paths stored in DB; `/artifacts/` excluded from Git
+  - Atomic audio write: `.tmp` → validate WAV (stdlib `wave`) → SHA-256 →
+    `os.replace()` to final path; `AudioValidationError` on corrupt bytes
+  - `narrate_plan()`: idempotent — returns existing completed/approved run
+    without re-synthesis; resumes running run from last synthesized segment;
+    TTS provider call OUTSIDE any DB transaction; `record_tts_call()` called
+    after synthesis OUTSIDE any SAVEPOINT (auto-commits)
+  - Exception-based review: all segments start `synthesized`; operator rejects
+    only problematic segments; run approval requires no rejected segments;
+    severity validated 1–5 BEFORE opening any SAVEPOINT
+    (`InvalidNarrationSeverityError`)
+  - Supersession contract: `approve_narration_run()` supersedes the prior
+    active approved run by setting `superseded_at` + `superseded_by_run_id`;
+    the prior run keeps `status='approved'` — supersession is NOT rejection
+  - `regenerate_segment()`: creates pending asset (committed), calls TTS
+    OUTSIDE SAVEPOINT, writes WAV atomically, calls
+    `finalize_narration_segment_asset()` in SAVEPOINT (`finalize_nsa`);
+    pending asset deleted + committed if TTS or finalization fails
+  - SAVEPOINTs: `create_vp`, `approve_nr`, `reject_nr`, `finalize_nsa`,
+    `reject_nsa`
+  - CLI: `ace narration voices/add-voice/narrate/runs/approve/reject-run/
+    reject-segment/events/regenerate-segment`
+  - Config: `ACE_TTS_PROVIDER` (default `fake`), `ACE_TTS_MODEL` (default
+    `fake/FAKE`)
 - Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`,
-  `discover`, `intelligence`, `production` subcommand groups and diagnostic
-  `version`, `doctor` commands.
+  `discover`, `intelligence`, `production`, `narration` subcommand groups and
+  diagnostic `version`, `doctor` commands.
 - Stdlib structured logging via `ACE_LOG_LEVEL`.
 
 ## Package layout (target — populated phase by phase)
@@ -264,8 +325,18 @@ src/app/
 │   ├── models.py             # Draft dataclasses; Pydantic DB models; ApprovedProductionPlan handoff
 │   ├── renderer.py           # build_production_plan() pure function; plan_draft_to_json_summary()
 │   └── repository.py         # CRUD + approve/reject SAVEPOINTs; get_approved_production_plan_full()
-├── media/                    # Phases 6 M6.2+: Production
-│   ├── narration.py          # TTS provider abstraction and audio generation
+├── narration/                # Phase 6 M6.2: TTS narration pipeline (implemented)
+│   ├── constants.py          # Version strings; stale-temp age; default format/sample rate
+│   ├── errors.py             # NarrationError hierarchy (SynthesisError, AudioValidationError, etc.)
+│   ├── hashing.py            # compute_narration_text/segment/run/settings_hash()
+│   ├── models.py             # VoiceProfileCreate/NarrationRunDraft/NarrationSegmentAssetDraft dataclasses; Pydantic DB models
+│   ├── protocol.py           # TTSProvider @runtime_checkable Protocol; TTSRequest/TTSResponse dataclasses
+│   ├── fake.py               # FakeTTSProvider: deterministic WAV silence; fail_on injection
+│   ├── pricing.py            # TTSPricingRegistry; character-based cost estimation; singleton
+│   ├── storage.py            # Artifact path resolution; atomic WAV write; WAV validation; SHA-256
+│   ├── repository.py         # Voice profile CRUD; narration run/segment CRUD; approve/reject SAVEPOINTs; record_tts_call
+│   └── orchestrator.py       # narrate_plan() entry point; idempotency; per-segment synthesis; dry-run; regenerate_segment()
+├── media/                    # Phases 6 M6.3+: Captions, assets, video rendering
 │   ├── captions.py           # SRT/VTT caption generation
 │   ├── assets.py             # Asset library, licence enforcement
 │   ├── manifest.py           # Scene manifest assembly and validation
@@ -321,9 +392,21 @@ Phase 4 M4.2: `claim_extraction_runs`, `claim_extraction_run_calls`, `claims`
 tables; indexes on source_content_id, input_hash, extraction_run_id, chunk_index;
 UNIQUE(claim_extraction_run_id, chunk_index) on run_calls
 
+Phase 5: extend `scripts` with `body_json`, `format`, `approved_at`,
+`superseded_at`; add `script_generation_runs` and `script_citations` tables
+
+Phase 6 M6.1: `production_plans`, `production_segments`,
+`production_segment_citations`, `production_plan_review_events` tables;
+UNIQUE(script_id, input_hash) and two partial unique indexes for normal/
+experiment active-plan isolation
+
+Phase 6 M6.2: `voice_profiles`, `narration_runs`, `narration_segment_assets`,
+`tts_calls`, `narration_review_events` tables; UNIQUE(plan_id, input_hash) on
+narration_runs; partial unique index on segment assets
+(WHERE status != 'rejected' AND superseded_at IS NULL)
+
 Planned additions per phase:
-- Phase 5: extend `scripts`; add `hooks`, `metadata_drafts`
-- Phase 6: `narrations`, `captions`, `tts_calls`
+- Phase 6 M6.3+: `captions`
 - Phase 7: `assets`, `scene_manifests`
 - Phase 8: `renders`, `thumbnails`
 - Phase 9: extend `runs`

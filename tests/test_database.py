@@ -78,6 +78,11 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     conn.execute("INSERT INTO schema_version (version) VALUES (2)")
     # Drop Phase 3–10 tables and columns to simulate a real v2 state
     for tbl in (
+        "narration_review_events",
+        "tts_calls",
+        "narration_segment_assets",
+        "narration_runs",
+        "voice_profiles",
         "production_plan_review_events",
         "production_segment_citations",
         "production_segments",
@@ -121,12 +126,12 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     conn2.close()
 
 
-def test_schema_version_is_10(tmp_path: Path) -> None:
+def test_schema_version_is_11(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version
 
     conn = open_db(tmp_path / "test.db")
-    assert SCHEMA_VERSION == 10
-    assert _get_version(conn) == 10
+    assert SCHEMA_VERSION == 11
+    assert _get_version(conn) == 11
     conn.close()
 
 
@@ -228,6 +233,11 @@ def test_migration_v7_to_v8(tmp_path: Path) -> None:
     conn = open_db(tmp_path / "v7.db")
     _set_version(conn, 7)
     for tbl in (
+        "narration_review_events",
+        "tts_calls",
+        "narration_segment_assets",
+        "narration_runs",
+        "voice_profiles",
         "production_plan_review_events",
         "production_segment_citations",
         "production_segments",
@@ -301,6 +311,11 @@ def test_migration_v6_to_v7(tmp_path: Path) -> None:
     # Simulate v6 state: reset version and drop v7+ tables/columns
     _set_version(conn, 6)
     for tbl in (
+        "narration_review_events",
+        "tts_calls",
+        "narration_segment_assets",
+        "narration_runs",
+        "voice_profiles",
         "production_plan_review_events",
         "production_segment_citations",
         "production_segments",
@@ -764,12 +779,17 @@ def test_v10_review_event_decision_check(db: sqlite3.Connection) -> None:
 
 
 def test_migration_v9_to_v10(tmp_path: Path) -> None:
-    """A v9 database gains all four production tables on next open_db."""
+    """A v9 database gains all production and narration tables on next open_db."""
     from app.core.database import SCHEMA_VERSION, _get_version, _set_version
 
     conn = open_db(tmp_path / "v9.db")
     _set_version(conn, 9)
     for tbl in (
+        "narration_review_events",
+        "tts_calls",
+        "narration_segment_assets",
+        "narration_runs",
+        "voice_profiles",
         "production_plan_review_events",
         "production_segment_citations",
         "production_segments",
@@ -781,7 +801,7 @@ def test_migration_v9_to_v10(tmp_path: Path) -> None:
 
     conn2 = open_db(tmp_path / "v9.db")
     assert _get_version(conn2) == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 10
+    assert SCHEMA_VERSION == 11
     tables = {
         r[0]
         for r in conn2.execute(
@@ -792,4 +812,6 @@ def test_migration_v9_to_v10(tmp_path: Path) -> None:
     assert "production_segments" in tables
     assert "production_segment_citations" in tables
     assert "production_plan_review_events" in tables
+    assert "narration_runs" in tables
+    assert "voice_profiles" in tables
     conn2.close()

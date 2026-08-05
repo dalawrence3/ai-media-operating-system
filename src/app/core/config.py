@@ -28,6 +28,13 @@ class Config:
         # ACE_DRY_RUN=1 forces the fake provider regardless of ACE_AI_PROVIDER.
         self.dry_run: bool = os.environ.get("ACE_DRY_RUN", "").lower() in {"1", "true", "yes"}
 
+        # TTS / narration settings (Phase 6 M6.2).
+        # ACE_ARTIFACTS_PATH: root directory for audio artifacts (defaults to ./artifacts).
+        raw_artifacts = os.environ.get("ACE_ARTIFACTS_PATH", "")
+        self.artifacts_path: Path = Path(raw_artifacts) if raw_artifacts else Path("artifacts")
+        self.tts_provider: str = os.environ.get("ACE_TTS_PROVIDER", "fake").lower()
+        self.tts_model: str = os.environ.get("ACE_TTS_MODEL", "fake/FAKE")
+
 
 _config: Config | None = None
 

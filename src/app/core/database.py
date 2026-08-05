@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -713,6 +713,189 @@ CREATE INDEX IF NOT EXISTS idx_ppre_experiment
 """
 
 
+_DDL_V11_NARRATION = """
+CREATE TABLE IF NOT EXISTS voice_profiles (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id          INTEGER REFERENCES channels(id) ON DELETE SET NULL,
+    provider            TEXT    NOT NULL,
+    model               TEXT    NOT NULL,
+    voice_id            TEXT    NOT NULL,
+    name                TEXT    NOT NULL,
+    language            TEXT    NOT NULL DEFAULT 'en-US',
+    speaking_rate       REAL    NOT NULL DEFAULT 1.0,
+    style               TEXT,
+    stability           REAL,
+    similarity_boost    REAL,
+    settings_json       TEXT    NOT NULL DEFAULT '{}',
+    version             INTEGER NOT NULL DEFAULT 1,
+    is_default          INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+    superseded_by_id    INTEGER REFERENCES voice_profiles(id),
+    created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_vp_channel
+    ON voice_profiles (channel_id)
+    WHERE channel_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS narration_runs (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id                 INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE RESTRICT,
+    plan_input_hash         TEXT    NOT NULL,
+    voice_profile_id        INTEGER NOT NULL REFERENCES voice_profiles(id) ON DELETE RESTRICT,
+    voice_profile_version   INTEGER NOT NULL,
+    language                TEXT    NOT NULL,
+    speaking_rate           REAL    NOT NULL,
+    style                   TEXT,
+    stability               REAL,
+    similarity_boost        REAL,
+    settings_json           TEXT    NOT NULL,
+    output_format           TEXT    NOT NULL,
+    sample_rate_hz          INTEGER NOT NULL,
+    input_hash              TEXT    NOT NULL,
+    status  TEXT    NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'completed', 'failed', 'approved', 'rejected')),
+    experiment_id           TEXT,
+    notes                   TEXT,
+    error_message           TEXT,
+    completed_at            TEXT,
+    approved_at             TEXT,
+    rejected_at             TEXT,
+    superseded_at           TEXT,
+    superseded_by_run_id    INTEGER REFERENCES narration_runs(id),
+    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (plan_id, input_hash)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_one_active_normal
+    ON narration_runs (plan_id)
+    WHERE status = 'approved'
+      AND superseded_at IS NULL
+      AND experiment_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_one_active_experiment
+    ON narration_runs (plan_id, experiment_id)
+    WHERE status = 'approved'
+      AND superseded_at IS NULL
+      AND experiment_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_nr_plan
+    ON narration_runs (plan_id);
+
+CREATE TABLE IF NOT EXISTS narration_segment_assets (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                  INTEGER NOT NULL REFERENCES narration_runs(id) ON DELETE RESTRICT,
+    segment_id              INTEGER NOT NULL REFERENCES production_segments(id) ON DELETE RESTRICT,
+    narration_text_hash     TEXT    NOT NULL,
+    provider                TEXT    NOT NULL,
+    model                   TEXT    NOT NULL,
+    voice_id                TEXT    NOT NULL,
+    voice_profile_id        INTEGER NOT NULL REFERENCES voice_profiles(id) ON DELETE RESTRICT,
+    voice_profile_version   INTEGER NOT NULL,
+    language                TEXT    NOT NULL,
+    speaking_rate           REAL    NOT NULL,
+    style                   TEXT,
+    stability               REAL,
+    similarity_boost        REAL,
+    settings_json_hash      TEXT    NOT NULL,
+    output_format           TEXT    NOT NULL,
+    sample_rate_hz          INTEGER NOT NULL,
+    input_hash              TEXT    NOT NULL,
+    status  TEXT    NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending', 'synthesized', 'rejected')),
+    audio_path              TEXT,
+    audio_sha256            TEXT,
+    duration_seconds        REAL,
+    characters_billed       INTEGER,
+    cost_usd                REAL,
+    superseded_at           TEXT,
+    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nsa_active_per_run_segment
+    ON narration_segment_assets (run_id, segment_id)
+    WHERE status != 'rejected' AND superseded_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_nsa_run
+    ON narration_segment_assets (run_id);
+
+CREATE INDEX IF NOT EXISTS idx_nsa_segment
+    ON narration_segment_assets (segment_id);
+
+CREATE TABLE IF NOT EXISTS tts_calls (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id                      INTEGER NOT NULL REFERENCES narration_runs(id) ON DELETE RESTRICT,
+    segment_id                  INTEGER REFERENCES production_segments(id) ON DELETE RESTRICT,
+    provider                    TEXT    NOT NULL,
+    model                       TEXT    NOT NULL,
+    voice_id                    TEXT    NOT NULL,
+    input_characters            INTEGER NOT NULL,
+    characters_billed           INTEGER NOT NULL,
+    output_format               TEXT    NOT NULL,
+    sample_rate_hz              INTEGER NOT NULL,
+    duration_seconds            REAL,
+    cost_usd                    REAL    NOT NULL,
+    success                     INTEGER NOT NULL CHECK (success IN (0, 1)),
+    error_message               TEXT,
+    latency_ms                  INTEGER,
+    request_id                  TEXT,
+    provider_metadata_json      TEXT,
+    narration_schema_version    TEXT    NOT NULL,
+    narration_algorithm_version TEXT    NOT NULL,
+    called_at                   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_tts_run
+    ON tts_calls (run_id);
+
+CREATE TABLE IF NOT EXISTS narration_review_events (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id               INTEGER NOT NULL REFERENCES narration_runs(id) ON DELETE RESTRICT,
+    plan_id              INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE RESTRICT,
+    script_id            INTEGER NOT NULL REFERENCES scripts(id) ON DELETE RESTRICT,
+    topic_id             INTEGER NOT NULL REFERENCES topics(id) ON DELETE RESTRICT,
+    voice_profile_id     INTEGER NOT NULL REFERENCES voice_profiles(id) ON DELETE RESTRICT,
+    provider             TEXT    NOT NULL,
+    model                TEXT    NOT NULL,
+    voice_id             TEXT    NOT NULL,
+    experiment_id        TEXT,
+    segment_id           INTEGER REFERENCES production_segments(id) ON DELETE RESTRICT,
+    asset_id             INTEGER REFERENCES narration_segment_assets(id) ON DELETE RESTRICT,
+    replacement_asset_id INTEGER REFERENCES narration_segment_assets(id) ON DELETE RESTRICT,
+    event_type           TEXT    NOT NULL
+                         CHECK (event_type IN
+                                ('run_approved', 'run_rejected',
+                                 'segment_rejected', 'segment_regenerated')),
+    reason_code          TEXT,
+    severity             INTEGER CHECK (severity BETWEEN 1 AND 5),
+    expected_correction  TEXT,
+    notes                TEXT,
+    actor                TEXT,
+    created_at           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_nre_run
+    ON narration_review_events (run_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_nre_asset
+    ON narration_review_events (asset_id, created_at)
+    WHERE asset_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_nre_reason_code
+    ON narration_review_events (reason_code)
+    WHERE reason_code IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_nre_voice_provider
+    ON narration_review_events (voice_profile_id, provider, model);
+
+CREATE INDEX IF NOT EXISTS idx_nre_experiment
+    ON narration_review_events (experiment_id)
+    WHERE experiment_id IS NOT NULL;
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -745,6 +928,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -759,6 +943,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -772,6 +957,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -784,6 +970,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -795,6 +982,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -805,6 +993,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -814,6 +1003,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -822,6 +1012,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V8_CLAIMS)
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -829,12 +1020,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 8 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V9_SCRIPTS)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 9:
         logger.info("Migrating schema from version 9 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V10_PRODUCTION)
+        conn.executescript(_DDL_V11_NARRATION)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 10:
+        logger.info("Migrating schema from version 10 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V11_NARRATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

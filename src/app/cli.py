@@ -1403,6 +1403,221 @@ def production_feedback(
 
 
 # ---------------------------------------------------------------------------
+# Narration commands
+# ---------------------------------------------------------------------------
+
+narration_app = typer.Typer(help="Manage audio narration.", no_args_is_help=True)
+app.add_typer(narration_app, name="narration")
+
+
+@narration_app.command("voices")
+def narration_voices() -> None:
+    """List voice profiles."""
+    from app.narration.repository import list_voice_profiles
+
+    conn = _get_db()
+    profiles = list_voice_profiles(conn)
+    if not profiles:
+        typer.echo("No voice profiles found.")
+        return
+    for vp in profiles:
+        default_flag = " [default]" if vp.is_default else ""
+        typer.echo(f"[{vp.id}] {vp.name}  {vp.provider}/{vp.model}  {vp.language}{default_flag}")
+
+
+@narration_app.command("add-voice")
+def narration_add_voice(
+    name: Annotated[str, typer.Argument(help="Human-readable name for this voice profile.")],
+    provider: Annotated[str, typer.Option(help="TTS provider name (e.g. 'fake').")] = "fake",
+    model: Annotated[str, typer.Option(help="Provider model identifier.")] = "fake/FAKE",
+    voice_id: Annotated[str, typer.Option(help="Provider voice ID.")] = "fake-voice",
+    language: Annotated[str, typer.Option(help="BCP-47 language tag.")] = "en-US",
+    speaking_rate: Annotated[float, typer.Option(help="Speaking rate multiplier.")] = 1.0,
+    is_default: Annotated[bool, typer.Option("--default", help="Set as default voice.")] = False,
+) -> None:
+    """Register a new voice profile."""
+    from app.narration.models import VoiceProfileCreate
+    from app.narration.repository import create_voice_profile
+
+    conn = _get_db()
+    vpc = VoiceProfileCreate(
+        channel_id=None,
+        provider=provider,
+        model=model,
+        voice_id=voice_id,
+        name=name,
+        language=language,
+        speaking_rate=speaking_rate,
+        style=None,
+        stability=None,
+        similarity_boost=None,
+        settings_json="{}",
+        is_default=is_default,
+    )
+    vp = create_voice_profile(conn, vpc)
+    conn.commit()
+    typer.echo(f"Created voice profile id={vp.id}  {vp.name}")
+
+
+@narration_app.command("narrate")
+def narration_narrate(
+    topic_id: Annotated[int, typer.Argument(help="Topic ID to narrate.")],
+    voice_profile_id: Annotated[int, typer.Option("--voice", help="Voice profile ID.")] = 1,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Plan without synthesising audio.")
+    ] = False,
+) -> None:
+    """Synthesise audio for the active production plan of TOPIC_ID."""
+    from app.narration.fake import FakeTTSProvider
+    from app.narration.orchestrator import narrate_plan
+    from app.production.repository import get_approved_production_plan_full
+
+    cfg = get_config()
+    conn = _get_db()
+
+    plan = get_approved_production_plan_full(conn, topic_id)
+    if plan is None:
+        typer.echo(f"No approved production plan for topic_id={topic_id}.", err=True)
+        raise typer.Exit(1)
+
+    provider = FakeTTSProvider()
+    result = narrate_plan(
+        conn,
+        plan_id=plan.plan_id,
+        plan_input_hash=plan.input_hash,
+        voice_profile_id=voice_profile_id,
+        artifacts_path=cfg.artifacts_path,
+        provider=provider,
+        dry_run=dry_run,
+    )
+    conn.commit()
+
+    if dry_run:
+        typer.echo(f"Dry-run: {len(result.skipped_segment_ids)} segment(s) would be synthesised.")
+        return
+
+    typer.echo(
+        f"Run id={result.run_id}: synthesised {len(result.assets)} segment(s)."
+    )
+
+
+@narration_app.command("runs")
+def narration_runs(
+    topic_id: Annotated[int, typer.Argument(help="Topic ID.")],
+) -> None:
+    """List narration runs for the active production plan of TOPIC_ID."""
+    from app.narration.repository import list_narration_runs
+    from app.production.repository import get_approved_production_plan_full
+
+    conn = _get_db()
+    plan = get_approved_production_plan_full(conn, topic_id)
+    if plan is None:
+        typer.echo(f"No approved production plan for topic_id={topic_id}.", err=True)
+        raise typer.Exit(1)
+
+    runs = list_narration_runs(conn, plan_id=plan.plan_id)
+    if not runs:
+        typer.echo("No narration runs found.")
+        return
+    for run in runs:
+        typer.echo(f"[{run.id}] status={run.status}  created={run.created_at}")
+
+
+@narration_app.command("approve")
+def narration_approve(
+    run_id: Annotated[int, typer.Argument(help="Narration run ID to approve.")],
+    actor: Annotated[str | None, typer.Option(help="Actor identifier.")] = None,
+    notes: Annotated[str | None, typer.Option(help="Approval notes.")] = None,
+) -> None:
+    """Approve a completed narration run."""
+    from app.narration.repository import approve_narration_run
+
+    conn = _get_db()
+    run = approve_narration_run(conn, run_id, actor=actor, notes=notes)
+    conn.commit()
+    typer.echo(f"Run id={run.id} approved.")
+
+
+@narration_app.command("reject-run")
+def narration_reject_run(
+    run_id: Annotated[int, typer.Argument(help="Narration run ID to reject.")],
+    reason_code: Annotated[str | None, typer.Option(help="Rejection reason code.")] = None,
+    notes: Annotated[str | None, typer.Option(help="Rejection notes.")] = None,
+    actor: Annotated[str | None, typer.Option(help="Actor identifier.")] = None,
+) -> None:
+    """Reject a completed narration run."""
+    from app.narration.repository import reject_narration_run
+
+    conn = _get_db()
+    run = reject_narration_run(
+        conn, run_id, reason_code=reason_code, notes=notes, actor=actor
+    )
+    conn.commit()
+    typer.echo(f"Run id={run.id} rejected.")
+
+
+@narration_app.command("reject-segment")
+def narration_reject_segment(
+    asset_id: Annotated[int, typer.Argument(help="Segment asset ID to reject.")],
+    reason_code: Annotated[str, typer.Option(help="Rejection reason code.")] = "other",
+    notes: Annotated[str | None, typer.Option(help="Rejection notes.")] = None,
+    actor: Annotated[str | None, typer.Option(help="Actor identifier.")] = None,
+) -> None:
+    """Reject a synthesised segment asset."""
+    from app.narration.repository import reject_narration_segment_asset
+
+    conn = _get_db()
+    asset = reject_narration_segment_asset(
+        conn, asset_id, reason_code=reason_code, notes=notes, actor=actor
+    )
+    conn.commit()
+    typer.echo(f"Asset id={asset.id} rejected (reason={reason_code}).")
+
+
+@narration_app.command("regenerate-segment")
+def narration_regenerate_segment(
+    asset_id: Annotated[int, typer.Argument(help="Rejected segment asset ID to regenerate.")],
+    actor: Annotated[str | None, typer.Option(help="Actor identifier.")] = None,
+) -> None:
+    """Regenerate a rejected segment asset."""
+    from app.narration.fake import FakeTTSProvider
+    from app.narration.orchestrator import regenerate_segment
+
+    cfg = get_config()
+    conn = _get_db()
+    provider = FakeTTSProvider()
+    replacement = regenerate_segment(
+        conn,
+        source_asset_id=asset_id,
+        artifacts_path=cfg.artifacts_path,
+        provider=provider,
+        actor=actor,
+    )
+    typer.echo(f"Regenerated: new asset id={replacement.id} status={replacement.status}.")
+
+
+@narration_app.command("events")
+def narration_events(
+    run_id: Annotated[int, typer.Argument(help="Narration run ID.")],
+) -> None:
+    """List review events for a narration run."""
+    from app.narration.repository import list_narration_review_events
+
+    conn = _get_db()
+    events = list_narration_review_events(conn, run_id)
+    if not events:
+        typer.echo(f"No review events for run id={run_id}.")
+        return
+    for ev in events:
+        seg_str = f"  segment={ev.segment_id}" if ev.segment_id else ""
+        code_str = f"  reason={ev.reason_code}" if ev.reason_code else ""
+        actor_str = f"  actor={ev.actor}" if ev.actor else ""
+        typer.echo(
+            f"[{ev.id}] {ev.event_type}{seg_str}{code_str}{actor_str}  {ev.created_at}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

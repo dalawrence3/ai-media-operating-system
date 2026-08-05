@@ -14,13 +14,12 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 6 Milestone 6.1 (Production Plan) is complete.**
+**Phase 6 Milestone 6.2 (Narration Generation) is complete.**
 
-The system can research a topic end-to-end — from channel strategy through
-source ingestion, claim extraction, LLM-driven script generation, and now
-production plan creation with segment-level duration estimation, citation
-mapping, and approval/rejection governance.
-1155 tests pass. SCHEMA_VERSION 10.
+The system can produce audio narration for every segment of an approved
+production plan: voice profiles, TTS synthesis (FakeTTSProvider for tests),
+atomic WAV writing, cost tracking, and exception-based review governance.
+1307 tests pass. SCHEMA_VERSION 11.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -89,10 +88,27 @@ Implemented phases:
     for normal/experiment active-plan isolation
   - `ApprovedProductionPlan` frozen handoff for M6.2 narration
   - CLI: `ace production plan/show/list/approve/reject/feedback`
+- **Phase 6 M6.2** — Narration generation:
+  - `src/app/narration/` package: constants, errors, hashing, models, protocol,
+    fake, pricing, storage, repository, orchestrator
+  - SCHEMA_VERSION 11: `voice_profiles`, `narration_runs`,
+    `narration_segment_assets`, `tts_calls`, `narration_review_events`
+  - `TTSProvider` `@runtime_checkable` Protocol; `FakeTTSProvider` (stdlib
+    `wave`, no new deps); `TTSPricingRegistry` (character-based, $0 for fake)
+  - Segment and run input hashes (SHA-256, compact sorted JSON); any field
+    change forces re-synthesis
+  - Atomic WAV write: `.tmp` → validate → SHA-256 → `os.replace()`
+  - `narrate_plan()`: idempotent; resumes crashed runs; TTS call outside DB
+    transaction; `record_tts_call()` auto-commits outside SAVEPOINT
+  - Exception-based review: segments start `synthesized`; operator rejects only
+  - `ACE_ARTIFACTS_PATH` config; `/artifacts/` excluded from Git
+  - CLI: `ace narration voices/add-voice/narrate/runs/approve/reject-run/
+    reject-segment/events`
 
 End-to-end workflow: channel strategy → discovery → scoring → topic promotion
 → source ingestion → claim extraction → script generation → human approval
-→ production plan creation → human review (approve/reject).
+→ production plan creation → human review (approve/reject) → narration
+synthesis → narration review (approve/reject segments).
 
 ## Requirements
 
