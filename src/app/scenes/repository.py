@@ -475,15 +475,10 @@ def _record_review_event(
 # ---------------------------------------------------------------------------
 
 
-def get_approved_scene_manifest_full(
+def _hydrate_manifest(
     conn: sqlite3.Connection,
-    topic_id: int,
-) -> ApprovedSceneManifest | None:
-    """Return the fully hydrated approved manifest for a topic."""
-    manifest = get_active_approved_scene_manifest(conn, topic_id)
-    if manifest is None:
-        return None
-
+    manifest: SceneManifest,
+) -> ApprovedSceneManifest:
     scenes_raw = get_scene_manifest_scenes(conn, manifest.id)
     resolved_scenes: list[ApprovedSceneScene] = []
     for s in scenes_raw:
@@ -513,7 +508,6 @@ def get_approved_scene_manifest_full(
                 assets=assets,
             )
         )
-
     return ApprovedSceneManifest(
         manifest_id=manifest.id,
         caption_run_id=manifest.caption_run_id,
@@ -528,3 +522,25 @@ def get_approved_scene_manifest_full(
         approved_at=manifest.approved_at or datetime.now(UTC),
         scenes=resolved_scenes,
     )
+
+
+def get_scene_manifest_full_by_id(
+    conn: sqlite3.Connection,
+    manifest_id: int,
+) -> ApprovedSceneManifest | None:
+    """Return the fully hydrated manifest for any manifest ID (approved or not)."""
+    manifest = get_scene_manifest_by_id(conn, manifest_id)
+    if manifest is None or manifest.status not in ("approved",):
+        return None
+    return _hydrate_manifest(conn, manifest)
+
+
+def get_approved_scene_manifest_full(
+    conn: sqlite3.Connection,
+    topic_id: int,
+) -> ApprovedSceneManifest | None:
+    """Return the fully hydrated approved manifest for a topic."""
+    manifest = get_active_approved_scene_manifest(conn, topic_id)
+    if manifest is None:
+        return None
+    return _hydrate_manifest(conn, manifest)

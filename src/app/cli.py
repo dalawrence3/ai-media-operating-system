@@ -31,6 +31,7 @@ from app.core.repository import (
 from app.intelligence.cli import channels_app, discover_app
 from app.intelligence.repository import promote_opportunity
 from app.intelligence.scoring_cli import scoring_app
+from app.media.cli import render_app
 from app.scenes.cli import scenes_app
 
 app = typer.Typer(
@@ -42,6 +43,7 @@ app.add_typer(channels_app, name="channels")
 app.add_typer(discover_app, name="discover")
 app.add_typer(scoring_app, name="intelligence")
 app.add_typer(scenes_app, name="scenes")
+app.add_typer(render_app, name="render")
 logger = get_logger(__name__)
 
 

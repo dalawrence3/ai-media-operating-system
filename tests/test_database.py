@@ -126,12 +126,12 @@ def test_migration_from_v2_applies_latest(tmp_path) -> None:
     conn2.close()
 
 
-def test_schema_version_is_13(tmp_path: Path) -> None:
+def test_schema_version_is_14(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version
 
     conn = open_db(tmp_path / "test.db")
-    assert SCHEMA_VERSION == 13
-    assert _get_version(conn) == 13
+    assert SCHEMA_VERSION == 14
+    assert _get_version(conn) == 14
     conn.close()
 
 
@@ -801,7 +801,7 @@ def test_migration_v9_to_v10(tmp_path: Path) -> None:
 
     conn2 = open_db(tmp_path / "v9.db")
     assert _get_version(conn2) == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 13
+    assert SCHEMA_VERSION == 14
     tables = {
         r[0]
         for r in conn2.execute(
@@ -962,7 +962,7 @@ def test_migration_v11_to_v12(tmp_path: Path) -> None:
 
     conn2 = open_db(tmp_path / "v11.db")
     assert _get_version(conn2) == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 13
+    assert SCHEMA_VERSION == 14
     tables = {
         r[0]
         for r in conn2.execute(
@@ -972,4 +972,153 @@ def test_migration_v11_to_v12(tmp_path: Path) -> None:
     assert "caption_runs" in tables
     assert "caption_cues" in tables
     assert "caption_review_events" in tables
+    conn2.close()
+
+
+# ── V14 Render manifest tests ─────────────────────────────────────────────────
+
+
+def test_v14_render_tables_exist(db: sqlite3.Connection) -> None:
+    tables = {
+        r[0]
+        for r in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "render_manifests" in tables
+    assert "render_jobs" in tables
+    assert "render_review_events" in tables
+    assert "render_thumbnails" in tables
+
+
+def test_v14_render_manifests_columns(db: sqlite3.Connection) -> None:
+    cols = {r[1] for r in db.execute("PRAGMA table_info(render_manifests)").fetchall()}
+    expected = {
+        "id", "scene_manifest_id", "narration_run_id", "caption_run_id",
+        "topic_id", "plan_id", "script_id", "experiment_id",
+        "input_hash", "render_schema_version", "compositor_version",
+        "total_scene_count", "total_duration_ms", "width", "height", "fps",
+        "caption_burn_in", "status", "approved_at", "rejected_at",
+        "superseded_at", "superseded_by_id", "created_at", "updated_at",
+    }
+    assert expected.issubset(cols)
+
+
+def test_v14_render_jobs_columns(db: sqlite3.Connection) -> None:
+    cols = {r[1] for r in db.execute("PRAGMA table_info(render_jobs)").fetchall()}
+    expected = {
+        "id", "render_manifest_id", "backend", "backend_version",
+        "output_path", "output_sha256", "duration_s", "file_size_bytes",
+        "render_time_s", "width", "height", "fps", "video_codec", "audio_codec",
+        "crf", "audio_bitrate", "caption_burn_in", "ffmpeg_cmd_json", "status",
+        "error_message", "validated", "validation_metadata_json",
+        "started_at", "completed_at", "created_at", "updated_at",
+    }
+    assert expected.issubset(cols)
+
+
+def test_v14_render_review_events_columns(db: sqlite3.Connection) -> None:
+    cols = {r[1] for r in db.execute("PRAGMA table_info(render_review_events)").fetchall()}
+    expected = {
+        "id", "render_manifest_id", "render_job_id",
+        "topic_id", "plan_id", "script_id", "scene_manifest_id",
+        "experiment_id", "render_schema_version",
+        "event_type", "reason_code", "severity", "expected_correction",
+        "notes", "actor", "created_at",
+    }
+    assert expected.issubset(cols)
+
+
+def test_v14_render_thumbnails_columns(db: sqlite3.Connection) -> None:
+    cols = {r[1] for r in db.execute("PRAGMA table_info(render_thumbnails)").fetchall()}
+    expected = {"id", "render_job_id", "file_path", "timestamp_ms", "scene_index", "selected", "created_at"}
+    assert expected.issubset(cols)
+
+
+def test_v14_render_manifest_unique_input_hash(db: sqlite3.Connection) -> None:
+    """render_manifests.input_hash has a UNIQUE constraint."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO render_manifests"
+        " (scene_manifest_id, narration_run_id, caption_run_id, topic_id, plan_id, script_id,"
+        "  input_hash, render_schema_version, compositor_version, status)"
+        " VALUES (1,1,1,1,1,1,'unique_hash','Render-v1','comp-1.0.0','draft')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO render_manifests"
+            " (scene_manifest_id, narration_run_id, caption_run_id, topic_id, plan_id, script_id,"
+            "  input_hash, render_schema_version, compositor_version, status)"
+            " VALUES (1,1,1,1,1,1,'unique_hash','Render-v1','comp-1.0.0','draft')"
+        )
+
+
+def test_v14_render_status_check(db: sqlite3.Connection) -> None:
+    """render_manifests.status CHECK prevents invalid values."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO render_manifests"
+            " (scene_manifest_id, narration_run_id, caption_run_id, topic_id, plan_id, script_id,"
+            "  input_hash, render_schema_version, compositor_version, status)"
+            " VALUES (1,1,1,1,1,1,'h2','Render-v1','comp-1.0.0','invalid_status')"
+        )
+        db.commit()
+
+
+def test_v14_render_job_status_check(db: sqlite3.Connection) -> None:
+    """render_jobs.status CHECK prevents invalid values."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    db.execute(
+        "INSERT INTO render_manifests"
+        " (id, scene_manifest_id, narration_run_id, caption_run_id, topic_id, plan_id, script_id,"
+        "  input_hash, render_schema_version, compositor_version, status)"
+        " VALUES (99,1,1,1,1,1,1,'rh99','Render-v1','comp-1.0.0','draft')"
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO render_jobs"
+            " (render_manifest_id, backend, backend_version, width, height, fps, status)"
+            " VALUES (99, 'ffmpeg', 'ffmpeg-1.0.0', 1080, 1920, 30, 'bad_status')"
+        )
+        db.commit()
+
+
+def test_v14_render_review_event_type_check(db: sqlite3.Connection) -> None:
+    """render_review_events.event_type CHECK prevents unknown types."""
+    db.execute("PRAGMA foreign_keys=OFF")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO render_review_events"
+            " (render_manifest_id, topic_id, plan_id, script_id, scene_manifest_id,"
+            "  render_schema_version, event_type)"
+            " VALUES (1,1,1,1,1,'Render-v1','unknown_event')"
+        )
+        db.commit()
+
+
+def test_migration_v13_to_v14(tmp_path: Path) -> None:
+    """A v13 database gains render tables on next open_db."""
+    from app.core.database import SCHEMA_VERSION, _get_version, _set_version
+
+    conn = open_db(tmp_path / "v13.db")
+    for tbl in ("render_thumbnails", "render_review_events", "render_jobs", "render_manifests"):
+        conn.execute(f"DROP TABLE IF EXISTS {tbl}")
+    _set_version(conn, 13)
+    conn.commit()
+    conn.close()
+
+    conn2 = open_db(tmp_path / "v13.db")
+    assert _get_version(conn2) == SCHEMA_VERSION
+    assert SCHEMA_VERSION == 14
+    tables = {
+        r[0]
+        for r in conn2.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+    assert "render_manifests" in tables
+    assert "render_jobs" in tables
+    assert "render_review_events" in tables
+    assert "render_thumbnails" in tables
     conn2.close()
