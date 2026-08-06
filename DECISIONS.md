@@ -1154,3 +1154,43 @@ Operationally: review event tables are insert-only; no application `UPDATE` or `
 **Decision:** The scenes → rendering boundary is crossed via `ApprovedSceneManifest` (frozen dataclass containing `ApprovedSceneScene` objects with resolved `SceneManifestAsset` lists). Downstream consumers never query scene tables directly.
 
 **Reasoning:** Mirrors the narration → captions handoff pattern. Encoding the boundary as typed frozen dataclasses makes the contract explicit, prevents mutation, and decouples rendering from DB schema details. Any schema change is isolated to `get_approved_scene_manifest_full()`; downstream sees only the typed handoff.
+
+---
+
+## Phase 9 — Publishing & Orchestration Engine
+
+**D-P9-1 — Provider-neutral PublishingProvider Protocol**
+
+**Decision:** Publishing providers implement a `PublishingProvider` `@runtime_checkable` Protocol (not an ABC). The first concrete provider is YouTube; `FakePublishingProvider` is the test double used in all automated tests.
+
+**Reasoning:** Mirrors the `RenderBackend` and `TTSProvider` patterns already established in Phases 6 and 8. Protocol-based design allows any class to satisfy the interface without inheritance, making third-party provider adapters easier to add.
+
+**D-P9-2 — OAuth credentials: path-only references, never secret values in SQLite**
+
+**Decision:** The YouTube adapter reads OAuth secrets from files specified by `YOUTUBE_CLIENT_SECRETS_PATH` and `YOUTUBE_CREDENTIALS_PATH` environment variables. Only the paths are referenced in code. Token values (client secret, refresh token, access token) are NEVER stored in SQLite, logs, provider metadata, review events, hashes, or any reproducibility record.
+
+**Reasoning:** Storing credentials in SQLite would make the database a secret store — a significant security risk. File-based credentials follow the established OAuth installed-application flow and can be managed via OS keychain, secret managers, or mounted secrets without any code change.
+
+**D-P9-3 — Supersession via fields, not status**
+
+**Decision:** `superseded_at` and `superseded_by_id` are dedicated fields on `publishing_plans`. A superseded plan retains its `draft`/`approved`/`rejected` status; only the supersession fields change.
+
+**Reasoning:** Supersession and approval/rejection are orthogonal concerns. A plan can be superseded while still in `draft` (when a better version is created). Conflating these into a single status field would require a `superseded_draft`, `superseded_approved`, etc. explosion. Separate fields keep the state machine simple and queries straightforward.
+
+**D-P9-4 — Dry-run as safe default; live publishing requires six explicit gates**
+
+**Decision:** `start_publishing_job()` defaults to `dry_run=True`. Live provider execution requires all of: live-publishing enablement, configured credentials, an approved plan, an approved render, verified output hash, and explicit non-dry-run flag. Provider selection is also explicit and never silently switched.
+
+**Reasoning:** The cost of an accidental live upload (public YouTube video, consumed quota) is irreversible. Requiring multiple explicit gates prevents any single misconfiguration from causing an accidental publish. This mirrors the `ACE_TTS_LIVE_ENABLED` pattern from Phase 6.
+
+**D-P9-5 — retry_scheduled is a transitional state, not a blocking active state**
+
+**Decision:** `start_publishing_job()` only blocks on `queued` or `running` active jobs. A `retry_scheduled` job is transitional — it signals that the previous failed attempt is being replaced — and does not block a new job from being created.
+
+**Reasoning:** The retry flow is: `failed` → `retry_scheduled` (mark old job) → create new `queued` job → run. If `retry_scheduled` blocked new job creation, the retry flow would deadlock. The `get_active_publishing_job()` function returns `retry_scheduled` for reporting purposes, but `start_publishing_job()`'s duplicate-prevention guard only applies to genuinely concurrent jobs.
+
+**D-P9-6 — provider_video_id pending placeholder for partial uniqueness**
+
+**Decision:** When creating a `Publication` record before the upload begins, `provider_video_id` is set to `__pending_job_{job_id}__`. After upload succeeds, it is updated to the real provider-assigned ID via a raw SQL UPDATE.
+
+**Reasoning:** The `publications` table has a partial unique index on `(provider, provider_video_id) WHERE deleted_at IS NULL` to prevent duplicate live publications. Storing an empty string as the initial `provider_video_id` would violate this constraint on the second attempt (e.g. retry). A job-ID-scoped placeholder is guaranteed unique per job and is replaced atomically before any downstream reads.

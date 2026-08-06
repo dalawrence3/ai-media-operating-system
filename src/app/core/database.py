@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -1383,6 +1383,160 @@ CREATE INDEX IF NOT EXISTS idx_ra_manifest
 """
 
 
+_DDL_V15_PUBLISHING = """
+CREATE TABLE IF NOT EXISTS publishing_plans (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    render_manifest_id          INTEGER NOT NULL REFERENCES render_manifests(id),
+    render_job_id               INTEGER REFERENCES render_jobs(id),
+    topic_id                    INTEGER NOT NULL,
+    production_plan_id          INTEGER NOT NULL,
+    script_id                   INTEGER NOT NULL,
+    scene_manifest_id           INTEGER NOT NULL,
+    narration_run_id            INTEGER NOT NULL,
+    caption_run_id              INTEGER NOT NULL,
+    experiment_id               TEXT,
+
+    input_hash                  TEXT NOT NULL UNIQUE,
+    publishing_engine_version   TEXT NOT NULL,
+    metadata_version            TEXT NOT NULL,
+
+    provider                    TEXT NOT NULL,
+    provider_version            TEXT NOT NULL,
+
+    title                       TEXT NOT NULL,
+    description                 TEXT NOT NULL DEFAULT '',
+    tags_json                   TEXT NOT NULL DEFAULT '[]',
+    language                    TEXT NOT NULL DEFAULT 'en',
+    category                    TEXT,
+    visibility                  TEXT NOT NULL DEFAULT 'private'
+                                    CHECK (visibility IN ('private','unlisted','public')),
+    made_for_kids               INTEGER NOT NULL DEFAULT 0 CHECK (made_for_kids IN (0,1)),
+    playlist_id                 TEXT,
+    thumbnail_path              TEXT,
+    captions_path               TEXT,
+    copyright_notice            TEXT,
+    licensing_notes             TEXT,
+    publication_notes           TEXT,
+
+    schedule_type               TEXT NOT NULL DEFAULT 'immediate'
+                                    CHECK (schedule_type IN ('immediate','scheduled','manual')),
+    scheduled_at                TEXT,
+    timezone                    TEXT,
+
+    status                      TEXT NOT NULL DEFAULT 'draft'
+                                    CHECK (status IN ('draft','approved','rejected')),
+    approved_at                 TEXT,
+    rejected_at                 TEXT,
+    rejection_reason            TEXT,
+
+    superseded_at               TEXT,
+    superseded_by_id            INTEGER REFERENCES publishing_plans(id),
+
+    created_at                  TEXT NOT NULL,
+    updated_at                  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pp_render_manifest ON publishing_plans (render_manifest_id);
+CREATE INDEX IF NOT EXISTS idx_pp_topic ON publishing_plans (topic_id);
+CREATE INDEX IF NOT EXISTS idx_pp_status ON publishing_plans (status);
+CREATE INDEX IF NOT EXISTS idx_pp_provider ON publishing_plans (provider);
+
+CREATE TABLE IF NOT EXISTS publishing_jobs (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    publishing_plan_id          INTEGER NOT NULL REFERENCES publishing_plans(id),
+    attempt_number              INTEGER NOT NULL DEFAULT 1,
+    provider                    TEXT NOT NULL,
+    provider_version            TEXT NOT NULL,
+
+    status                      TEXT NOT NULL DEFAULT 'queued'
+                                    CHECK (status IN (
+                                        'queued','running','retry_scheduled',
+                                        'completed','failed','cancelled'
+                                    )),
+    error_message               TEXT,
+    retry_count                 INTEGER NOT NULL DEFAULT 0,
+    retry_after                 TEXT,
+
+    started_at                  TEXT,
+    completed_at                TEXT,
+    created_at                  TEXT NOT NULL,
+    updated_at                  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pj_plan ON publishing_jobs (publishing_plan_id);
+CREATE INDEX IF NOT EXISTS idx_pj_status ON publishing_jobs (status);
+
+CREATE TABLE IF NOT EXISTS publications (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    publishing_plan_id          INTEGER NOT NULL REFERENCES publishing_plans(id),
+    publishing_job_id           INTEGER NOT NULL REFERENCES publishing_jobs(id),
+
+    provider                    TEXT NOT NULL,
+    provider_version            TEXT NOT NULL,
+    provider_video_id           TEXT,
+    provider_url                TEXT,
+    provider_status_json        TEXT NOT NULL DEFAULT '{}',
+
+    status                      TEXT NOT NULL DEFAULT 'uploading'
+                                    CHECK (status IN (
+                                        'uploading','uploaded','scheduled',
+                                        'published','failed','deleted'
+                                    )),
+    error_message               TEXT,
+
+    visibility                  TEXT NOT NULL DEFAULT 'private',
+    scheduled_at                TEXT,
+    published_at                TEXT,
+    deleted_at                  TEXT,
+
+    publishing_engine_version   TEXT NOT NULL,
+    input_hash                  TEXT NOT NULL,
+    output_sha256               TEXT NOT NULL,
+
+    created_at                  TEXT NOT NULL,
+    updated_at                  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pub_plan ON publications (publishing_plan_id);
+CREATE INDEX IF NOT EXISTS idx_pub_job ON publications (publishing_job_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_pub_provider_video
+    ON publications (provider, provider_video_id)
+    WHERE deleted_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS publishing_review_events (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    publishing_plan_id          INTEGER NOT NULL REFERENCES publishing_plans(id),
+    publishing_job_id           INTEGER REFERENCES publishing_jobs(id),
+    publication_id              INTEGER REFERENCES publications(id),
+
+    topic_id                    INTEGER NOT NULL,
+    production_plan_id          INTEGER NOT NULL,
+    script_id                   INTEGER NOT NULL,
+    render_manifest_id          INTEGER NOT NULL,
+    provider                    TEXT NOT NULL,
+    experiment_id               TEXT,
+
+    event_type                  TEXT NOT NULL
+                                    CHECK (event_type IN (
+                                        'plan_prepared','plan_approved','plan_rejected',
+                                        'metadata_rejected',
+                                        'job_queued','job_started','job_completed','job_failed',
+                                        'retry_requested','schedule_changed',
+                                        'publication_approved','publication_rejected',
+                                        'cancellation_requested','superseded'
+                                    )),
+    reason_code                 TEXT,
+    severity                    INTEGER CHECK (
+        severity IS NULL OR (severity >= 1 AND severity <= 5)
+    ),
+    notes                       TEXT,
+    actor                       TEXT,
+    expected_correction         TEXT,
+
+    created_at                  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pre_plan ON publishing_review_events (publishing_plan_id);
+CREATE INDEX IF NOT EXISTS idx_pre_event_type ON publishing_review_events (event_type);
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -1419,6 +1573,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -1437,6 +1592,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1454,6 +1610,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1470,6 +1627,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1485,6 +1643,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1499,6 +1658,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1512,6 +1672,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1524,6 +1685,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1535,6 +1697,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1545,6 +1708,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1554,6 +1718,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1562,6 +1727,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V12_CAPTIONS)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1569,12 +1735,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 12 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 13:
         logger.info("Migrating schema from version 13 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V14_RENDERS)
+        conn.executescript(_DDL_V15_PUBLISHING)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 14:
+        logger.info("Migrating schema from version 14 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V15_PUBLISHING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

@@ -43,6 +43,13 @@ class Config:
             "ACE_TTS_LIVE_ENABLED", ""
         ).lower() in {"1", "true", "yes"}
 
+        # Publishing safety gate (Phase 9).
+        # Must be explicitly set to true before any live provider upload is made.
+        # Default is false — all publishing uses the fake provider in development and CI.
+        self.publishing_live_enabled: bool = os.environ.get(
+            "ACE_PUBLISHING_LIVE_ENABLED", ""
+        ).lower() in {"1", "true", "yes"}
+
 
 _config: Config | None = None
 

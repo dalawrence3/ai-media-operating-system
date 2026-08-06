@@ -1,8 +1,8 @@
 # Project State Snapshot
 
 **Date:** 2026-08-06
-**Latest implemented milestone:** Phase 8 — Rendering Engine
-**Next milestone:** Phase 9 — Publishing and Orchestration Engine
+**Latest implemented milestone:** Phase 9 — Publishing & Orchestration Engine
+**Next milestone:** Phase 10 (TBD)
 
 ---
 
@@ -27,16 +27,17 @@
 | Phase 6 M6.3C — Live ElevenLabs provider integration | ✅ Complete | 1889 | 12 |
 | Phase 7 — Visual Intelligence & Scene Planning | ✅ Complete | 2019 | 13 |
 | Phase 8 — Rendering Engine | ✅ Complete | 2154 | 14 |
+| Phase 9 — Publishing & Orchestration Engine | ✅ Complete | 2358 | 15 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 14`
+`SCHEMA_VERSION = 15`
 
 ### Test count
-**2154 passing, 1 skipped** (ruff clean; skipped test is the always-skipped live smoke test)
+**2358 passing, 1 skipped** (ruff clean; skipped test is the always-skipped live smoke test)
 
 ### Packages implemented
 
@@ -53,6 +54,7 @@
 | Captions | `src/app/captions/` | ✅ |
 | Visual Intelligence Engine (scene manifests) | `src/app/scenes/` | ✅ |
 | Rendering Engine (render manifests, jobs, review) | `src/app/media/` | ✅ |
+| Publishing & Orchestration Engine | `src/app/publishing/` | ✅ |
 
 ### CLI subcommand groups
 
@@ -70,6 +72,7 @@ ace narration       — TTS narration pipeline
 ace captions        — caption and timing artifacts
 ace scenes          — Visual Intelligence: plan and review scene manifests
 ace render          — Rendering Engine: compose, render, validate, and review MP4s
+ace publish         — Publishing Engine: prepare, approve, start, schedule, retry, cancel, review
 ace version         — version info
 ace doctor          — environment diagnostics
 ```
@@ -84,6 +87,9 @@ ace doctor          — environment diagnostics
 | `ACE_TTS_MODEL` | `fake/FAKE` | TTS model identifier |
 | `ACE_ELEVENLABS_API_KEY` | *(unset)* | ElevenLabs API key (never logged or stored in DB) |
 | `ACE_TTS_LIVE_ENABLED` | `false` | Safety gate: must be `true` for live ElevenLabs calls |
+| `ACE_PUBLISHING_LIVE_ENABLED` | `false` | Safety gate: must be `true` for live provider uploads |
+| `YOUTUBE_CLIENT_SECRETS_PATH` | *(unset)* | Path to YouTube OAuth client secrets JSON (never stored in DB) |
+| `YOUTUBE_CREDENTIALS_PATH` | *(unset)* | Path to YouTube OAuth token file (never stored in DB) |
 | `ACE_LOG_LEVEL` | `WARNING` | Structured logging level |
 
 ---
@@ -299,9 +305,83 @@ The `src/app/scenes/` package is the root of the Visual Intelligence Engine. Cur
 
 ---
 
+---
+
+## Phase 9 completion details
+
+### New files (Phase 9)
+
+**Source — Publishing & Orchestration Engine (`src/app/publishing/`):**
+- `src/app/publishing/__init__.py`
+- `src/app/publishing/constants.py` — plan/job/pub statuses, transition maps, MAX_RETRY_ATTEMPTS=3, 14 event types
+- `src/app/publishing/errors.py` — PublishingError hierarchy (23 error classes including LivePublishingNotEnabledError)
+- `src/app/publishing/hashing.py` — `PublishingHashInput`, `compute_publishing_input_hash()` (SHA-256)
+- `src/app/publishing/models.py` — `PublishingPlan`, `PublishingJob`, `Publication`, `PublishingReviewEvent` (frozen Pydantic); `PublishingMetadataDraft`, `PublishingScheduleDraft` (mutable dataclasses)
+- `src/app/publishing/protocol.py` — `PublishingProvider` `@runtime_checkable` Protocol, `UploadPackage`, `UploadResult`, `PublishResult`, `ProviderHealthReport`, `ProviderCapabilities`
+- `src/app/publishing/state_machine.py` — `check_plan/job/publication_transition()` enforcement
+- `src/app/publishing/metadata.py` — `build_metadata_draft()` helper
+- `src/app/publishing/scheduler.py` — `validate_schedule()`, `is_scheduled_time_due()`
+- `src/app/publishing/validation.py` — `validate_approved_render_for_publishing()`, `validate_publishing_metadata()`
+- `src/app/publishing/repository.py` — full CRUD for publishing_plans, publishing_jobs, publications, publishing_review_events; approve/reject/supersede functions
+- `src/app/publishing/orchestrator.py` — `prepare_publishing_plan()`, `start_publishing_job()`, `retry_publishing_job()`, `cancel_publishing_job()`, `update_plan_schedule()`
+- `src/app/publishing/providers/__init__.py`
+- `src/app/publishing/providers/fake.py` — `FakePublishingProvider` (zero network, deterministic, safe default)
+- `src/app/publishing/providers/youtube.py` — `YouTubePublishingProvider` + `FakeYouTubeAPIClient` (injectable client boundary)
+- `src/app/publishing/cli.py` — `publish_app` with 11 subcommands
+
+**Tests:**
+- `tests/test_publish_hashing.py` (10 tests)
+- `tests/test_publish_state_machine.py` (16 tests)
+- `tests/test_publish_validation.py` (16 tests)
+- `tests/test_publish_models.py` (12 tests)
+- `tests/test_publish_repository.py` (40 tests)
+- `tests/test_publish_orchestrator.py` (25 tests)
+- `tests/test_publish_youtube.py` (15 tests)
+- `tests/test_publish_cli.py` (27 tests)
+
+### Modified files (Phase 9)
+
+- `src/app/core/database.py` — SCHEMA_VERSION 14→15; `_DDL_V15_PUBLISHING` (4 tables); v14 migration branch; all earlier branches updated
+- `src/app/core/config.py` — `publishing_live_enabled` field (`ACE_PUBLISHING_LIVE_ENABLED`, default False)
+- `src/app/cli.py` — registered `publish_app` (`ace publish`)
+- `tests/test_database.py` — v14→v15 assertions
+- `.env.example` — `YOUTUBE_CLIENT_SECRETS_PATH`, `YOUTUBE_CREDENTIALS_PATH`, `ACE_PUBLISHING_LIVE_ENABLED`
+
+### Key architectural invariants (Phase 9)
+
+1. **Three distinct lifecycles** — Publishing Plan, Publishing Job, and Publication have separate state machines and separate status enums. Supersession is field-based (`superseded_at`, `superseded_by_id`), not a status change.
+2. **Live publishing requires five explicit gates** — `ACE_PUBLISHING_LIVE_ENABLED=true` + `--execute` CLI flag + approved Publishing Plan + approved Render with verified output hash + explicit non-fake provider selection. No single misconfiguration triggers a live upload.
+3. **Publication created only after upload succeeds** — `provider_video_id TEXT` (nullable). A Publication row is never inserted as a placeholder before a real provider resource exists.
+4. **Retry creates a distinct new job** — Prior failed jobs remain `failed`. `retry_publishing_job()` does not mutate the old job's status. `attempt_number` increments; `MAX_RETRY_ATTEMPTS=3` enforced.
+5. **Append-only review events** — `publishing_review_events` rows are never updated in place (immutable training signals).
+6. **No credential values in SQLite or logs** — OAuth client secrets, refresh tokens, and access tokens are never stored. Only file-path env-var names appear in code.
+7. **FakePublishingProvider is the safe default** — All automated tests use `FakePublishingProvider` or `FakeYouTubeAPIClient`. Zero live network calls in any automated test.
+8. **Scheduling records intent only** — `schedule_type` and `scheduled_at` store the operator's scheduling intent. No background daemon or unattended scheduler exists. The executor (future Phase) must call `is_scheduled_time_due()` to decide whether to start a job.
+
+### YouTube adapter — actual verified scope
+
+`YouTubePublishingProvider` implements the `PublishingProvider` Protocol with an injectable client boundary:
+
+- **Implemented and tested:** The adapter class, `FakeYouTubeAPIClient` (zero network), `prepare_package()`, `upload()` (via fake client), `publish()` (via fake client), `health()`, `capabilities()`.
+- **Automated tests:** All 15 `test_publish_youtube.py` tests use `FakeYouTubeAPIClient`. No real Google API calls are made in any test.
+- **No Google SDK installed:** `google-api-python-client` and `google-auth` are not in `pyproject.toml` and are not imported. The module docstring notes SDK installation as a pending operator-approved step.
+- **No verified OAuth flow:** No real OAuth 2.0 authorization flow has been executed. Credential paths are read from `YOUTUBE_CLIENT_SECRETS_PATH` / `YOUTUBE_CREDENTIALS_PATH` env vars — the files themselves are not present in this repository.
+- **No verified live upload:** No video has been uploaded to YouTube. The real upload path exists in code but has not been tested against the live API.
+- **Real Google client is a future integration step:** The actual `google-api-python-client` client is not instantiated until an operator explicitly installs the SDK, provides credentials, sets `ACE_PUBLISHING_LIVE_ENABLED=true`, selects `--provider=youtube`, and passes `--execute`. This is intentional.
+
+### Not implemented in Phase 9
+
+- Platform Analytics ingestion (Phase 11+)
+- Analytics-driven optimization (Phase 11+)
+- Background scheduler daemon or unattended publish runner (future phase)
+- Real OAuth 2.0 flow verification
+- Live YouTube upload verification
+- TikTok, Instagram, or any non-YouTube provider
+
+---
+
 ## What waits
 
-### Immediate next: Phase 8 — Asset Provider Integration
+### Immediate next: Phase 10 (TBD)
 
-Dependencies: Phase 7 complete ✅.
-Likely scope: stock footage API adapters, AI image generation provider, licensing verification, provider registry pattern (mirrors `src/app/narration/providers/`).
+Dependencies: Phases 0–9 complete ✅.

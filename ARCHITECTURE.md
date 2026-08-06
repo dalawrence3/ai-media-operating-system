@@ -442,15 +442,32 @@ src/app/
 │   ├── planner.py            # build_scene_manifest(): shot, camera, transitions, timing, objectives, confidence
 │   ├── repository.py         # Full CRUD + approve (with supersession) + reject + scene-level rejection + review events + full handoff
 │   └── cli.py                # scenes_app: plan/list/show/approve/reject/reject-scene/events/manifest
-├── media/                    # Phase 8+: Asset provider integration, video rendering
-│   └── renderer.py           # FFmpeg rendering (deferred)
-├── pipeline/                 # Phase 9: End-to-end pipeline orchestration
-│   ├── runner.py             # Stage runner with human gate support
-│   └── cost.py               # Production cost accumulation
-├── publish/                  # Phase 10: YouTube publishing
-│   ├── youtube.py            # YouTube Data API upload, scheduling, approval
-│   ├── instagram.py          # Phase 15: Instagram adapter (deferred)
-│   └── tiktok.py             # Phase 15: TikTok adapter (deferred)
+├── media/                    # Phase 8: Rendering Engine (render manifests, jobs, review, provenance)
+│   ├── constants.py          # RENDER_STATUS_*, RENDER_JOB_STATUS_*, RENDER_TRANSITIONS
+│   ├── errors.py             # RenderManifestNotFoundError, etc.
+│   ├── hashing.py            # RenderHashInput, compute_render_input_hash()
+│   ├── models.py             # RenderManifest, RenderJob, ApprovedRender (frozen Pydantic + dataclass)
+│   ├── repository.py         # Full CRUD, approve/reject, get_approved_render()
+│   ├── renderer.py           # FFmpegRenderBackend (RenderBackend Protocol)
+│   └── cli.py                # render_app: compose/start/list/show/approve/reject/retry/cancel/events/doctor
+├── publishing/               # Phase 9: Publishing & Orchestration Engine
+│   ├── constants.py          # PLAN/JOB/PUB status sets, transition maps, MAX_RETRY_ATTEMPTS, event types
+│   ├── errors.py             # PublishingError hierarchy (plan/job/pub/provider errors)
+│   ├── hashing.py            # PublishingHashInput, compute_publishing_input_hash()
+│   ├── models.py             # PublishingPlan, PublishingJob, Publication, PublishingReviewEvent (frozen Pydantic)
+│   ├── protocol.py           # PublishingProvider Protocol, UploadPackage, UploadResult, PublishResult
+│   ├── state_machine.py      # check_plan/job/publication_transition() — enforce lifecycle transitions
+│   ├── metadata.py           # build_metadata_draft() — build PublishingMetadataDraft from ApprovedRender
+│   ├── scheduler.py          # validate_schedule(), is_scheduled_time_due()
+│   ├── validation.py         # validate_approved_render_for_publishing(), validate_publishing_metadata()
+│   ├── repository.py         # Full CRUD for plans/jobs/publications/events; approve/reject/supersede
+│   ├── orchestrator.py       # prepare_publishing_plan(), start_publishing_job(), retry/cancel/schedule
+│   ├── providers/
+│   │   ├── fake.py           # FakePublishingProvider — deterministic, zero network, test double
+│   │   └── youtube.py        # YouTubePublishingProvider + FakeYouTubeAPIClient (injectable test boundary)
+│   └── cli.py                # publish_app: prepare/start/schedule/list/show/approve/reject/retry/cancel/events/doctor
+├── pipeline/                 # Phase 10+: End-to-end pipeline orchestration (deferred)
+├── analytics/                # Phase 11: YouTube Analytics API (deferred)
 ├── analytics/                # Phase 11: YouTube Analytics API
 │   ├── collector.py          # Metric collection and storage
 │   ├── profitability.py      # Cost vs. revenue calculation

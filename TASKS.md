@@ -127,6 +127,26 @@
   approve/reject/supersession review workflow, operator CLI; `asset_strategy.py`
   extracted as Phase 8 seam. 130 new tests. 2019 total. Ruff clean.
 
+- **Phase 8: Rendering Engine** — `src/app/media/` package with
+  `RenderBackend` Protocol, `FFmpegRenderBackend`, render manifests, render
+  jobs, `ApprovedRender` handoff, append-only review events, full state
+  machine (draft→approved/rejected), SHA-256 output hash, reproducibility
+  provenance; `ace render` CLI (compose/start/list/show/approve/reject/retry/
+  cancel/events/doctor); SCHEMA_VERSION 13→14; 204 new tests. 2154 total.
+  Ruff clean.
+
+- **Phase 9: Publishing & Orchestration Engine** — `src/app/publishing/`
+  package with `PublishingProvider` Protocol, `FakePublishingProvider`,
+  `YouTubePublishingProvider` (injectable `FakeYouTubeAPIClient` for tests);
+  three distinct lifecycles (plan/job/publication) with separate state
+  machines; supersession via `superseded_at`/`superseded_by_id` fields;
+  SHA-256 idempotency hash; `MAX_RETRY_ATTEMPTS=3` guard; dry-run safe
+  default; append-only review events; SCHEMA_VERSION 14→15 (4 new tables:
+  `publishing_plans`, `publishing_jobs`, `publications`,
+  `publishing_review_events`); `ace publish` CLI (11 subcommands); OAuth
+  credential file design: path-only env vars, never secrets in SQLite;
+  204 new tests. 2358 total. Ruff clean.
+
 ---
 
 ## Roadmap
