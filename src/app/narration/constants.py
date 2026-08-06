@@ -51,3 +51,39 @@ NARRATION_DURATION_DEVIATION_THRESHOLD: float = 0.5  # 50% of estimated_duration
 # ── Stale temp-file age ──────────────────────────────────────────────────────
 
 NARRATION_STALE_TEMP_AGE_S: float = 86400.0  # 24 hours
+
+# ── Provider feature flag names (M6.3B) ──────────────────────────────────────
+# String constants for ProviderCapabilities.has_feature() and selection criteria.
+
+PROVIDER_FEATURE_STYLE_TRANSFER: str = "style_transfer"
+PROVIDER_FEATURE_EMOTION_CONTROL: str = "emotion_control"
+PROVIDER_FEATURE_MULTI_SPEAKER: str = "multi_speaker"
+PROVIDER_FEATURE_WORD_TIMESTAMPS: str = "word_timestamps"
+PROVIDER_FEATURE_PHONEME_TIMESTAMPS: str = "phoneme_timestamps"
+PROVIDER_FEATURE_STREAMING: str = "streaming"
+PROVIDER_FEATURE_SSML: str = "ssml"
+PROVIDER_FEATURE_SPEAKING_RATE: str = "speaking_rate"
+PROVIDER_FEATURE_STABILITY: str = "stability"
+PROVIDER_FEATURE_SIMILARITY_BOOST: str = "similarity_boost"
+
+# All known feature flag names — kept as a frozenset for validation.
+PROVIDER_FEATURE_NAMES: frozenset[str] = frozenset(
+    {
+        PROVIDER_FEATURE_STYLE_TRANSFER,
+        PROVIDER_FEATURE_EMOTION_CONTROL,
+        PROVIDER_FEATURE_MULTI_SPEAKER,
+        PROVIDER_FEATURE_WORD_TIMESTAMPS,
+        PROVIDER_FEATURE_PHONEME_TIMESTAMPS,
+        PROVIDER_FEATURE_STREAMING,
+        PROVIDER_FEATURE_SSML,
+        PROVIDER_FEATURE_SPEAKING_RATE,
+        PROVIDER_FEATURE_STABILITY,
+        PROVIDER_FEATURE_SIMILARITY_BOOST,
+    }
+)
+
+# Sentinel value for supported_languages: provider accepts any BCP-47 code.
+PROVIDER_LANGUAGE_WILDCARD: str = "*"
+
+# Version string for M6.3B provider infrastructure layer.
+PROVIDER_INFRASTRUCTURE_VERSION: str = "provider-infra-v1"

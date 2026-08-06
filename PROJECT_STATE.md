@@ -1,8 +1,8 @@
 # Project State Snapshot
 
-**Date:** 2026-08-05
-**Latest implemented milestone:** Phase 6 M6.3A — Caption and Timing Artifacts
-**Next milestone:** Phase 6 M6.3B — Live TTS Provider Integration
+**Date:** 2026-08-06
+**Latest implemented milestone:** Phase 6 M6.3B — Narration Provider Infrastructure
+**Next milestone:** Phase 6 M6.3C — Live TTS Provider Integration
 
 ---
 
@@ -23,6 +23,7 @@
 | Phase 6 M6.1 — Production plan | ✅ Complete | 1155 | 10 |
 | Phase 6 M6.2 — Narration generation | ✅ Complete | 1326 | 11 |
 | Phase 6 M6.3A — Caption and timing artifacts | ✅ Complete | 1563 | 12 |
+| Phase 6 M6.3B — Narration provider infrastructure | ✅ Complete | 1810 | 12 |
 
 ---
 
@@ -32,7 +33,7 @@
 `SCHEMA_VERSION = 12`
 
 ### Test count
-**1563 passing** (ruff clean, no mypy errors in checked modules)
+**1810 passing** (ruff clean, no mypy errors in checked modules)
 
 ### Packages implemented
 
@@ -44,7 +45,7 @@
 | Source ingestion + claim extraction | `src/app/research/` | ✅ |
 | Script generation | `src/app/content/` | ✅ |
 | Production plan | `src/app/production/` | ✅ |
-| Narration (TTS pipeline) | `src/app/narration/` | ✅ |
+| Narration (TTS pipeline + provider infrastructure) | `src/app/narration/` | ✅ |
 | Captions | `src/app/captions/` | ✅ |
 
 ### CLI subcommand groups
@@ -121,26 +122,79 @@ ace doctor          — environment diagnostics
 
 ---
 
+## Phase 6 M6.3B completion details
+
+### New files (M6.3B)
+
+**Source:**
+- `src/app/narration/capabilities.py` — `ProviderFeatureFlags`, `ProviderCapabilities`
+- `src/app/narration/metadata.py` — `ProviderMetadata` (reproducibility record)
+- `src/app/narration/versioning.py` — `ProviderVersion`, `ProviderVersionRegistry`
+- `src/app/narration/config.py` — `ProviderConfig`, `ProviderConfigRegistry`
+- `src/app/narration/lifecycle.py` — `ProviderLifecycle` Protocol, `ProviderLifecycleState`
+- `src/app/narration/registry.py` — `ProviderRegistry`, `get_default_provider_registry()`
+- `src/app/narration/selection.py` — `ProviderSelector` Protocol, `DefaultProviderSelector`
+- `src/app/narration/validation.py` — `ProviderValidator` Protocol, `DefaultProviderValidator`
+- `src/app/narration/routing.py` — `ProviderRouter` Protocol, `DefaultProviderRouter`
+- `src/app/narration/accounting.py` — `UsageRecord`, `UsageAccumulator`
+- `src/app/narration/benchmark.py` — `ProviderBenchmark` Protocol, `InMemoryProviderBenchmark`
+- `src/app/narration/health.py` — `ProviderHealthCheck` Protocol, `InMemoryProviderHealthCheck`
+- `src/app/narration/failover.py` — `FailoverPolicy` Protocol, `NoFailoverPolicy`, `ProviderFailoverChain`
+- `src/app/narration/cache.py` — `ProviderResponseCache` Protocol, `NoOpResponseCache`, `InMemoryResponseCache`
+- `src/app/narration/factory.py` — `ProviderFactory`, `ProviderLoader`, `DefaultProviderFactory`, `DefaultProviderLoader`, `RegisteringProviderLoader`
+
+**Tests:**
+- `tests/test_narration_capabilities.py` (39 tests)
+- `tests/test_narration_metadata.py` (19 tests)
+- `tests/test_narration_provider_config.py` (19 tests)
+- `tests/test_narration_registry.py` (17 tests)
+- `tests/test_narration_selection.py` (16 tests)
+- `tests/test_narration_provider_validation.py` (17 tests)
+- `tests/test_narration_lifecycle.py` (14 tests)
+- `tests/test_narration_factory.py` (14 tests)
+- `tests/test_narration_routing.py` (13 tests)
+- `tests/test_narration_accounting.py` (16 tests)
+- `tests/test_narration_benchmark.py` (19 tests)
+- `tests/test_narration_health.py` (20 tests)
+- `tests/test_narration_failover.py` (12 tests)
+- `tests/test_narration_cache.py` (18 tests)
+- `tests/test_narration_versioning.py` (18 tests)
+
+### Modified files (M6.3B)
+
+- `src/app/narration/errors.py` — 7 new error types under `ProviderInfrastructureError`
+- `src/app/narration/constants.py` — `PROVIDER_FEATURE_*` string constants (10), `PROVIDER_LANGUAGE_WILDCARD`, `PROVIDER_INFRASTRUCTURE_VERSION`
+- `src/app/narration/fake.py` — Implements `ProviderLifecycle`; adds `FAKE_CAPABILITIES`, `FAKE_FEATURE_FLAGS`, `FAKE_METADATA`, `FAKE_PROVIDER_VERSION`, `FAKE_PROVIDER_CONFIG` module-level constants; synthesis behaviour unchanged
+- `src/app/narration/pricing.py` — Adds `ProviderPricingPolicy` Protocol (satisfied by `TTSPricingRegistry`)
+
+### Key architectural invariants (M6.3B)
+
+1. **No live provider SDK** — FakeTTSProvider is the only concrete implementation
+2. **Every AI output must remain reproducible** — `ProviderMetadata.to_reproducibility_dict()` captures provider_name, model_id, version, SDK identity, and capabilities
+3. **Lifecycle is observable, not gating** — `ProviderLifecycle.initialize()` transitions state but does not block synthesis (backward compatible)
+4. **Orchestrator unchanged** — `narrate_plan()` and `regenerate_segment()` are untouched; the new infrastructure is additive
+5. **Schema unchanged** — still SCHEMA_VERSION 12
+
+---
+
 ## What waits
 
-### Immediate next: Phase 6 M6.3B — Live TTS Provider Integration
+### Immediate next: Phase 6 M6.3C — Live TTS Provider Integration
 
 **Blocked on:** Operator approval of provider selection (ElevenLabs or equivalent).
 
 **Scope when unblocked:**
-- Concrete `TTSProvider` implementation (provider TBD)
-- SDK installation and credential plumbing
+- Concrete `TTSProvider` + `ProviderLifecycle` implementation for operator-approved provider
+- SDK installation (register in `DefaultProviderFactory` and `DefaultProviderLoader`)
+- Credential plumbing (`ACE_TTS_API_KEY` or provider-specific env var)
 - Loudness normalisation (target −14 LUFS integrated)
 - Duration-deviation validation
-- Provider pricing in `TTSPricingRegistry`
-- Provider smoke-test CLI command (opt-in)
+- Provider pricing in `TTSPricingRegistry` + `ProviderPricingPolicy`
+- Provider smoke-test CLI command (opt-in, calls real API)
 - Do NOT modify `TTSResponse` or existing narration pipeline contracts
-
-**Must NOT do in M6.3B:**
-- Modify `TTSResponse`
-- Change caption schema or models
-- Add forced alignment / Whisper / WhisperX
+- Do NOT change caption schema or models
+- Do NOT add forced alignment / Whisper / WhisperX
 
 ### Following: Phase 7 — Licensed Assets and Scene Manifests
 
-Dependencies: Phase 6 complete (M6.3B).
+Dependencies: Phase 6 complete (M6.3C).

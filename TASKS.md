@@ -414,43 +414,76 @@ wires real TTS timestamps.
   (prior approved runs keep `status='approved'`)
 - CLI: `ace captions generate/runs/approve/reject/reject-cue/events`
 
-**Tests:** 1548 passing (+81 new vs M6.2 baseline: 27 exporters, 23 storage,
+**Tests:** 1563 passing (+81 new vs M6.2 baseline: 27 exporters, 23 storage,
 35 repository, 12 orchestrator, 11 CLI, plus extended database tests for v12
 schema; segmentation/timing/validation tests from earlier stages).
 
-**Definition of done:** ✅ Ruff clean, 1548 tests passing, documentation
+**Definition of done:** ✅ Ruff clean, 1563 tests passing, documentation
 updated. No live TTS provider added; no network access in any test; no
 forced alignment.
 
-**What waits:** Phase 6 M6.3B — Live TTS Provider Integration (requires
-operator approval of provider selection).
-
 ---
 
-### Phase 6 M6.3B — Live TTS Provider Integration
+### Phase 6 M6.3B — Narration Provider Infrastructure ✅ Complete
 
-**Objective:** Wire a real TTS provider (ElevenLabs or equivalent) into the
-narration pipeline established in M6.2. M6.2 already supports the full
-synthesis lifecycle; M6.3B adds only the concrete provider implementation and
-loudness normalisation.
+**Objective:** Implement the complete provider infrastructure for narration —
+every abstraction required for future live providers while intentionally
+leaving FakeTTSProvider as the only concrete implementation.
 
-**Business value:** M6.2 is FakeTTSProvider only. M6.3B produces real audio
-that a human can listen to and approve before video assembly.
+**Technical scope (20 abstractions delivered):**
+- **provider registry** — `ProviderRegistry`; `get_default_provider_registry()`
+- **capability model** — `ProviderCapabilities`; `accepts_*` helpers
+- **provider metadata** — `ProviderMetadata.to_reproducibility_dict()`; captures
+  every field needed to reproduce or verify any generated artifact
+- **provider configuration objects** — `ProviderConfig`, `ProviderConfigRegistry`
+- **provider discovery** — `ProviderRegistry.discover()` (sorted provider names)
+- **provider selection** — `ProviderSelector` Protocol; `DefaultProviderSelector`
+- **provider validation** — `ProviderValidator` Protocol; `DefaultProviderValidator`;
+  `ProviderCompatibilityResult`
+- **provider factory** — `ProviderFactory` Protocol; `DefaultProviderFactory`
+- **provider loading** — `ProviderLoader` Protocol; `DefaultProviderLoader`;
+  `RegisteringProviderLoader`
+- **provider lifecycle** — `ProviderLifecycle` Protocol; `ProviderLifecycleState`
+  enum; FakeTTSProvider implements lifecycle without gating synthesis
+- **provider routing abstraction** — `ProviderRouter` Protocol; `DefaultProviderRouter`
+- **provider pricing abstraction** — `ProviderPricingPolicy` Protocol (satisfied by
+  existing `TTSPricingRegistry`)
+- **provider usage accounting abstraction** — `UsageRecord`, `UsageAccumulator`
+- **provider benchmark abstraction** — `ProviderBenchmark` Protocol;
+  `InMemoryProviderBenchmark`; `BenchmarkSample`, `BenchmarkResult`
+- **provider health abstraction** — `ProviderHealthCheck` Protocol;
+  `InMemoryProviderHealthCheck`; `ProviderHealthStatus`, `ProviderHealthReport`
+- **provider failover abstraction** — `FailoverPolicy` Protocol; `NoFailoverPolicy`;
+  `ProviderFailoverChain`
+- **provider caching abstraction** — `ProviderResponseCache` Protocol; `CacheKey`,
+  `CacheEntry`; `NoOpResponseCache` (default); `InMemoryResponseCache`
+- **provider versioning** — `ProviderVersion`, `ProviderVersionRegistry`;
+  schema/algorithm compatibility checking
+- **provider feature flags** — `ProviderFeatureFlags`; string constants in
+  `PROVIDER_FEATURE_*`; `has_feature()` string-keyed lookup
+- **provider compatibility checking** — `DefaultProviderValidator` validates
+  language, format, sample rate, speaking rate, and character count
 
-**Technical scope:**
-- Concrete `TTSProvider` implementation for the operator-approved provider
-  (provider selection is a separate operator decision)
-- SDK installation and credential plumbing (`ACE_TTS_API_KEY` or similar)
-- Loudness normalisation: target −14 LUFS integrated (YouTube Shorts spec)
-- Duration-deviation validation: flag if actual audio duration differs
-  materially from word-count estimate
-- Provider pricing registered in `TTSPricingRegistry`
-- Provider smoke-test CLI command (calls real API; opt-in only)
+**FakeTTSProvider changes:** Implements `ProviderLifecycle`; exposes
+`FAKE_CAPABILITIES`, `FAKE_FEATURE_FLAGS`, `FAKE_METADATA`, `FAKE_PROVIDER_VERSION`,
+`FAKE_PROVIDER_CONFIG` module-level constants. Synthesis behaviour unchanged.
 
-**Dependencies:** Phase 6 M6.3A complete. Operator approval of provider
-selection required before this milestone begins.
+**Narration orchestration:** unchanged — no modifications to `orchestrator.py`,
+`protocol.py`, `hashing.py`, `repository.py`, `storage.py`, or any DB schema.
 
-**What waits:** Phase 7 — Licensed Assets and Scene Manifests.
+**New errors:** 7 new error types under `ProviderInfrastructureError`.
+
+**New constants:** `PROVIDER_FEATURE_*` names (10), `PROVIDER_LANGUAGE_WILDCARD`,
+`PROVIDER_INFRASTRUCTURE_VERSION`.
+
+**Tests:** 1810 passing (+247 new: 15 new test files covering all 20 abstractions).
+
+**Definition of done:** ✅ Ruff clean, 1810 tests passing, git diff --check clean.
+No live provider SDK added. No external API calls. No network tests.
+No DB schema changes. FakeTTSProvider synthesis behaviour unchanged.
+
+**What waits:** Phase 6 M6.3C — Live TTS Provider Integration (requires
+operator approval of provider selection).
 
 ---
 

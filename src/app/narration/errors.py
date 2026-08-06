@@ -104,3 +104,59 @@ class InvalidNarrationReasonCodeError(NarrationError):
 
 class InvalidNarrationSeverityError(NarrationError):
     """Raised when severity is outside the valid 1–5 range."""
+
+
+# ── Provider infrastructure errors (M6.3B) ────────────────────────────────────
+
+
+class ProviderInfrastructureError(NarrationError):
+    """Base class for provider infrastructure errors."""
+
+
+class UnknownProviderError(ProviderInfrastructureError):
+    """Raised when a provider_name is not registered."""
+
+    def __init__(self, provider_name: str) -> None:
+        super().__init__(f"No TTS provider registered under {provider_name!r}")
+        self.provider_name = provider_name
+
+
+class ProviderSelectionError(ProviderInfrastructureError):
+    """Raised when no registered provider satisfies selection criteria."""
+
+
+class ProviderCompatibilityError(ProviderInfrastructureError):
+    """Raised when a TTSRequest is incompatible with a provider's capabilities."""
+
+
+class ProviderNotReadyError(ProviderInfrastructureError):
+    """Raised when a provider's lifecycle state is not READY."""
+
+    def __init__(self, provider_name: str, state: str) -> None:
+        super().__init__(
+            f"Provider {provider_name!r} is not ready (state={state!r})"
+        )
+        self.provider_name = provider_name
+        self.state = state
+
+
+class ProviderConfigError(ProviderInfrastructureError):
+    """Raised when provider configuration is invalid or missing."""
+
+
+class ProviderFactoryError(ProviderInfrastructureError):
+    """Raised when provider instantiation via factory fails."""
+
+
+class FailoverExhaustedError(ProviderInfrastructureError):
+    """Raised when all failover candidates have been exhausted."""
+
+
+class ProviderVersionIncompatibleError(ProviderInfrastructureError):
+    """Raised when a provider version is incompatible with the current schema."""
+
+    def __init__(self, provider_name: str, reason: str) -> None:
+        super().__init__(
+            f"Provider {provider_name!r} version incompatible: {reason}"
+        )
+        self.provider_name = provider_name
