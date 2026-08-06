@@ -1114,3 +1114,43 @@ Operationally: review event tables are insert-only; no application `UPDATE` or `
 **Decision:** The narration → captions boundary is crossed via `ApprovedNarrationRun` and `ApprovedNarrationSegment` frozen dataclasses. The orchestrator never queries narration tables directly; it receives the assembled handoff from `get_approved_narration_run_full()` in the narration repository.
 
 **Reasoning:** The captions package must not depend on narration DB schema details. Encoding the boundary as typed frozen dataclasses makes the contract explicit and testable. Any change to the narration schema is isolated to `get_approved_narration_run_full()`; the captions orchestrator only sees the typed handoff interface. Frozen dataclasses prevent accidental mutation of handoff data during the pipeline.
+
+---
+
+## Phase 7 — Visual Intelligence Engine
+
+**D-P7-1 — `src/app/scenes/` as root of Visual Intelligence Engine, not `src/app/visual/`**
+
+**Decision:** The Visual Intelligence Engine lives under `src/app/scenes/`, not a top-level `src/app/visual_intelligence/` package.
+
+**Reasoning:** `scenes` is the natural name for the output artifact (scene manifests). Future modules (`asset_strategy`, `providers/`, `analytics`, `optimizer`) slot naturally as siblings inside `scenes/`. The `__init__.py` declares the full Visual Intelligence scope explicitly. Renaming to `visual_intelligence` would create a long import path (`app.visual_intelligence.planner`) with no benefit over `app.scenes.planner`. The `src/app/intelligence/` package is already used for content discovery intelligence (Phase 3) — coexistence is unambiguous.
+
+**D-P7-2 — asset_strategy.py as Phase 8 seam module**
+
+**Decision:** `_plan_assets()` is extracted from `planner.py` into a standalone `asset_strategy.py` module with a public `plan_assets()` entry point.
+
+**Reasoning:** Scene orchestration (`planner.py`) and asset selection strategy (`asset_strategy.py`) are different responsibilities. Phase 8 will introduce real asset providers (stock footage APIs, AI image generation) that enrich `PlannedAssetDraft` objects. Keeping asset planning in its own module means Phase 8 can replace or augment `plan_assets()` without touching scene orchestration logic. The module boundary is explicit, not just a convention.
+
+**D-P7-3 — Immutable input hash for scene manifest idempotency**
+
+**Decision:** `compute_manifest_input_hash()` encodes `caption_run_id`, `narration_run_id`, `plan_id`, all version constants, and the ordered segment tuple list (segment_id, text_hash, duration_ms per segment). The resulting SHA-256 hex digest is UNIQUE-constrained in `scene_manifests`. Calling `get_or_create_scene_manifest()` with the same inputs always returns the existing manifest.
+
+**Reasoning:** Scene manifest planning is deterministic — the same upstream artifacts must always produce the same scene plan. The input hash enforces this at the DB level, preventing duplicate manifests and making the idempotency guarantee verifiable. If any upstream artifact changes (new narration run, updated caption run), the hash changes and a new manifest is created.
+
+**D-P7-4 — Supersession on approve, not on create**
+
+**Decision:** Approving a scene manifest supersedes the previously approved manifest for the same `topic_id`. Supersession happens atomically inside `approve_scene_manifest()`. Rejected manifests are never superseded.
+
+**Reasoning:** A topic should have at most one active approved scene manifest at a time. Supersession is the correct state transition — the old manifest was valid, it is now replaced by a better one, not deleted. Superseded manifests are retained for audit and training-signal purposes. Performing supersession at approval time (not creation time) allows multiple draft manifests to coexist, giving the operator a choice before committing.
+
+**D-P7-5 — Scene-level rejection as training signal, not manifest state change**
+
+**Decision:** `record_scene_rejection()` records a `scene_rejected` review event and does NOT change the manifest's `status`. Manifest status only changes via `approve_scene_manifest()` or `reject_scene_manifest()`.
+
+**Reasoning:** Scene-level rejections are granular operator feedback — they indicate which specific scene needs improvement without invalidating the full manifest. This feedback is a training signal for future planner improvements. If a manifest has one bad scene, the operator can note it without blocking the rest of the manifest from being approved. The immutable event log preserves all corrections for future learning.
+
+**D-P7-6 — Handoff via ApprovedSceneManifest frozen dataclass**
+
+**Decision:** The scenes → rendering boundary is crossed via `ApprovedSceneManifest` (frozen dataclass containing `ApprovedSceneScene` objects with resolved `SceneManifestAsset` lists). Downstream consumers never query scene tables directly.
+
+**Reasoning:** Mirrors the narration → captions handoff pattern. Encoding the boundary as typed frozen dataclasses makes the contract explicit, prevents mutation, and decouples rendering from DB schema details. Any schema change is isolated to `get_approved_scene_manifest_full()`; downstream sees only the typed handoff.

@@ -31,6 +31,7 @@ from app.core.repository import (
 from app.intelligence.cli import channels_app, discover_app
 from app.intelligence.repository import promote_opportunity
 from app.intelligence.scoring_cli import scoring_app
+from app.scenes.cli import scenes_app
 
 app = typer.Typer(
     name="ace",
@@ -40,6 +41,7 @@ app = typer.Typer(
 app.add_typer(channels_app, name="channels")
 app.add_typer(discover_app, name="discover")
 app.add_typer(scoring_app, name="intelligence")
+app.add_typer(scenes_app, name="scenes")
 logger = get_logger(__name__)
 
 
@@ -106,9 +108,7 @@ def topics_list(
 @topics_app.command("promote")
 def topics_promote(
     opportunity_id: Annotated[int, typer.Argument(help="Opportunity ID to promote.")],
-    angle: Annotated[
-        str | None, typer.Option("--angle", help="Override topic angle.")
-    ] = None,
+    angle: Annotated[str | None, typer.Option("--angle", help="Override topic angle.")] = None,
     operator: Annotated[
         str, typer.Option("--operator", help="Actor name recorded in lifecycle event.")
     ] = "operator",
@@ -150,9 +150,7 @@ def topics_promote(
             f" → Topic [{topic.id}] {topic.title!r}"
         )
     else:
-        typer.echo(
-            f"Promoted opportunity [{opportunity_id}] → Topic [{topic.id}] {topic.title!r}"
-        )
+        typer.echo(f"Promoted opportunity [{opportunity_id}] → Topic [{topic.id}] {topic.title!r}")
     if score_line:
         typer.echo(score_line)
 
@@ -310,6 +308,7 @@ def sources_fetch(
     mime = (fetch_result.mime_type or "").lower()
     if "pdf" in mime:
         from app.research.extract import extract_pdf
+
         result = extract_pdf(fetch_result.content)
     elif mime.startswith("text/plain"):
         result = extract_text(fetch_result.content)
@@ -326,8 +325,7 @@ def sources_fetch(
         latest = get_latest_source_content(conn, source.id, require_successful=True)  # type: ignore[arg-type]
         if latest and latest.normalized_text_hash == normalized_hash:
             typer.echo(
-                f"Source {source.id}: content unchanged (hash match). "
-                "Use --force to re-fetch."
+                f"Source {source.id}: content unchanged (hash match). Use --force to re-fetch."
             )
             return
 
@@ -395,8 +393,7 @@ def sources_fetch(
 
     if extraction_status == ExtractionStatus.failed:
         typer.echo(
-            f"Error: Source {source.id} created but extraction failed: "
-            f"{result.extraction_error}",
+            f"Error: Source {source.id} created but extraction failed: {result.extraction_error}",
             err=True,
         )
         raise typer.Exit(1)
@@ -406,13 +403,9 @@ def sources_fetch(
     quality_str = f"{quality_score:.2f}" if quality_score is not None else "?"
 
     if extraction_status == ExtractionStatus.partial:
-        typer.echo(
-            f"Warning: partial extraction — {result.extraction_error}", err=True
-        )
+        typer.echo(f"Warning: partial extraction — {result.extraction_error}", err=True)
 
-    typer.echo(
-        f"Source {source.id}: fetched ({words} words, quality: {quality_str}) — {host}"
-    )
+    typer.echo(f"Source {source.id}: fetched ({words} words, quality: {quality_str}) — {host}")
 
 
 @sources_app.command("ingest-file")
@@ -477,8 +470,7 @@ def sources_ingest_file(
         latest = get_latest_source_content(conn, source.id, require_successful=True)  # type: ignore[arg-type]
         if latest and latest.normalized_text_hash == normalized_hash:
             typer.echo(
-                f"Source {source.id}: content unchanged (hash match). "
-                "Use --force to re-ingest."
+                f"Source {source.id}: content unchanged (hash match). Use --force to re-ingest."
             )
             return
 
@@ -540,8 +532,7 @@ def sources_ingest_file(
 
     if extraction_status == ExtractionStatus.failed:
         typer.echo(
-            f"Error: Source {source.id} created but extraction failed: "
-            f"{result.extraction_error}",
+            f"Error: Source {source.id} created but extraction failed: {result.extraction_error}",
             err=True,
         )
         raise typer.Exit(1)
@@ -550,9 +541,7 @@ def sources_ingest_file(
     quality_str = f"{quality_score:.2f}" if quality_score is not None else "?"
 
     if extraction_status == ExtractionStatus.partial:
-        typer.echo(
-            f"Warning: partial extraction — {result.extraction_error}", err=True
-        )
+        typer.echo(f"Warning: partial extraction — {result.extraction_error}", err=True)
 
     typer.echo(
         f"Source {source.id}: ingested ({words} words, quality: {quality_str}) — {resolved.name}"
@@ -1496,9 +1485,7 @@ def narration_narrate(
         typer.echo(f"Dry-run: {len(result.skipped_segment_ids)} segment(s) would be synthesised.")
         return
 
-    typer.echo(
-        f"Run id={result.run_id}: synthesised {len(result.assets)} segment(s)."
-    )
+    typer.echo(f"Run id={result.run_id}: synthesised {len(result.assets)} segment(s).")
 
 
 @narration_app.command("runs")
@@ -1549,9 +1536,7 @@ def narration_reject_run(
     from app.narration.repository import reject_narration_run
 
     conn = _get_db()
-    run = reject_narration_run(
-        conn, run_id, reason_code=reason_code, notes=notes, actor=actor
-    )
+    run = reject_narration_run(conn, run_id, reason_code=reason_code, notes=notes, actor=actor)
     conn.commit()
     typer.echo(f"Run id={run.id} rejected.")
 
@@ -1612,9 +1597,7 @@ def narration_events(
         seg_str = f"  segment={ev.segment_id}" if ev.segment_id else ""
         code_str = f"  reason={ev.reason_code}" if ev.reason_code else ""
         actor_str = f"  actor={ev.actor}" if ev.actor else ""
-        typer.echo(
-            f"[{ev.id}] {ev.event_type}{seg_str}{code_str}{actor_str}  {ev.created_at}"
-        )
+        typer.echo(f"[{ev.id}] {ev.event_type}{seg_str}{code_str}{actor_str}  {ev.created_at}")
 
 
 # ---------------------------------------------------------------------------
@@ -1663,17 +1646,14 @@ def captions_generate(
     if dry_run:
         conn = _get_db()
         try:
-            handoff = get_approved_narration_run_full(
-                conn, plan_id, experiment_id=experiment_id
-            )
+            handoff = get_approved_narration_run_full(conn, plan_id, experiment_id=experiment_id)
             if handoff is None:
-                typer.echo(
-                    f"No active approved narration run for plan {plan_id}.", err=True
-                )
+                typer.echo(f"No active approved narration run for plan {plan_id}.", err=True)
                 raise typer.Exit(1) from None
             seg_inputs = [
                 NarrationSegmentHashInput(
-                    segment_id=s.segment_id, asset_id=s.asset_id,
+                    segment_id=s.segment_id,
+                    asset_id=s.asset_id,
                     audio_sha256=s.audio_sha256,
                     narration_text_hash=s.narration_text_hash,
                     duration_ms=s.duration_ms,
@@ -1834,9 +1814,7 @@ def captions_show(
     events = list_caption_review_events(conn, run_id)
     rejections = [ev for ev in events if ev.event_type == "cue_rejected"]
     if rejections:
-        typer.echo(
-            f"  *** {len(rejections)} cue rejection(s) — approval is blocked ***"
-        )
+        typer.echo(f"  *** {len(rejections)} cue rejection(s) — approval is blocked ***")
         for ev in rejections:
             typer.echo(f"    cue {ev.cue_id}  reason={ev.reason_code}  sev={ev.severity}")
 
@@ -1886,9 +1864,7 @@ def captions_reject_run(
         str | None, typer.Option("--reason-code", "-r", help="Rejection reason code.")
     ] = None,
     notes: Annotated[str | None, typer.Option("--notes", help="Rejection notes.")] = None,
-    severity: Annotated[
-        int | None, typer.Option("--severity", help="Severity 1–5.")
-    ] = None,
+    severity: Annotated[int | None, typer.Option("--severity", help="Severity 1–5.")] = None,
     actor: Annotated[str | None, typer.Option("--actor", help="Reviewer name.")] = None,
 ) -> None:
     """Reject a completed or approved caption run."""
@@ -1898,8 +1874,12 @@ def captions_reject_run(
     conn = _get_db()
     try:
         run = reject_caption_run(
-            conn, run_id,
-            reason_code=reason_code, notes=notes, severity=severity, actor=actor,
+            conn,
+            run_id,
+            reason_code=reason_code,
+            notes=notes,
+            severity=severity,
+            actor=actor,
         )
         conn.commit()
     except CaptionError as exc:
@@ -1912,13 +1892,9 @@ def captions_reject_run(
 def captions_reject_cue(
     run_id: Annotated[int, typer.Argument(help="Caption run ID.")],
     cue_id: Annotated[int, typer.Argument(help="Caption cue ID.")],
-    reason_code: Annotated[
-        str, typer.Option("--reason-code", "-r", help="Rejection reason code.")
-    ],
+    reason_code: Annotated[str, typer.Option("--reason-code", "-r", help="Rejection reason code.")],
     notes: Annotated[str | None, typer.Option("--notes", help="Rejection notes.")] = None,
-    severity: Annotated[
-        int | None, typer.Option("--severity", help="Severity 1–5.")
-    ] = None,
+    severity: Annotated[int | None, typer.Option("--severity", help="Severity 1–5.")] = None,
     actor: Annotated[str | None, typer.Option("--actor", help="Reviewer name.")] = None,
     expected_correction: Annotated[
         str | None, typer.Option("--correction", help="Expected correction text.")
@@ -1931,17 +1907,21 @@ def captions_reject_cue(
     conn = _get_db()
     try:
         event = record_cue_rejection(
-            conn, run_id, cue_id,
-            reason_code=reason_code, notes=notes, severity=severity,
-            actor=actor, expected_correction=expected_correction,
+            conn,
+            run_id,
+            cue_id,
+            reason_code=reason_code,
+            notes=notes,
+            severity=severity,
+            actor=actor,
+            expected_correction=expected_correction,
         )
         conn.commit()
     except CaptionError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from None
     typer.echo(
-        f"Cue rejection recorded: event id={event.id}"
-        f"  reason={event.reason_code}  cue={cue_id}"
+        f"Cue rejection recorded: event id={event.id}  reason={event.reason_code}  cue={cue_id}"
     )
 
 
@@ -2068,9 +2048,7 @@ def captions_events(
         cue_str = f"  cue={ev.cue_id}" if ev.cue_id else ""
         code_str = f"  reason={ev.reason_code}" if ev.reason_code else ""
         actor_str = f"  actor={ev.actor}" if ev.actor else ""
-        typer.echo(
-            f"[{ev.id}] {ev.event_type}{cue_str}{code_str}{actor_str}  {ev.created_at}"
-        )
+        typer.echo(f"[{ev.id}] {ev.event_type}{cue_str}{code_str}{actor_str}  {ev.created_at}")
 
 
 # ---------------------------------------------------------------------------

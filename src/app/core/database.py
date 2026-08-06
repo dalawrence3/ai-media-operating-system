@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -1048,6 +1048,152 @@ CREATE INDEX IF NOT EXISTS idx_cre_experiment
 """
 
 
+_DDL_V13_SCENES = """
+CREATE TABLE IF NOT EXISTS scene_manifests (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    caption_run_id              INTEGER NOT NULL
+                                    REFERENCES caption_runs(id) ON DELETE RESTRICT,
+    narration_run_id            INTEGER NOT NULL
+                                    REFERENCES narration_runs(id) ON DELETE RESTRICT,
+    plan_id                     INTEGER NOT NULL
+                                    REFERENCES production_plans(id) ON DELETE RESTRICT,
+    script_id                   INTEGER NOT NULL
+                                    REFERENCES scripts(id) ON DELETE RESTRICT,
+    topic_id                    INTEGER NOT NULL
+                                    REFERENCES topics(id) ON DELETE RESTRICT,
+    experiment_id               TEXT,
+    input_hash                  TEXT    NOT NULL UNIQUE,
+    manifest_schema_version     TEXT    NOT NULL,
+    planner_version             TEXT    NOT NULL,
+    status                      TEXT    NOT NULL DEFAULT 'draft'
+                                        CHECK (status IN (
+                                            'draft','approved','rejected','superseded')),
+    total_scene_count           INTEGER NOT NULL DEFAULT 0,
+    total_asset_count           INTEGER NOT NULL DEFAULT 0,
+    total_duration_ms           INTEGER NOT NULL DEFAULT 0,
+    approved_at                 TEXT,
+    rejected_at                 TEXT,
+    superseded_at               TEXT,
+    superseded_by_manifest_id   INTEGER REFERENCES scene_manifests(id),
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sm_topic
+    ON scene_manifests (topic_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_sm_caption_run
+    ON scene_manifests (caption_run_id);
+
+CREATE TABLE IF NOT EXISTS scene_manifest_scenes (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    manifest_id             INTEGER NOT NULL
+                                REFERENCES scene_manifests(id) ON DELETE CASCADE,
+    scene_index             INTEGER NOT NULL,
+    segment_id              INTEGER NOT NULL
+                                REFERENCES production_segments(id) ON DELETE RESTRICT,
+    narration_asset_id      INTEGER
+                                REFERENCES narration_segment_assets(id) ON DELETE RESTRICT,
+    caption_cue_ids_json    TEXT    NOT NULL DEFAULT '[]',
+    claim_ids_json          TEXT    NOT NULL DEFAULT '[]',
+    evidence_ids_json       TEXT    NOT NULL DEFAULT '[]',
+    script_section_index    INTEGER,
+    narration_text          TEXT    NOT NULL,
+    start_ms                INTEGER NOT NULL DEFAULT 0,
+    end_ms                  INTEGER NOT NULL DEFAULT 0,
+    duration_ms             INTEGER NOT NULL DEFAULT 0,
+    shot_type               TEXT    NOT NULL,
+    camera_movement         TEXT    NOT NULL,
+    transition_in           TEXT    NOT NULL,
+    transition_out          TEXT    NOT NULL,
+    visual_objective        TEXT    NOT NULL,
+    visual_rationale        TEXT    NOT NULL,
+    confidence              REAL    NOT NULL DEFAULT 0.0,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (manifest_id, scene_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sms_manifest
+    ON scene_manifest_scenes (manifest_id, scene_index);
+
+CREATE INDEX IF NOT EXISTS idx_sms_segment
+    ON scene_manifest_scenes (segment_id);
+
+CREATE TABLE IF NOT EXISTS scene_manifest_assets (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    scene_id                    INTEGER NOT NULL
+                                    REFERENCES scene_manifest_scenes(id) ON DELETE CASCADE,
+    manifest_id                 INTEGER NOT NULL
+                                    REFERENCES scene_manifests(id) ON DELETE CASCADE,
+    asset_index                 INTEGER NOT NULL,
+    category                    TEXT    NOT NULL,
+    priority                    TEXT    NOT NULL,
+    description                 TEXT    NOT NULL,
+    search_query                TEXT,
+    provider                    TEXT,
+    source_url                  TEXT,
+    license_status              TEXT    NOT NULL DEFAULT 'unknown',
+    license_name                TEXT,
+    attribution_required        INTEGER NOT NULL DEFAULT 0,
+    attribution_text            TEXT,
+    commercial_safe             INTEGER NOT NULL DEFAULT 0,
+    verification_status         TEXT    NOT NULL DEFAULT 'unverified',
+    usage_rights_json           TEXT    NOT NULL DEFAULT '{}',
+    ai_generation_requested     INTEGER NOT NULL DEFAULT 0,
+    ai_generation_prompt        TEXT,
+    ai_generation_model         TEXT,
+    claim_ids_json              TEXT    NOT NULL DEFAULT '[]',
+    evidence_ids_json           TEXT    NOT NULL DEFAULT '[]',
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (scene_id, asset_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sma_scene
+    ON scene_manifest_assets (scene_id, asset_index);
+
+CREATE INDEX IF NOT EXISTS idx_sma_manifest
+    ON scene_manifest_assets (manifest_id);
+
+CREATE INDEX IF NOT EXISTS idx_sma_category
+    ON scene_manifest_assets (category);
+
+CREATE TABLE IF NOT EXISTS scene_manifest_review_events (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    manifest_id                 INTEGER NOT NULL
+                                    REFERENCES scene_manifests(id) ON DELETE CASCADE,
+    scene_id                    INTEGER
+                                    REFERENCES scene_manifest_scenes(id) ON DELETE CASCADE,
+    topic_id                    INTEGER NOT NULL
+                                    REFERENCES topics(id) ON DELETE RESTRICT,
+    plan_id                     INTEGER NOT NULL
+                                    REFERENCES production_plans(id) ON DELETE RESTRICT,
+    script_id                   INTEGER NOT NULL
+                                    REFERENCES scripts(id) ON DELETE RESTRICT,
+    caption_run_id              INTEGER NOT NULL
+                                    REFERENCES caption_runs(id) ON DELETE RESTRICT,
+    narration_run_id            INTEGER NOT NULL
+                                    REFERENCES narration_runs(id) ON DELETE RESTRICT,
+    experiment_id               TEXT,
+    manifest_schema_version     TEXT    NOT NULL,
+    event_type                  TEXT    NOT NULL
+                                    CHECK (event_type IN (
+                                        'approved','rejected','scene_rejected')),
+    reason_code                 TEXT,
+    severity                    INTEGER CHECK (severity BETWEEN 1 AND 5),
+    expected_correction         TEXT,
+    notes                       TEXT,
+    actor                       TEXT,
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_smre_manifest
+    ON scene_manifest_review_events (manifest_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_smre_event_type
+    ON scene_manifest_review_events (event_type);
+"""
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -1082,6 +1228,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -1098,6 +1245,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1113,6 +1261,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1127,6 +1276,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1140,6 +1290,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1152,6 +1303,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1163,6 +1315,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1173,6 +1326,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1182,6 +1336,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1190,6 +1345,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V10_PRODUCTION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1197,12 +1353,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 10 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V11_NARRATION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 11:
         logger.info("Migrating schema from version 11 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V12_CAPTIONS)
+        conn.executescript(_DDL_V13_SCENES)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 12:
+        logger.info("Migrating schema from version 12 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V13_SCENES)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

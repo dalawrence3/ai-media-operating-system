@@ -1,8 +1,8 @@
 # Project State Snapshot
 
-**Date:** 2026-08-05
-**Latest implemented milestone:** Phase 6 M6.3C — Live ElevenLabs Provider Integration
-**Next milestone:** Phase 7 — Licensed Assets and Scene Manifests
+**Date:** 2026-08-06
+**Latest implemented milestone:** Phase 7 — Visual Intelligence & Scene Planning
+**Next milestone:** Phase 8 — Asset Provider Integration
 
 ---
 
@@ -25,16 +25,17 @@
 | Phase 6 M6.3A — Caption and timing artifacts | ✅ Complete | 1563 | 12 |
 | Phase 6 M6.3B — Narration provider infrastructure | ✅ Complete | 1810 | 12 |
 | Phase 6 M6.3C — Live ElevenLabs provider integration | ✅ Complete | 1889 | 12 |
+| Phase 7 — Visual Intelligence & Scene Planning | ✅ Complete | 2019 | 13 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 12`
+`SCHEMA_VERSION = 13`
 
 ### Test count
-**1889 passing, 1 skipped** (ruff clean; skipped test is the always-skipped live smoke test)
+**2019 passing, 1 skipped** (ruff clean; skipped test is the always-skipped live smoke test)
 
 ### Packages implemented
 
@@ -49,6 +50,7 @@
 | Narration (TTS pipeline + provider infrastructure) | `src/app/narration/` | ✅ |
 | ElevenLabs TTS adapter | `src/app/narration/providers/` | ✅ |
 | Captions | `src/app/captions/` | ✅ |
+| Visual Intelligence Engine (scene manifests) | `src/app/scenes/` | ✅ |
 
 ### CLI subcommand groups
 
@@ -64,6 +66,7 @@ ace intelligence    — scoring, policies
 ace production      — production plan
 ace narration       — TTS narration pipeline
 ace captions        — caption and timing artifacts
+ace scenes          — Visual Intelligence: plan and review scene manifests
 ace version         — version info
 ace doctor          — environment diagnostics
 ```
@@ -232,8 +235,70 @@ ace doctor          — environment diagnostics
 - `_measure_rms_dbfs()` — stdlib-only RMS amplitude measurement in dBFS (not LUFS; no numpy)
 - `_check_duration_deviation()` — word-count heuristic; warns if deviation > 50%
 
+---
+
+## Phase 7 completion details
+
+### New files (Phase 7)
+
+**Source — Visual Intelligence Engine (`src/app/scenes/`):**
+- `src/app/scenes/__init__.py` — package docstring exposing full VI Engine scope
+- `src/app/scenes/constants.py` — shot types, camera movements, transitions, asset categories, license statuses, priorities, section→visual mappings
+- `src/app/scenes/errors.py` — domain exceptions: `SceneManifestError`, `NoApprovedCaptionRunError`, `ManifestNotFoundError`, `IllegalManifestTransitionError`, `ManifestAlreadyExistsError`, `ManifestBuildError`
+- `src/app/scenes/models.py` — `PlannedAssetDraft`, `PlannedSceneDraft`, `SceneManifestDraft` (mutable dataclasses); `SceneManifest`, `SceneManifestScene`, `SceneManifestAsset`, `SceneManifestReviewEvent` (frozen Pydantic); `ApprovedSceneManifest`, `ApprovedSceneScene` (handoff objects)
+- `src/app/scenes/hashing.py` — `ManifestHashInput`, `compute_manifest_input_hash()` (SHA-256, order-sensitive)
+- `src/app/scenes/asset_strategy.py` — `plan_assets()`: deterministic 1–3 asset recommendations per scene with licensing metadata and evidence linkage
+- `src/app/scenes/planner.py` — `build_scene_manifest()`: orchestrates shot type, camera grammar, transitions, timing, visual objectives/rationale, confidence
+- `src/app/scenes/repository.py` — full CRUD: create, get_or_create (idempotent), approve (with supersession), reject, scene-level rejection, review events, full handoff via `get_approved_scene_manifest_full()`
+- `src/app/scenes/cli.py` — `scenes_app`: `plan`, `list`, `show`, `approve`, `reject`, `reject-scene`, `events`, `manifest` commands
+
+**Tests:**
+- `tests/test_scene_constants.py` (15 tests)
+- `tests/test_scene_hashing.py` (9 tests)
+- `tests/test_scene_models.py` (7 tests)
+- `tests/test_scene_repository.py` (30 tests)
+- `tests/test_scene_planner.py` (45 tests)
+- `tests/test_scene_cli.py` (24 tests)
+
+### Modified files (Phase 7)
+
+- `src/app/core/database.py` — SCHEMA_VERSION 12 → 13; `_DDL_V13_SCENES` (4 tables: `scene_manifests`, `scene_manifest_scenes`, `scene_manifest_assets`, `scene_manifest_review_events`); v12 migration branch; all earlier migration branches updated
+- `src/app/cli.py` — registered `scenes_app` sub-app
+- `tests/test_database.py` — updated `SCHEMA_VERSION == 12` → `== 13` in 3 assertions; renamed `test_schema_version_is_12` → `test_schema_version_is_13`
+
+### Key architectural invariants (Phase 7)
+
+1. **Every human correction is a future training signal** — all approve/reject/scene-reject events stored immutably in `scene_manifest_review_events`; reason codes, severity, expected corrections, and actor preserved
+2. **Every optimization decision is attributable** — `MANIFEST_SCHEMA_VERSION`, `PLANNER_VERSION` bound to `input_hash`; any algorithm change forces a new manifest row
+3. **Every external provider is replaceable** — `provider` and `source_url` fields on every asset; `PlannedAssetDraft` decoupled from any provider implementation
+4. **Every visual recommendation has a measurable reason** — `visual_rationale` records the specific section-type→shot-type→camera-movement mapping; `confidence` score is deterministically computed
+5. **Every scene is independently reviewable** — scene-level rejection (`record_scene_rejection`) is append-only and does not change manifest status; scenes are FK-linked to `production_segments` for future targeted regeneration (independent scene replacement is a Phase 8+ capability)
+6. **Canonical data is immutable** — `SceneManifest`, `SceneManifestScene`, `SceneManifestAsset`, `SceneManifestReviewEvent` are frozen Pydantic models
+7. **Derived artifacts remain reproducible** — same `(caption_run_id, narration_run_id, plan_id, planner_version)` → same `input_hash` → idempotent via `get_or_create_scene_manifest`
+8. **Provider independence** — asset planning (`asset_strategy.py`) is a separate module from scene orchestration (`planner.py`); providers slot in Phase 8 without touching planner logic
+
+### Phase 7 — Architecture: Visual Intelligence Engine
+
+The `src/app/scenes/` package is the root of the Visual Intelligence Engine. Current modules cover the scene manifest foundation. The package naturally supports future extension without rewrites:
+
+| Future module | Natural home | Current seam |
+|---|---|---|
+| Stock footage providers | `src/app/scenes/providers/` | `provider` field on `PlannedAssetDraft` |
+| AI image generation | `src/app/scenes/providers/` | `ai_generation_*` fields on `PlannedAssetDraft` |
+| Licensing verification | `src/app/scenes/licensing.py` | `license_status`, `verification_status` fields |
+| Retention optimization | `src/app/scenes/optimizer.py` | `confidence` field per scene |
+| Camera grammar | `src/app/scenes/camera_grammar.py` | `SECTION_CAMERA_MAP` in constants |
+| Transition grammar | `src/app/scenes/transition_grammar.py` | `TRANSITION_*` constants |
+| Evidence visualization | `src/app/scenes/evidence_viz.py` | `claim_ids`, `evidence_ids` on every scene/asset |
+| Analytics learning | `src/app/scenes/analytics.py` | `scene_manifest_review_events` table |
+| Visual storytelling | `src/app/scenes/visual_storytelling.py` | `_visual_objective`, `_visual_rationale` helpers |
+| Asset strategy enrichment | `src/app/scenes/asset_strategy.py` | Already a separate module |
+
+---
+
 ## What waits
 
-### Immediate next: Phase 7 — Licensed Assets and Scene Manifests
+### Immediate next: Phase 8 — Asset Provider Integration
 
-Dependencies: Phase 6 complete (M6.3C ✅).
+Dependencies: Phase 7 complete ✅.
+Likely scope: stock footage API adapters, AI image generation provider, licensing verification, provider registry pattern (mirrors `src/app/narration/providers/`).

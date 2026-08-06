@@ -25,20 +25,21 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 6 M6.3A complete)
+## Current state (Phase 7 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=12): `topics`, `sources`, `scripts`,
+- Versioned schema (SCHEMA_VERSION=13): `topics`, `sources`, `scripts`,
   `runs`, `ai_calls`, Phase 3 intelligence tables, `source_contents`,
   Phase 4.2 claim extraction tables, Phase 5 `script_generation_runs`
   and `script_citations` tables, Phase 6 M6.1 `production_plans`,
   `production_segments`, `production_segment_citations`, and
   `production_plan_review_events` tables, Phase 6 M6.2
   `voice_profiles`, `narration_runs`, `narration_segment_assets`,
-  `tts_calls`, and `narration_review_events` tables, plus Phase 6
-  M6.3A `caption_runs`, `caption_cues`, and `caption_review_events`
-  tables.
+  `tts_calls`, and `narration_review_events` tables, Phase 6 M6.3A
+  `caption_runs`, `caption_cues`, and `caption_review_events` tables,
+  Phase 7 `scene_manifests`, `scene_manifest_scenes`,
+  `scene_manifest_assets`, and `scene_manifest_review_events` tables.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
 - Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
@@ -287,9 +288,49 @@ optional adapters after YouTube is stable.
     `{artifacts_path}/captions/plan_{id}/narration_{id}/run_{id}/captions.{srt,vtt,json}`;
     relative paths stored in DB; SQLite is canonical, exports are derived
   - CLI: `ace captions generate/runs/approve/reject/reject-cue/events`
+- Phase 7 — Visual Intelligence Engine (`src/app/scenes/`):
+  - SCHEMA_VERSION 13: four new tables — `scene_manifests` (UNIQUE on
+    `input_hash`; status CHECK: `draft/approved/rejected/superseded`),
+    `scene_manifest_scenes` (UNIQUE on `(manifest_id, scene_index)`; JSON
+    columns for `caption_cue_ids`, `claim_ids`, `evidence_ids`),
+    `scene_manifest_assets` (UNIQUE on `(scene_id, asset_index)`; full
+    licensing metadata: `license_status`, `license_name`, `attribution_required`,
+    `attribution_text`, `commercial_safe`, `verification_status`,
+    `usage_rights_json`; AI generation fields: `ai_generation_requested`,
+    `ai_generation_prompt`, `ai_generation_model`),
+    `scene_manifest_review_events` (append-only; event_type CHECK:
+    `approved/rejected/scene_rejected`)
+  - `scenes/constants.py`: 7 shot types, 8 camera movements, 7 transitions,
+    14 asset categories, 6 license statuses, 4 priorities, 4 verification
+    statuses; `SECTION_SHOT_TYPE_MAP`, `SECTION_CAMERA_MAP`,
+    `SECTION_ASSET_PREFERENCES` per section type
+  - `scenes/hashing.py`: `ManifestHashInput` frozen dataclass;
+    `compute_manifest_input_hash()` — SHA-256 over ordered JSON payload
+    capturing all upstream IDs, hashes, versions, and ordered segment tuples
+  - `scenes/asset_strategy.py`: `plan_assets()` — deterministic 1–3
+    `PlannedAssetDraft` per scene; priority assignment (required/preferred/
+    optional); AI generation prompts for AI categories; claim_ids forwarded
+    from segment evidence linkage; Phase 8 seam module
+  - `scenes/planner.py`: `build_scene_manifest()` — orchestrates shot type
+    (`SECTION_SHOT_TYPE_MAP`), camera movement (with static-section variety via
+    `scene_index % 3`), transition grammar (fade_from_black on first,
+    fade_to_black on last, cut/dissolve between), visual objectives and
+    rationale (all reproducible), deterministic confidence score, cumulative
+    timing from narration duration; delegates asset planning to
+    `asset_strategy.plan_assets()`
+  - `scenes/repository.py`: `create_scene_manifest()`, `get_or_create_scene_manifest()`
+    (idempotent on `input_hash`); `approve_scene_manifest()` (supersedes existing
+    approved manifest for same `topic_id`); `reject_scene_manifest()`;
+    `record_scene_rejection()` (scene-level, does not change manifest status);
+    `get_approved_scene_manifest_full()` (full handoff with `ApprovedSceneManifest`
+    + `ApprovedSceneScene` objects + resolved assets)
+  - All human review events (approve/reject/scene_reject) stored immutably;
+    reason codes, severity, expected corrections, actor, notes preserved as
+    training signal
+  - CLI: `ace scenes plan/list/show/approve/reject/reject-scene/events/manifest`
 - Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`,
-  `discover`, `intelligence`, `production`, `narration`, `captions` subcommand
-  groups and diagnostic `version`, `doctor` commands.
+  `discover`, `intelligence`, `production`, `narration`, `captions`, `scenes`
+  subcommand groups and diagnostic `version`, `doctor` commands.
 - Stdlib structured logging via `ACE_LOG_LEVEL`.
 
 ## Package layout (target — populated phase by phase)
@@ -391,10 +432,18 @@ src/app/
 │   ├── storage.py            # Path helpers; write_export_atomic(); compute_export_sha256(); cleanup_stale_temp_files()
 │   ├── repository.py         # Full CRUD + lifecycle (create/complete/fail/approve/reject/supersede); persist_caption_cues(); review events
 │   └── orchestrator.py       # generate_captions() entry point; 9-step pipeline; idempotency; failed-run rule
-├── media/                    # Phases 7+: Assets, video rendering
-│   ├── assets.py             # Asset library, licence enforcement
-│   ├── manifest.py           # Scene manifest assembly and validation
-│   └── renderer.py           # FFmpeg rendering and validation
+├── scenes/                   # Phase 7: Visual Intelligence Engine (implemented)
+│   ├── __init__.py           # Package docstring: VI Engine scope and future extension map
+│   ├── constants.py          # Shot types, camera movements, transitions, asset categories, license statuses
+│   ├── errors.py             # SceneManifestError hierarchy
+│   ├── hashing.py            # ManifestHashInput; compute_manifest_input_hash() (SHA-256, order-sensitive)
+│   ├── models.py             # PlannedAssetDraft, PlannedSceneDraft, SceneManifestDraft (mutable); frozen Pydantic DB projections; handoff objects
+│   ├── asset_strategy.py     # plan_assets(): deterministic 1–3 asset recommendations per scene (Phase 8 seam)
+│   ├── planner.py            # build_scene_manifest(): shot, camera, transitions, timing, objectives, confidence
+│   ├── repository.py         # Full CRUD + approve (with supersession) + reject + scene-level rejection + review events + full handoff
+│   └── cli.py                # scenes_app: plan/list/show/approve/reject/reject-scene/events/manifest
+├── media/                    # Phase 8+: Asset provider integration, video rendering
+│   └── renderer.py           # FFmpeg rendering (deferred)
 ├── pipeline/                 # Phase 9: End-to-end pipeline orchestration
 │   ├── runner.py             # Stage runner with human gate support
 │   └── cost.py               # Production cost accumulation
@@ -466,8 +515,8 @@ unique index on caption_runs (WHERE status='approved' AND superseded_at IS NULL)
 for one-active-approved-per-narration-run enforcement
 
 Planned additions per phase:
-- Phase 7: `assets`, `scene_manifests`
-- Phase 8: `renders`, `thumbnails`
+- Phase 7 ✅: `scene_manifests`, `scene_manifest_scenes`, `scene_manifest_assets`, `scene_manifest_review_events`
+- Phase 8: `asset_providers`, `resolved_assets`, `renders`, `thumbnails`
 - Phase 9: extend `runs`
 - Phase 10: `publications`
 - Phase 11: `video_metrics`, `channel_metrics`, `cost_records`

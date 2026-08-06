@@ -118,6 +118,15 @@
   No new runtime dependencies. No live LLM or live HTTP in any test.
   825 tests pass.
 
+- **Phase 5–6 M6.3C:** Script generation → production plan → narration TTS →
+  caption artifacts → ElevenLabs provider integration. 1889 tests. SCHEMA_VERSION 12.
+
+- **Phase 7 — Visual Intelligence & Scene Planning:** `src/app/scenes/` package
+  (8 modules); SCHEMA_VERSION 12 → 13 (4 new tables); deterministic scene
+  manifests with immutable input hash, evidence linkage, full licensing metadata,
+  approve/reject/supersession review workflow, operator CLI; `asset_strategy.py`
+  extracted as Phase 8 seam. 130 new tests. 2019 total. Ruff clean.
+
 ---
 
 ## Roadmap
@@ -513,76 +522,28 @@ operator approval of provider selection).
 
 ---
 
-### Phase 7 — Licensed Assets and Scene Manifests
+### Phase 7 — Visual Intelligence & Scene Planning ✅ COMPLETE
 
-**Objective:** Select or generate properly licensed visual assets and produce
-a scene manifest that drives video rendering.
+**Objective:** Build the Visual Intelligence Engine foundation: deterministic
+scene manifests that describe every second of future video, with licensing
+metadata, evidence linkage, immutable review history, and natural extension
+points for Phase 8 asset providers.
 
-**Business value:** Visual quality and licensing compliance protect revenue
-and channel standing. Asset reuse without attribution is a common channel-
-killing mistake.
+**Status:** Complete. 2019 tests pass. SCHEMA_VERSION = 13. Ruff clean.
 
-**Technical scope:**
-- `src/app/media/assets.py`, `src/app/media/manifest.py`
-- Supported asset categories (all four are part of the finished product):
-  1. Owned assets (uploaded to local asset library)
-  2. Public-domain assets (US government works, expired copyright, etc.)
-  3. Licensed stock (CC0, Creative Commons, paid stock APIs — Pexels,
-     Pixabay, Storyblocks, Shutterstock)
-  4. AI-generated visuals — **deferred to a later sub-phase** until the
-     pipeline supports: provider/model tracking, commercial-use term
-     confirmation, prompt and output provenance, YouTube disclosure flags,
-     likeness/trademark risk checks, and quality validation
-  — Never use assets without a verified licence record
-- Phase 7 implements categories 1–3 only; category 4 is a named future
-  capability, not an exclusion
-- Asset library: local directory + DB records (licence, source URL,
-  attribution, asset_category, provider, provenance_json)
-- Asset rights enforcement: block scene manifest creation if any asset has
-  `commercial_ok=False` and channel is monetised
-- Asset selection criteria (implemented progressively): licence confidence,
-  visual quality score, originality signal, production cost, historical
-  performance correlation
-- Shorts scene manifest: sequence of scenes, each with:
-  `(scene_index, duration_s, narration_segment_id, asset_id, text_overlay,
-  transition)`
-- Manifest validation: total duration matches narration ± tolerance;
-  all assets resolved; licences verified
-- Shorts template: vertical 9:16, 1080×1920, max 60 seconds, text overlay
-  positions respecting safe zones
+**What was built:**
+- `src/app/scenes/` — Visual Intelligence Engine root package
+- `scenes/constants.py` — shot types, camera grammar, transitions, 14 asset categories, license statuses, priorities
+- `scenes/models.py` — `PlannedAssetDraft`, `PlannedSceneDraft`, `SceneManifestDraft` (mutable); frozen Pydantic DB projections; handoff objects
+- `scenes/hashing.py` — SHA-256 immutable input hash (order-sensitive, segment-level)
+- `scenes/asset_strategy.py` — deterministic 1–3 asset recommendations per scene (Phase 8 seam)
+- `scenes/planner.py` — orchestrates shot type, camera grammar, transitions, timing, visual objectives, confidence
+- `scenes/repository.py` — full CRUD + approve (with supersession) + reject + scene-level rejection + review events + full handoff
+- `scenes/cli.py` — `ace scenes plan/list/show/approve/reject/reject-scene/events/manifest`
+- 4 new DB tables: `scene_manifests`, `scene_manifest_scenes`, `scene_manifest_assets`, `scene_manifest_review_events`
+- 130 Phase 7-specific tests
 
-**Dependencies:** Phase 6 (narration, captions).
-
-**Database changes:**
-- New `assets` table: `(id, channel_id, file_path, asset_type,
-  asset_category, source_url, licence_type, attribution_text, commercial_ok,
-  provider, provenance_json, quality_score, created_at)`
-- New `scene_manifests` table: `(id, script_id, narration_id, template,
-  scenes_json, validated, created_at)`
-
-**Interfaces:**
-- `ace assets add <file_path> --licence <type>` — register owned asset
-- `ace assets search <query>` — search stock providers
-- `ace manifest create <script_id>` — assemble scene manifest
-- `ace manifest validate <manifest_id>` — check durations and licences
-
-**Tests:** Mock stock API responses; test licence enforcement; test duration
-validation; test manifest schema; test safe-zone bounds in template.
-
-**Human approval gates:** Review manifest before rendering; confirm all
-assets and licences are acceptable.
-
-**Risks:** Stock API pricing or availability changes; licence verification
-being incomplete for edge cases; Shorts safe-zone requirements changing.
-
-**Definition of done:** Manifest assembles correctly from narration and
-assets; licence enforcement blocks commercial-ok=False assets; duration
-validated; all tests pass; ruff clean.
-
-**Demonstrable capability:** `ace manifest create <script_id>` produces a
-valid, licence-verified manifest ready for rendering.
-
-**What waits:** Video rendering.
+**What waits:** Phase 8 — Asset Provider Integration.
 
 ---
 

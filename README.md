@@ -17,10 +17,11 @@ behind key technical choices.
 **Phase 6 Milestone 6.3A (Caption and Timing Artifacts) is complete.**
 
 The system can generate SRT, WebVTT, and JSON caption artifacts for every
-approved narration run: deterministic sentence-aware text segmentation,
-proportional timing allocation, immutable cue storage, and exception-based
-review governance (approve/reject runs and individual cues).
-1548 tests pass. SCHEMA_VERSION 12.
+approved narration run, then produce deterministic scene manifests that
+describe every second of future video with shot types, camera grammar,
+transitions, asset recommendations (with licensing metadata and evidence
+linkage), and immutable review governance.
+2019 tests pass. SCHEMA_VERSION 13.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -118,11 +119,26 @@ Implemented phases:
   - Exception-based review: `cue_rejected` events block run approval
   - CLI: `ace captions generate/runs/approve/reject/reject-cue/events`
 
+- **Phase 7** — Visual Intelligence Engine (`src/app/scenes/`):
+  - SCHEMA_VERSION 13: `scene_manifests`, `scene_manifest_scenes`,
+    `scene_manifest_assets`, `scene_manifest_review_events`
+  - Deterministic scene manifests: shot types, camera movements, transitions,
+    visual objectives and rationale — all reproducible from same inputs
+  - Full licensing metadata per asset: `license_status`, `attribution_required`,
+    `commercial_safe`, `verification_status`, `usage_rights`; AI generation
+    fields; evidence linkage via `claim_ids`/`evidence_ids`
+  - Approve/reject/supersession workflow; scene-level rejection as training
+    signal; immutable append-only review event history
+  - `ApprovedSceneManifest` handoff: typed boundary for future rendering phase
+  - `asset_strategy.py` as Phase 8 seam module for provider integration
+  - CLI: `ace scenes plan/list/show/approve/reject/reject-scene/events/manifest`
+
 End-to-end workflow: channel strategy → discovery → scoring → topic promotion
 → source ingestion → claim extraction → script generation → human approval
 → production plan creation → human review (approve/reject) → narration
 synthesis → narration review (approve/reject segments) → caption generation
-→ caption review (approve/reject runs and cues).
+→ caption review (approve/reject runs and cues) → scene manifest planning
+→ scene review (approve/reject manifests and scenes).
 
 ## Requirements
 
