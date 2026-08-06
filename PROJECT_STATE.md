@@ -1,8 +1,8 @@
 # Project State Snapshot
 
 **Date:** 2026-08-06
-**Latest implemented milestone:** Phase 7 — Visual Intelligence & Scene Planning
-**Next milestone:** Phase 8 — Asset Provider Integration
+**Latest implemented milestone:** Phase 8 — Rendering Engine
+**Next milestone:** Phase 9 — Publishing and Orchestration Engine
 
 ---
 
@@ -26,16 +26,17 @@
 | Phase 6 M6.3B — Narration provider infrastructure | ✅ Complete | 1810 | 12 |
 | Phase 6 M6.3C — Live ElevenLabs provider integration | ✅ Complete | 1889 | 12 |
 | Phase 7 — Visual Intelligence & Scene Planning | ✅ Complete | 2019 | 13 |
+| Phase 8 — Rendering Engine | ✅ Complete | 2154 | 14 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 13`
+`SCHEMA_VERSION = 14`
 
 ### Test count
-**2019 passing, 1 skipped** (ruff clean; skipped test is the always-skipped live smoke test)
+**2154 passing, 1 skipped** (ruff clean; skipped test is the always-skipped live smoke test)
 
 ### Packages implemented
 
@@ -51,6 +52,7 @@
 | ElevenLabs TTS adapter | `src/app/narration/providers/` | ✅ |
 | Captions | `src/app/captions/` | ✅ |
 | Visual Intelligence Engine (scene manifests) | `src/app/scenes/` | ✅ |
+| Rendering Engine (render manifests, jobs, review) | `src/app/media/` | ✅ |
 
 ### CLI subcommand groups
 
@@ -67,6 +69,7 @@ ace production      — production plan
 ace narration       — TTS narration pipeline
 ace captions        — caption and timing artifacts
 ace scenes          — Visual Intelligence: plan and review scene manifests
+ace render          — Rendering Engine: compose, render, validate, and review MP4s
 ace version         — version info
 ace doctor          — environment diagnostics
 ```
