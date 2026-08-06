@@ -66,6 +66,12 @@ PROVIDER_FEATURE_SPEAKING_RATE: str = "speaking_rate"
 PROVIDER_FEATURE_STABILITY: str = "stability"
 PROVIDER_FEATURE_SIMILARITY_BOOST: str = "similarity_boost"
 
+# Additional feature flags (M6.3C).
+PROVIDER_FEATURE_ALIGNMENT: str = "alignment"
+PROVIDER_FEATURE_SEED: str = "seed"
+PROVIDER_FEATURE_VOICE_CLONING: str = "voice_cloning"
+PROVIDER_FEATURE_PRONUNCIATION_DICTIONARY: str = "pronunciation_dictionary"
+
 # All known feature flag names — kept as a frozenset for validation.
 PROVIDER_FEATURE_NAMES: frozenset[str] = frozenset(
     {
@@ -79,6 +85,10 @@ PROVIDER_FEATURE_NAMES: frozenset[str] = frozenset(
         PROVIDER_FEATURE_SPEAKING_RATE,
         PROVIDER_FEATURE_STABILITY,
         PROVIDER_FEATURE_SIMILARITY_BOOST,
+        PROVIDER_FEATURE_ALIGNMENT,
+        PROVIDER_FEATURE_SEED,
+        PROVIDER_FEATURE_VOICE_CLONING,
+        PROVIDER_FEATURE_PRONUNCIATION_DICTIONARY,
     }
 )
 

@@ -26,8 +26,11 @@ class ProviderPricingPolicy(Protocol):
 
 # Price per 1,000 characters billed, in USD.
 # The fake provider is always 0.0 (no cost).
+# ElevenLabs prices as of 2026-08 (official API pricing page).
 _PRICING: dict[str, float] = {
     FAKE_MODEL_NAME: 0.0,
+    "eleven_multilingual_v2": 0.10,
+    "eleven_flash_v2_5": 0.05,
 }
 
 

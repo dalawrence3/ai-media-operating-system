@@ -30,11 +30,7 @@ class ProviderLoader(Protocol):
 
 
 class DefaultProviderFactory:
-    """Creates providers from the built-in catalogue.
-
-    Currently supports only the fake provider.  Live providers are added
-    here when their milestone is implemented.
-    """
+    """Creates providers from the built-in catalogue."""
 
     def create(
         self,
@@ -45,6 +41,10 @@ class DefaultProviderFactory:
             from app.narration.fake import FakeTTSProvider
 
             return FakeTTSProvider()
+        if provider_name == "elevenlabs":
+            from app.narration.providers.elevenlabs import ElevenLabsTTSProvider
+
+            return ElevenLabsTTSProvider()
         raise ProviderFactoryError(
             f"No factory entry for provider {provider_name!r}. "
             "Add the provider in DefaultProviderFactory.create() when its "
@@ -56,7 +56,7 @@ class DefaultProviderLoader:
     """Loads provider + metadata for a given name.
 
     Delegates instantiation to DefaultProviderFactory and retrieves
-    metadata from the built-in catalogue in fake.py.
+    metadata from the built-in catalogue.
     """
 
     def __init__(self, factory: ProviderFactory | None = None) -> None:
@@ -68,6 +68,11 @@ class DefaultProviderLoader:
 
             provider = self._factory.create(provider_name)
             return provider, FAKE_METADATA
+        if provider_name == "elevenlabs":
+            from app.narration.providers.elevenlabs import ELEVENLABS_METADATA
+
+            provider = self._factory.create(provider_name)
+            return provider, ELEVENLABS_METADATA
         raise ProviderFactoryError(
             f"No loader entry for provider {provider_name!r}"
         )

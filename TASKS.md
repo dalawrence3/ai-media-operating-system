@@ -424,6 +424,32 @@ forced alignment.
 
 ---
 
+### Phase 6 M6.3C — Live ElevenLabs Provider Integration ✅ Complete
+
+**Objective:** Integrate ElevenLabs as the first live TTS provider; wire it into
+the provider infrastructure built in M6.3B; deliver credential-safe, test-isolated
+synthesis with character-level alignment, loudness measurement, and bounded retry.
+
+**Technical scope (implemented):**
+- `src/app/narration/providers/elevenlabs.py` — ElevenLabsTTSProvider satisfying
+  TTSProvider + ProviderLifecycle; uses `/with-timestamps` endpoint; lazy SDK import;
+  3-retry bounded backoff; no audio normalisation; RMS dBFS measurement; credential guard
+- 4 new capability flags: `supports_alignment`, `supports_seed`, `supports_voice_cloning`,
+  `supports_pronunciation_dictionary`
+- 2 new error types: `ProviderCredentialError`, `ProviderRateLimitError`
+- Pricing registered: `eleven_multilingual_v2=$0.10/1K`, `eleven_flash_v2_5=$0.05/1K`
+- Factory/loader updated to handle `"elevenlabs"`; default registry unchanged
+- CLI: `ace narration smoke-test` (manually opt-in; skipped in CI)
+- New dependency: `elevenlabs>=2.61.0,<3.0` (floor matches verified SDK 2.61.0)
+
+**Tests:** 1889 passing, 1 skipped (79 new unit tests in `test_narration_elevenlabs.py`;
+always-skipped live smoke test in `test_narration_elevenlabs_smoke.py`; factory test updated).
+
+**Definition of done:** ✅ Ruff clean, 1889 passing, git diff --check clean,
+no live network calls in CI, credentials never appear in logs or DB.
+
+---
+
 ### Phase 6 M6.3B — Narration Provider Infrastructure ✅ Complete
 
 **Objective:** Implement the complete provider infrastructure for narration —

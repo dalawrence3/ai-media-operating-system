@@ -35,6 +35,14 @@ class Config:
         self.tts_provider: str = os.environ.get("ACE_TTS_PROVIDER", "fake").lower()
         self.tts_model: str = os.environ.get("ACE_TTS_MODEL", "fake/FAKE")
 
+        # ElevenLabs TTS credentials (Phase 6 M6.3C).
+        # The API key is never stored in the DB or logs.
+        # tts_live_enabled must be explicitly set to true before any live call is made.
+        self.elevenlabs_api_key: str = os.environ.get("ACE_ELEVENLABS_API_KEY", "")
+        self.tts_live_enabled: bool = os.environ.get(
+            "ACE_TTS_LIVE_ENABLED", ""
+        ).lower() in {"1", "true", "yes"}
+
 
 _config: Config | None = None
 

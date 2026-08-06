@@ -160,3 +160,23 @@ class ProviderVersionIncompatibleError(ProviderInfrastructureError):
             f"Provider {provider_name!r} version incompatible: {reason}"
         )
         self.provider_name = provider_name
+
+
+class ProviderCredentialError(ProviderInfrastructureError):
+    """Raised when provider credentials are absent or invalid.
+
+    Raised at initialize() time when ACE_TTS_LIVE_ENABLED is false or the
+    required API key environment variable is not set.  Never raised during
+    automated tests that inject a mock SDK client.
+    """
+
+
+class ProviderRateLimitError(ProviderInfrastructureError):
+    """Raised when the provider returns HTTP 429 and all retries are exhausted."""
+
+    def __init__(self, provider_name: str, attempts: int) -> None:
+        super().__init__(
+            f"Provider {provider_name!r} rate-limited after {attempts} attempt(s)"
+        )
+        self.provider_name = provider_name
+        self.attempts = attempts

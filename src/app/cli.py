@@ -2074,6 +2074,118 @@ def captions_events(
 
 
 # ---------------------------------------------------------------------------
+# Narration — ElevenLabs smoke test (M6.3C)
+# ---------------------------------------------------------------------------
+
+
+@narration_app.command("smoke-test")
+def narration_smoke_test(
+    voice_id: Annotated[
+        str,
+        typer.Option(
+            "--voice-id",
+            help="ElevenLabs voice ID to use (e.g. 'JBFqnCBsd6RMkjVDRZzb' for George).",
+        ),
+    ],
+    model: Annotated[
+        str,
+        typer.Option(
+            "--model",
+            help="ElevenLabs model to use.",
+        ),
+    ] = "eleven_multilingual_v2",
+    text: Annotated[
+        str,
+        typer.Option(
+            "--text",
+            help="Text to synthesise.",
+        ),
+    ] = "Hello from the AI Content Engine. ElevenLabs integration is working.",
+    output: Annotated[
+        str | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Write the WAV bytes to this file (default: print summary only).",
+        ),
+    ] = None,
+) -> None:
+    """Manual ElevenLabs smoke test.  ALWAYS skipped in CI.
+
+    Requires ACE_ELEVENLABS_API_KEY and ACE_TTS_LIVE_ENABLED=true to be set.
+    This command is for manual verification after M6.3C is merged.
+
+    Example:
+        ACE_ELEVENLABS_API_KEY=... ACE_TTS_LIVE_ENABLED=true \\
+            ace narration smoke-test --voice-id JBFqnCBsd6RMkjVDRZzb
+    """
+    from app.narration.errors import ProviderCredentialError, SynthesisError
+    from app.narration.protocol import TTSRequest
+    from app.narration.providers.elevenlabs import (
+        ELEVENLABS_PROVIDER_NAME,
+        ElevenLabsTTSProvider,
+    )
+
+    cfg = get_config()
+    configure_logging(cfg.log_level)
+
+    if not cfg.tts_live_enabled:
+        typer.echo(
+            "Smoke test skipped: ACE_TTS_LIVE_ENABLED is not set to true.\n"
+            "To run live: export ACE_TTS_LIVE_ENABLED=true ACE_ELEVENLABS_API_KEY=<key>",
+            err=True,
+        )
+        raise typer.Exit(0)
+
+    if not cfg.elevenlabs_api_key:
+        typer.echo("Error: ACE_ELEVENLABS_API_KEY is not set.", err=True)
+        raise typer.Exit(1)
+
+    provider = ElevenLabsTTSProvider()
+    try:
+        provider.initialize()
+    except ProviderCredentialError as exc:
+        typer.echo(f"Credential error: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    request = TTSRequest(
+        text=text,
+        provider=ELEVENLABS_PROVIDER_NAME,
+        model=model,
+        voice_id=voice_id,
+        language="en",
+        speaking_rate=1.0,
+        output_format="wav",
+        sample_rate_hz=22050,
+    )
+
+    typer.echo(f"Synthesising {len(text)} chars via {model} voice_id={voice_id} ...")
+    try:
+        response = provider.synthesize(request)
+    except SynthesisError as exc:
+        typer.echo(f"Synthesis failed: {exc}", err=True)
+        raise typer.Exit(1) from None
+
+    typer.echo(
+        f"OK  bytes={len(response.audio_bytes)}  "
+        f"duration={response.duration_seconds:.2f}s  "
+        f"latency={response.latency_ms}ms  "
+        f"chars_billed={response.characters_billed}"
+    )
+    if response.request_id:
+        typer.echo(f"    request_id={response.request_id}")
+
+    if output:
+        import os
+
+        with open(output, "wb") as fh:
+            fh.write(response.audio_bytes)
+        typer.echo(f"    WAV written to {os.path.abspath(output)}")
+
+    provider.shutdown()
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

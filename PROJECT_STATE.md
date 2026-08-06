@@ -1,8 +1,8 @@
 # Project State Snapshot
 
-**Date:** 2026-08-06
-**Latest implemented milestone:** Phase 6 M6.3B — Narration Provider Infrastructure
-**Next milestone:** Phase 6 M6.3C — Live TTS Provider Integration
+**Date:** 2026-08-05
+**Latest implemented milestone:** Phase 6 M6.3C — Live ElevenLabs Provider Integration
+**Next milestone:** Phase 7 — Licensed Assets and Scene Manifests
 
 ---
 
@@ -24,6 +24,7 @@
 | Phase 6 M6.2 — Narration generation | ✅ Complete | 1326 | 11 |
 | Phase 6 M6.3A — Caption and timing artifacts | ✅ Complete | 1563 | 12 |
 | Phase 6 M6.3B — Narration provider infrastructure | ✅ Complete | 1810 | 12 |
+| Phase 6 M6.3C — Live ElevenLabs provider integration | ✅ Complete | 1889 | 12 |
 
 ---
 
@@ -33,7 +34,7 @@
 `SCHEMA_VERSION = 12`
 
 ### Test count
-**1810 passing** (ruff clean, no mypy errors in checked modules)
+**1889 passing, 1 skipped** (ruff clean; skipped test is the always-skipped live smoke test)
 
 ### Packages implemented
 
@@ -46,6 +47,7 @@
 | Script generation | `src/app/content/` | ✅ |
 | Production plan | `src/app/production/` | ✅ |
 | Narration (TTS pipeline + provider infrastructure) | `src/app/narration/` | ✅ |
+| ElevenLabs TTS adapter | `src/app/narration/providers/` | ✅ |
 | Captions | `src/app/captions/` | ✅ |
 
 ### CLI subcommand groups
@@ -72,8 +74,10 @@ ace doctor          — environment diagnostics
 |---|---|---|
 | `ACE_DB_PATH` | `~/.local/share/ai-content-engine/content.db` | SQLite database path |
 | `ACE_ARTIFACTS_PATH` | `~/.local/share/ai-content-engine/artifacts` | Artifact file root |
-| `ACE_TTS_PROVIDER` | `fake` | TTS provider (`fake` until M6.3B) |
+| `ACE_TTS_PROVIDER` | `fake` | TTS provider (`fake` or `elevenlabs`) |
 | `ACE_TTS_MODEL` | `fake/FAKE` | TTS model identifier |
+| `ACE_ELEVENLABS_API_KEY` | *(unset)* | ElevenLabs API key (never logged or stored in DB) |
+| `ACE_TTS_LIVE_ENABLED` | `false` | Safety gate: must be `true` for live ElevenLabs calls |
 | `ACE_LOG_LEVEL` | `WARNING` | Structured logging level |
 
 ---
@@ -177,24 +181,59 @@ ace doctor          — environment diagnostics
 
 ---
 
+## Phase 6 M6.3C completion details
+
+### New files (M6.3C)
+
+**Source:**
+- `src/app/narration/providers/__init__.py` — package init
+- `src/app/narration/providers/elevenlabs.py` — ElevenLabsTTSProvider (TTSProvider + ProviderLifecycle)
+
+**Tests:**
+- `tests/test_narration_elevenlabs.py` (79 tests, all mocked — no live calls)
+- `tests/test_narration_elevenlabs_smoke.py` (1 test, always skipped in CI)
+
+### Modified files (M6.3C)
+
+- `pyproject.toml` — Added `elevenlabs>=2.61.0,<3.0` dependency (floor matches verified SDK 2.61.0)
+- `src/app/narration/constants.py` — 4 new `PROVIDER_FEATURE_*` constants; `PROVIDER_FEATURE_NAMES` extended to 14 entries
+- `src/app/narration/capabilities.py` — 4 new `ProviderFeatureFlags` boolean fields
+- `src/app/narration/errors.py` — `ProviderCredentialError`, `ProviderRateLimitError`
+- `src/app/narration/pricing.py` — `eleven_multilingual_v2=$0.10/1K`, `eleven_flash_v2_5=$0.05/1K`
+- `src/app/core/config.py` — `elevenlabs_api_key`, `tts_live_enabled` config fields
+- `src/app/narration/factory.py` — `DefaultProviderFactory` and `DefaultProviderLoader` now handle `"elevenlabs"`
+- `src/app/narration/registry.py` — updated docstring; default registry remains fake-only (live providers require explicit registration)
+- `src/app/cli.py` — `ace narration smoke-test` command (manually opt-in only)
+- `.env.example` — `ACE_ELEVENLABS_API_KEY` and `ACE_TTS_LIVE_ENABLED` entries
+- `tests/test_narration_factory.py` — Updated `test_factory_unknown_provider_raises` to use "google"; added `test_factory_creates_elevenlabs_provider`
+
+### Architectural decisions (M6.3C)
+
+1. **ElevenLabs only** — Only `eleven_multilingual_v2` (default) and `eleven_flash_v2_5` registered. No Google, Azure, Polly, Cartesia, or OpenAI TTS.
+2. **Capability-driven** — Downstream code never checks `if provider == "elevenlabs"`. All behaviour is driven by `ProviderCapabilities` and `ProviderFeatureFlags`.
+3. **No audio normalisation** — Loudness is measured as RMS amplitude level in dBFS (not LUFS, not EBU R128) and warned if outside the advisory range. Normalisation deferred to Phase 8 rendering.
+4. **No schema changes** — SCHEMA_VERSION remains 12. Alignment data stored in `provider_metadata_json` (existing `TTSResponse` field).
+5. **No caption pipeline changes** — `timing_source='estimated'` continues unchanged.
+6. **Credentials never logged** — `ACE_ELEVENLABS_API_KEY` never appears in DB, logs, reproducibility dicts, or `provider_metadata_json`.
+7. **Safety gate** — `ACE_TTS_LIVE_ENABLED` must be `true` AND `ACE_ELEVENLABS_API_KEY` must be set before any live call. CI always uses mock injection.
+8. **Max 3 retries** — Bounded exponential backoff; retry only on 429/5xx; `ProviderRateLimitError` raised when 429 exhausts all attempts.
+9. **Default registry unchanged** — `get_default_provider_registry()` still returns fake only. ElevenLabs is registered explicitly when the live provider is requested.
+10. **Test isolation via injected client** — `ElevenLabsTTSProvider(_sdk_client=mock)` bypasses credential guard entirely.
+
+### Key M6.3C module: `src/app/narration/providers/elevenlabs.py`
+
+- `ElevenLabsTTSProvider` — implements `TTSProvider` and `ProviderLifecycle`
+- `ELEVENLABS_CAPABILITIES` — `ProviderCapabilities` with 37 supported languages and 4 output formats
+- `ELEVENLABS_FEATURE_FLAGS` — all 14 flags; supports_alignment/seed/voice_cloning/pronunciation_dictionary=True
+- `ELEVENLABS_METADATA` — `ProviderMetadata` for reproducibility
+- `ELEVENLABS_PROVIDER_VERSION` — bound to schema and algorithm versions
+- `ELEVENLABS_PROVIDER_CONFIG` — default config (eleven_multilingual_v2, wav, 22050 Hz)
+- Uses `/v1/text-to-speech/{voice_id}/with-timestamps` endpoint for character-level alignment
+- `_measure_rms_dbfs()` — stdlib-only RMS amplitude measurement in dBFS (not LUFS; no numpy)
+- `_check_duration_deviation()` — word-count heuristic; warns if deviation > 50%
+
 ## What waits
 
-### Immediate next: Phase 6 M6.3C — Live TTS Provider Integration
+### Immediate next: Phase 7 — Licensed Assets and Scene Manifests
 
-**Blocked on:** Operator approval of provider selection (ElevenLabs or equivalent).
-
-**Scope when unblocked:**
-- Concrete `TTSProvider` + `ProviderLifecycle` implementation for operator-approved provider
-- SDK installation (register in `DefaultProviderFactory` and `DefaultProviderLoader`)
-- Credential plumbing (`ACE_TTS_API_KEY` or provider-specific env var)
-- Loudness normalisation (target −14 LUFS integrated)
-- Duration-deviation validation
-- Provider pricing in `TTSPricingRegistry` + `ProviderPricingPolicy`
-- Provider smoke-test CLI command (opt-in, calls real API)
-- Do NOT modify `TTSResponse` or existing narration pipeline contracts
-- Do NOT change caption schema or models
-- Do NOT add forced alignment / Whisper / WhisperX
-
-### Following: Phase 7 — Licensed Assets and Scene Manifests
-
-Dependencies: Phase 6 complete (M6.3C).
+Dependencies: Phase 6 complete (M6.3C ✅).

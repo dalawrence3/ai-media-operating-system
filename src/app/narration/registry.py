@@ -47,7 +47,12 @@ class ProviderRegistry:
 
 
 def get_default_provider_registry() -> ProviderRegistry:
-    """Return a ProviderRegistry pre-loaded with FakeTTSProvider."""
+    """Return a ProviderRegistry pre-loaded with FakeTTSProvider.
+
+    Live providers (e.g. ElevenLabs) are NOT registered here because they require
+    credentials and explicit initialization.  Register them via DefaultProviderLoader
+    or DefaultProviderFactory when a live provider is explicitly requested.
+    """
     from app.narration.fake import FAKE_METADATA, FakeTTSProvider
 
     registry = ProviderRegistry()

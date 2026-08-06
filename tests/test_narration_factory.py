@@ -37,8 +37,17 @@ def test_factory_creates_tts_provider() -> None:
 
 def test_factory_unknown_provider_raises() -> None:
     factory = DefaultProviderFactory()
-    with pytest.raises(ProviderFactoryError, match="elevenlabs"):
-        factory.create("elevenlabs")
+    with pytest.raises(ProviderFactoryError, match="google"):
+        factory.create("google")
+
+
+def test_factory_creates_elevenlabs_provider() -> None:
+    from app.narration.providers.elevenlabs import ElevenLabsTTSProvider
+
+    factory = DefaultProviderFactory()
+    provider = factory.create("elevenlabs")
+    assert isinstance(provider, ElevenLabsTTSProvider)
+    assert isinstance(provider, TTSProvider)
 
 
 def test_factory_creates_fresh_instance_each_call() -> None:

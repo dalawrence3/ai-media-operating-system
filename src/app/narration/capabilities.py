@@ -5,15 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.narration.constants import (
+    PROVIDER_FEATURE_ALIGNMENT,
     PROVIDER_FEATURE_EMOTION_CONTROL,
     PROVIDER_FEATURE_MULTI_SPEAKER,
     PROVIDER_FEATURE_PHONEME_TIMESTAMPS,
+    PROVIDER_FEATURE_PRONUNCIATION_DICTIONARY,
+    PROVIDER_FEATURE_SEED,
     PROVIDER_FEATURE_SIMILARITY_BOOST,
     PROVIDER_FEATURE_SPEAKING_RATE,
     PROVIDER_FEATURE_SSML,
     PROVIDER_FEATURE_STABILITY,
     PROVIDER_FEATURE_STREAMING,
     PROVIDER_FEATURE_STYLE_TRANSFER,
+    PROVIDER_FEATURE_VOICE_CLONING,
     PROVIDER_FEATURE_WORD_TIMESTAMPS,
     PROVIDER_LANGUAGE_WILDCARD,
 )
@@ -37,6 +41,10 @@ class ProviderFeatureFlags:
     supports_ssml: bool = False
     supports_stability: bool = False
     supports_similarity_boost: bool = False
+    supports_alignment: bool = False
+    supports_seed: bool = False
+    supports_voice_cloning: bool = False
+    supports_pronunciation_dictionary: bool = False
 
     def as_dict(self) -> dict[str, bool]:
         return {
@@ -50,6 +58,10 @@ class ProviderFeatureFlags:
             PROVIDER_FEATURE_SSML: self.supports_ssml,
             PROVIDER_FEATURE_STABILITY: self.supports_stability,
             PROVIDER_FEATURE_SIMILARITY_BOOST: self.supports_similarity_boost,
+            PROVIDER_FEATURE_ALIGNMENT: self.supports_alignment,
+            PROVIDER_FEATURE_SEED: self.supports_seed,
+            PROVIDER_FEATURE_VOICE_CLONING: self.supports_voice_cloning,
+            PROVIDER_FEATURE_PRONUNCIATION_DICTIONARY: self.supports_pronunciation_dictionary,
         }
 
     def enabled_features(self) -> frozenset[str]:
