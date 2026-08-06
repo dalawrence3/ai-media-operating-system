@@ -12,7 +12,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-
 # ── In-memory value objects ───────────────────────────────────────────────────
 
 
@@ -199,24 +198,6 @@ class RenderReviewEvent(BaseModel):
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> RenderReviewEvent:
         return cls(**_row_to_dict(row))
-
-
-class RenderThumbnail(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    id: int
-    render_job_id: int
-    file_path: str
-    timestamp_ms: int
-    scene_index: int | None
-    selected: bool
-    created_at: datetime
-
-    @classmethod
-    def from_row(cls, row: sqlite3.Row) -> RenderThumbnail:
-        d = _row_to_dict(row)
-        d["selected"] = bool(d["selected"])
-        return cls(**d)
 
 
 # ── Handoff object for Phase 9 (publishing) ───────────────────────────────────

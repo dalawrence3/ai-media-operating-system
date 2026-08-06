@@ -14,7 +14,6 @@ Render strategy:
 from __future__ import annotations
 
 import hashlib
-import json
 import shutil
 import subprocess
 import time
@@ -23,15 +22,15 @@ from typing import Protocol
 
 from app.media.constants import (
     BACKEND_FFMPEG,
-    FFMPEG_BACKEND_VERSION,
     DEFAULT_AUDIO_BITRATE,
     DEFAULT_AUDIO_CODEC,
     DEFAULT_CRF,
     DEFAULT_FFMPEG_PRESET,
     DEFAULT_VIDEO_CODEC,
+    FFMPEG_BACKEND_VERSION,
     PLACEHOLDER_BG_COLOR,
 )
-from app.media.errors import FFmpegNotFoundError, RenderBackendError
+from app.media.errors import FFmpegNotFoundError, RenderBackendError, UnresolvedRequiredAssetError
 from app.media.models import RenderJobResult, RenderManifestDraft
 
 
@@ -55,6 +54,7 @@ class RenderBackend(Protocol):
         crf: int = DEFAULT_CRF,
         preset: str = DEFAULT_FFMPEG_PRESET,
         audio_bitrate: str = DEFAULT_AUDIO_BITRATE,
+        allow_placeholders: bool = False,
     ) -> RenderJobResult: ...
 
 
@@ -89,6 +89,7 @@ class FFmpegRenderBackend:
         crf: int = DEFAULT_CRF,
         preset: str = DEFAULT_FFMPEG_PRESET,
         audio_bitrate: str = DEFAULT_AUDIO_BITRATE,
+        allow_placeholders: bool = False,
     ) -> RenderJobResult:
         self._require_ffmpeg()
         tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +97,9 @@ class FFmpegRenderBackend:
 
         start = time.monotonic()
 
-        clip_paths = self._generate_scene_clips(draft, tmp_dir, video_codec)
+        clip_paths = self._generate_scene_clips(
+            draft, tmp_dir, video_codec, allow_placeholders=allow_placeholders
+        )
         audio_path = self._assemble_audio(draft, tmp_dir)
         final_cmd = self._mux(
             clip_paths=clip_paths,
@@ -136,13 +139,22 @@ class FFmpegRenderBackend:
         draft: RenderManifestDraft,
         tmp_dir: Path,
         video_codec: str,
+        *,
+        allow_placeholders: bool,
     ) -> list[Path]:
         clips: list[Path] = []
         for scene in draft.scenes:
             clip_path = tmp_dir / f"scene_{scene.scene_index:03d}.mp4"
             duration_s = scene.duration_ms / 1000.0
+            needs_placeholder = not (scene.primary_asset and scene.primary_asset.local_path)
 
-            if scene.primary_asset and scene.primary_asset.local_path:
+            if needs_placeholder and not allow_placeholders:
+                raise UnresolvedRequiredAssetError(
+                    f"Scene {scene.scene_index} has no resolved visual asset. "
+                    "Pass allow_placeholders=True (dev only) to use placeholder slides."
+                )
+
+            if not needs_placeholder:
                 cmd = self._image_clip_cmd(
                     asset_path=Path(scene.primary_asset.local_path),
                     output=clip_path,
@@ -215,7 +227,7 @@ class FFmpegRenderBackend:
     ) -> list[str]:
         concat_list = audio_path.parent / "video_concat.txt"
         lines = []
-        for i, (clip, scene) in enumerate(zip(clip_paths, draft.scenes)):
+        for i, (clip, scene) in enumerate(zip(clip_paths, draft.scenes, strict=False)):
             lines.append(f"file '{clip}'")
             lines.append(f"duration {scene.duration_ms / 1000.0:.3f}")
             if i == len(clip_paths) - 1:
@@ -297,11 +309,12 @@ class FFmpegRenderBackend:
             str(output),
         ]
 
-    def _run(self, cmd: list[str]) -> None:
+    def _run(self, cmd: list[str], timeout: int = 600) -> None:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
+            timeout=timeout,
         )
         if result.returncode != 0:
             raise RenderBackendError(

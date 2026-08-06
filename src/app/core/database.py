@@ -1313,18 +1313,73 @@ CREATE INDEX IF NOT EXISTS idx_rre_manifest
 CREATE INDEX IF NOT EXISTS idx_rre_event_type
     ON render_review_events (event_type);
 
-CREATE TABLE IF NOT EXISTS render_thumbnails (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    render_job_id   INTEGER NOT NULL REFERENCES render_jobs(id) ON DELETE CASCADE,
-    file_path       TEXT    NOT NULL,
-    timestamp_ms    INTEGER NOT NULL,
-    scene_index     INTEGER,
-    selected        INTEGER NOT NULL DEFAULT 0 CHECK (selected IN (0,1)),
-    created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+CREATE TABLE IF NOT EXISTS render_manifest_scenes (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    render_manifest_id      INTEGER NOT NULL
+                                REFERENCES render_manifests(id) ON DELETE CASCADE,
+    scene_index             INTEGER NOT NULL,
+    scene_id                INTEGER NOT NULL,
+    segment_id              INTEGER NOT NULL,
+    narration_asset_id      INTEGER,
+    audio_path              TEXT,
+    audio_sha256            TEXT,
+    start_ms                INTEGER NOT NULL,
+    end_ms                  INTEGER NOT NULL,
+    duration_ms             INTEGER NOT NULL,
+    shot_type               TEXT    NOT NULL DEFAULT '',
+    camera_movement         TEXT    NOT NULL DEFAULT '',
+    visual_objective        TEXT    NOT NULL DEFAULT '',
+    caption_cue_ids_json    TEXT    NOT NULL DEFAULT '[]',
+    primary_asset_id        INTEGER,
+    has_placeholder         INTEGER NOT NULL DEFAULT 0 CHECK (has_placeholder IN (0,1)),
+    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    UNIQUE (render_manifest_id, scene_index)
 );
 
-CREATE INDEX IF NOT EXISTS idx_rt_job
-    ON render_thumbnails (render_job_id, timestamp_ms);
+CREATE INDEX IF NOT EXISTS idx_rms_manifest
+    ON render_manifest_scenes (render_manifest_id);
+
+CREATE TABLE IF NOT EXISTS resolved_assets (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    planned_asset_id        INTEGER NOT NULL,
+    scene_id                INTEGER NOT NULL,
+    segment_id              INTEGER NOT NULL,
+    render_manifest_id      INTEGER
+                                REFERENCES render_manifests(id) ON DELETE SET NULL,
+    provider_identity       TEXT    NOT NULL DEFAULT '',
+    provider_asset_id       TEXT,
+    source_reference        TEXT,
+    local_path              TEXT,
+    mime_type               TEXT,
+    file_size_bytes         INTEGER,
+    sha256                  TEXT,
+    width_px                INTEGER,
+    height_px               INTEGER,
+    duration_s              REAL,
+    fps                     REAL,
+    license_status          TEXT    NOT NULL DEFAULT 'unverified'
+                                CHECK (license_status IN (
+                                    'unverified','verified','rejected','not_required')),
+    license_id              TEXT,
+    usage_rights            TEXT,
+    attribution_required    INTEGER NOT NULL DEFAULT 0 CHECK (attribution_required IN (0,1)),
+    attribution_text        TEXT,
+    commercial_use_verified INTEGER NOT NULL DEFAULT 0 CHECK (commercial_use_verified IN (0,1)),
+    verification_actor      TEXT,
+    verification_method     TEXT,
+    verified_at             TEXT,
+    warnings_json           TEXT    NOT NULL DEFAULT '[]',
+    superseded_at           TEXT,
+    superseded_by_id        INTEGER REFERENCES resolved_assets(id),
+    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ra_scene
+    ON resolved_assets (scene_id);
+
+CREATE INDEX IF NOT EXISTS idx_ra_manifest
+    ON resolved_assets (render_manifest_id);
 """
 
 

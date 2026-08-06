@@ -1,14 +1,10 @@
 """Tests for rendering engine constants."""
 
-import pytest
-
 from app.media.constants import (
     BACKEND_FFMPEG,
     COMPOSITOR_VERSION,
-    DEFAULT_AUDIO_BITRATE,
     DEFAULT_AUDIO_CODEC,
     DEFAULT_CRF,
-    DEFAULT_FFMPEG_PRESET,
     DEFAULT_FPS,
     DEFAULT_RESOLUTION,
     DEFAULT_VIDEO_CODEC,

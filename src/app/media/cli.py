@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -133,13 +132,28 @@ def render_start(
     audio_bitrate: Annotated[
         str, typer.Option("--audio-bitrate", help="Audio bitrate (e.g. '128k').")
     ] = "128k",
+    allow_placeholders: Annotated[
+        bool,
+        typer.Option(
+            "--allow-placeholders",
+            help="[DEV ONLY] Allow placeholder slides for unresolved assets.",
+        ),
+    ] = False,
 ) -> None:
     """Execute a render for RENDER_MANIFEST_ID using FFmpeg."""
     import tempfile
 
-    from app.media.backend import FFmpegRenderBackend, check_ffmpeg_available, FFMPEG_BACKEND_VERSION
+    from app.media.backend import (
+        FFMPEG_BACKEND_VERSION,
+        FFmpegRenderBackend,
+        check_ffmpeg_available,
+    )
     from app.media.compositor import SceneInputBuilder
-    from app.media.errors import RenderBackendError, FFmpegNotFoundError
+    from app.media.errors import (
+        FFmpegNotFoundError,
+        RenderBackendError,
+        UnresolvedRequiredAssetError,
+    )
     from app.media.repository import (
         create_render_job,
         get_render_manifest,
@@ -157,6 +171,14 @@ def render_start(
     manifest = get_render_manifest(conn, render_manifest_id)
     if manifest is None:
         typer.echo(f"Render manifest {render_manifest_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    if manifest.status != "draft":
+        typer.echo(
+            f"Render manifest {render_manifest_id} has status '{manifest.status}'"
+            " (expected 'draft').",
+            err=True,
+        )
         raise typer.Exit(1)
 
     # Resolve output path
@@ -229,12 +251,13 @@ def render_start(
                 crf=crf,
                 preset=preset,
                 audio_bitrate=audio_bitrate,
+                allow_placeholders=allow_placeholders,
             )
-        except (RenderBackendError, FFmpegNotFoundError) as exc:
+        except (RenderBackendError, FFmpegNotFoundError, UnresolvedRequiredAssetError) as exc:
             mark_render_job_failed(conn, job.id, error_message=str(exc))
             conn.commit()
             typer.echo(f"Render failed: {exc}", err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from None
 
     mark_render_job_completed(
         conn,
@@ -266,8 +289,12 @@ def render_validate(
     render_job_id: Annotated[int, typer.Argument(help="Render job ID.")],
 ) -> None:
     """Run FFprobe validation on render job RENDER_JOB_ID."""
-    from app.media.errors import RenderValidationError, FFprobeNotFoundError
-    from app.media.repository import get_render_job, get_render_manifest, mark_render_job_validated
+    from app.media.errors import FFprobeNotFoundError, RenderValidationError
+    from app.media.repository import (
+        get_render_job,
+        get_render_manifest,
+        mark_render_job_validated,
+    )
     from app.media.validator import FFprobeValidator, check_ffprobe_available
 
     if not check_ffprobe_available():
@@ -281,7 +308,10 @@ def render_validate(
         raise typer.Exit(1)
 
     if job.status != "completed":
-        typer.echo(f"Job {render_job_id} has status '{job.status}' (expected 'completed').", err=True)
+        typer.echo(
+            f"Job {render_job_id} has status '{job.status}' (expected 'completed').",
+            err=True,
+        )
         raise typer.Exit(1)
 
     if not job.output_path:
@@ -296,7 +326,7 @@ def render_validate(
         result = validator.validate(Path(job.output_path), expected_s)
     except (RenderValidationError, FFprobeNotFoundError) as exc:
         typer.echo(f"Validation failed: {exc}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     mark_render_job_validated(conn, render_job_id, validation_metadata=result.to_dict())
     conn.commit()
@@ -339,7 +369,7 @@ def render_approve(
         )
     except (IllegalRenderTransitionError, RenderManifestNotFoundError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     conn.commit()
     typer.echo(f"Render manifest {render_manifest_id} approved at {manifest.approved_at}.")
@@ -372,7 +402,7 @@ def render_reject(
 
     conn = _get_db()
     try:
-        manifest = reject_render_manifest(
+        reject_render_manifest(
             conn,
             render_manifest_id,
             actor=actor,
@@ -383,7 +413,7 @@ def render_reject(
         )
     except (IllegalRenderTransitionError, RenderManifestNotFoundError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
     conn.commit()
     typer.echo(f"Render manifest {render_manifest_id} rejected.")
@@ -481,84 +511,11 @@ def render_show(
     if events:
         typer.echo(f"\nReview events ({len(events)}):")
         for e in events:
-            typer.echo(f"  [{e.created_at}] {e.event_type}  actor={e.actor}  reason={e.reason_code}")
-
-
-# ---------------------------------------------------------------------------
-# ace render thumbnail <render_job_id>
-# ---------------------------------------------------------------------------
-
-
-@render_app.command("thumbnail")
-def render_thumbnail(
-    render_job_id: Annotated[int, typer.Argument(help="Render job ID.")],
-    count: Annotated[int, typer.Option("--count", help="Number of thumbnails to extract.")] = 5,
-) -> None:
-    """Extract thumbnail candidates from render job RENDER_JOB_ID."""
-    from app.media.repository import (
-        create_render_thumbnail,
-        get_render_job,
-        list_render_thumbnails,
-    )
-    from app.media.backend import check_ffmpeg_available
-    import subprocess as _sp
-
-    conn = _get_db()
-    job = get_render_job(conn, render_job_id)
-    if job is None:
-        typer.echo(f"Render job {render_job_id} not found.", err=True)
-        raise typer.Exit(1)
-    if job.status != "completed" or not job.output_path:
-        typer.echo("Job must be completed with a valid output path.", err=True)
-        raise typer.Exit(1)
-    if not check_ffmpeg_available():
-        typer.echo("ffmpeg not found on PATH.", err=True)
-        raise typer.Exit(1)
-
-    manifest = None
-    from app.media.repository import get_render_manifest
-    manifest = get_render_manifest(conn, job.render_manifest_id)
-    duration_ms = manifest.total_duration_ms if manifest else 0
-
-    # Extract evenly spaced frames
-    thumb_dir = Path(job.output_path).parent / f"thumbnails_{render_job_id}"
-    thumb_dir.mkdir(parents=True, exist_ok=True)
-
-    interval_ms = duration_ms // (count + 1) if duration_ms > 0 else 1000
-
-    existing = list_render_thumbnails(conn, render_job_id)
-    if existing:
-        typer.echo(f"Already have {len(existing)} thumbnails for job {render_job_id}:")
-        for t in existing:
-            typer.echo(f"  id={t.id}  t={t.timestamp_ms}ms  {t.file_path}  selected={t.selected}")
-        return
-
-    created = []
-    for i in range(count):
-        ts_ms = interval_ms * (i + 1)
-        ts_s = ts_ms / 1000.0
-        thumb_path = thumb_dir / f"thumb_{i:02d}_{ts_ms}ms.jpg"
-        cmd = [
-            "ffmpeg", "-y",
-            "-ss", f"{ts_s:.3f}",
-            "-i", job.output_path,
-            "-vframes", "1",
-            "-q:v", "2",
-            str(thumb_path),
-        ]
-        result = _sp.run(cmd, capture_output=True)
-        if result.returncode == 0 and thumb_path.exists():
-            thumb = create_render_thumbnail(
-                conn, render_job_id,
-                file_path=str(thumb_path),
-                timestamp_ms=ts_ms,
+            typer.echo(
+                f"  [{e.created_at}] {e.event_type}"
+                f"  actor={e.actor}  reason={e.reason_code}"
             )
-            created.append(thumb)
 
-    conn.commit()
-    typer.echo(f"Created {len(created)} thumbnails for job {render_job_id}:")
-    for t in created:
-        typer.echo(f"  id={t.id}  t={t.timestamp_ms}ms  {t.file_path}")
 
 
 # ---------------------------------------------------------------------------

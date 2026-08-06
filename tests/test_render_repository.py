@@ -11,7 +11,6 @@ from app.core.database import open_db
 from app.media.errors import (
     IllegalRenderJobTransitionError,
     IllegalRenderTransitionError,
-    RenderJobNotFoundError,
     RenderManifestAlreadyExistsError,
     RenderManifestNotFoundError,
 )
@@ -20,13 +19,11 @@ from app.media.models import (
     RenderManifest,
     RenderManifestDraft,
     RenderReviewEvent,
-    RenderThumbnail,
 )
 from app.media.repository import (
     approve_render_manifest,
     create_render_job,
     create_render_manifest,
-    create_render_thumbnail,
     get_approved_render,
     get_or_create_render_manifest,
     get_render_job,
@@ -34,14 +31,11 @@ from app.media.repository import (
     list_render_jobs,
     list_render_manifests,
     list_render_review_events,
-    list_render_thumbnails,
     mark_render_job_completed,
     mark_render_job_failed,
     mark_render_job_rendering,
     mark_render_job_validated,
-    record_render_review_event,
     reject_render_manifest,
-    select_thumbnail,
 )
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
@@ -412,8 +406,8 @@ class TestListRenderJobs:
     def test_returns_jobs_in_desc_order(self, db):
         seed = _seed(db)
         m = create_render_manifest(db, _make_draft(seed))
-        j1 = _make_job(db, m.id)
-        j2 = _make_job(db, m.id)
+        _make_job(db, m.id)
+        _make_job(db, m.id)
         jobs = list_render_jobs(db, m.id)
         assert len(jobs) == 2
 
@@ -455,48 +449,6 @@ class TestRecordRenderReviewEvent:
         assert e.expected_correction == "Re-render with better lighting"
         assert e.actor == "reviewer"
         assert e.notes == "Colours are off"
-
-
-# ── Thumbnails ────────────────────────────────────────────────────────────────
-
-
-class TestRenderThumbnails:
-    def _setup(self, db):
-        seed = _seed(db)
-        m = create_render_manifest(db, _make_draft(seed))
-        j = _make_job(db, m.id)
-        return j
-
-    def test_create_thumbnail(self, db):
-        job = self._setup(db)
-        t = create_render_thumbnail(
-            db, job.id,
-            file_path="/thumbs/t0.jpg",
-            timestamp_ms=5000,
-            scene_index=0,
-        )
-        assert isinstance(t, RenderThumbnail)
-        assert t.timestamp_ms == 5000
-        assert t.selected is False
-
-    def test_list_thumbnails(self, db):
-        job = self._setup(db)
-        create_render_thumbnail(db, job.id, file_path="/t0.jpg", timestamp_ms=1000)
-        create_render_thumbnail(db, job.id, file_path="/t1.jpg", timestamp_ms=2000)
-        thumbs = list_render_thumbnails(db, job.id)
-        assert len(thumbs) == 2
-        assert thumbs[0].timestamp_ms == 1000
-
-    def test_select_thumbnail(self, db):
-        job = self._setup(db)
-        t1 = create_render_thumbnail(db, job.id, file_path="/t0.jpg", timestamp_ms=1000)
-        t2 = create_render_thumbnail(db, job.id, file_path="/t1.jpg", timestamp_ms=2000)
-        sel = select_thumbnail(db, t2.id)
-        assert sel.selected is True
-        # t1 should be deselected
-        thumbs = list_render_thumbnails(db, job.id)
-        t1_fetched = next(t for t in thumbs if t.id == t1.id)
-        assert t1_fetched.selected is False
 
 
 # ── Approved render handoff ───────────────────────────────────────────────────

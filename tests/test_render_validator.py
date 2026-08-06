@@ -1,7 +1,6 @@
 """Tests for the FFprobe render validator."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +8,6 @@ import pytest
 from app.media.errors import FFprobeNotFoundError, RenderValidationError
 from app.media.validator import (
     FFprobeValidator,
-    ValidationResult,
     check_ffprobe_available,
     get_default_validator,
 )

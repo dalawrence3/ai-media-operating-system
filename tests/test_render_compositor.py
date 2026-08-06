@@ -1,12 +1,10 @@
 """Tests for the render compositor."""
 
-import pytest
+from __future__ import annotations
 
-from app.media.compositor import (
-    SceneInputBuilder,
-    _SceneInput,
+from app.media.compositor import (  # noqa: E402
     _pick_primary_asset,
-    _resolve_scene,
+    _SceneInput,
     build_render_manifest,
 )
 from app.media.models import RenderManifestDraft, ResolvedAsset
@@ -33,7 +31,9 @@ def _make_scene_input(**overrides) -> _SceneInput:
     return _SceneInput(**defaults)
 
 
-def _make_resolved_asset(priority: str = "required", local_path: str | None = None) -> ResolvedAsset:
+def _make_resolved_asset(
+    priority: str = "required", local_path: str | None = None
+) -> ResolvedAsset:
     return ResolvedAsset(
         asset_id=1,
         scene_id=1,

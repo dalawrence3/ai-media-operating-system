@@ -988,7 +988,8 @@ def test_v14_render_tables_exist(db: sqlite3.Connection) -> None:
     assert "render_manifests" in tables
     assert "render_jobs" in tables
     assert "render_review_events" in tables
-    assert "render_thumbnails" in tables
+    assert "render_manifest_scenes" in tables
+    assert "resolved_assets" in tables
 
 
 def test_v14_render_manifests_columns(db: sqlite3.Connection) -> None:
@@ -1029,9 +1030,24 @@ def test_v14_render_review_events_columns(db: sqlite3.Connection) -> None:
     assert expected.issubset(cols)
 
 
-def test_v14_render_thumbnails_columns(db: sqlite3.Connection) -> None:
-    cols = {r[1] for r in db.execute("PRAGMA table_info(render_thumbnails)").fetchall()}
-    expected = {"id", "render_job_id", "file_path", "timestamp_ms", "scene_index", "selected", "created_at"}
+def test_v14_render_manifest_scenes_columns(db: sqlite3.Connection) -> None:
+    cols = {r[1] for r in db.execute("PRAGMA table_info(render_manifest_scenes)").fetchall()}
+    expected = {
+        "id", "render_manifest_id", "scene_index", "scene_id", "segment_id",
+        "audio_path", "audio_sha256", "start_ms", "end_ms", "duration_ms",
+        "shot_type", "camera_movement", "visual_objective", "caption_cue_ids_json",
+        "primary_asset_id", "has_placeholder", "created_at",
+    }
+    assert expected.issubset(cols)
+
+
+def test_v14_resolved_assets_columns(db: sqlite3.Connection) -> None:
+    cols = {r[1] for r in db.execute("PRAGMA table_info(resolved_assets)").fetchall()}
+    expected = {
+        "id", "planned_asset_id", "scene_id", "segment_id", "render_manifest_id",
+        "local_path", "sha256", "license_status", "commercial_use_verified",
+        "warnings_json", "superseded_at", "superseded_by_id", "created_at", "updated_at",
+    }
     assert expected.issubset(cols)
 
 
@@ -1102,7 +1118,10 @@ def test_migration_v13_to_v14(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version, _set_version
 
     conn = open_db(tmp_path / "v13.db")
-    for tbl in ("render_thumbnails", "render_review_events", "render_jobs", "render_manifests"):
+    for tbl in (
+        "resolved_assets", "render_manifest_scenes",
+        "render_review_events", "render_jobs", "render_manifests",
+    ):
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     _set_version(conn, 13)
     conn.commit()
@@ -1120,5 +1139,6 @@ def test_migration_v13_to_v14(tmp_path: Path) -> None:
     assert "render_manifests" in tables
     assert "render_jobs" in tables
     assert "render_review_events" in tables
-    assert "render_thumbnails" in tables
+    assert "render_manifest_scenes" in tables
+    assert "resolved_assets" in tables
     conn2.close()

@@ -1,7 +1,5 @@
 """Tests for render manifest input hashing."""
 
-import pytest
-
 from app.media.hashing import RenderHashInput, compute_render_input_hash
 
 

@@ -4,15 +4,14 @@ import sqlite3
 from datetime import datetime
 
 import pytest
+from pydantic import ValidationError
 
 from app.media.models import (
     ApprovedRender,
     RenderJob,
     RenderManifest,
     RenderManifestDraft,
-    RenderReviewEvent,
     RenderSceneDraft,
-    RenderThumbnail,
     ResolvedAsset,
 )
 
@@ -105,7 +104,7 @@ class TestRenderManifest:
     def test_is_frozen(self):
         row = _make_manifest_row()
         m = RenderManifest.from_row(row)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             m.status = "approved"  # type: ignore
 
     def test_timestamps_parsed(self):
@@ -145,7 +144,7 @@ class TestRenderJob:
     def test_is_frozen(self):
         row = _make_job_row()
         j = RenderJob.from_row(row)
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             j.status = "completed"  # type: ignore
 
 

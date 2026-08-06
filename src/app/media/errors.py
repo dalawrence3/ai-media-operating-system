@@ -49,3 +49,7 @@ class FFmpegNotFoundError(RenderEngineError):
 
 class FFprobeNotFoundError(RenderEngineError):
     """ffprobe binary not found on PATH."""
+
+
+class UnresolvedRequiredAssetError(RenderEngineError):
+    """A required visual asset has no resolved local file path."""

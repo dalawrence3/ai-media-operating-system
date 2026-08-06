@@ -11,15 +11,15 @@ import sqlite3
 from datetime import UTC, datetime
 
 from app.media.constants import (
+    RENDER_JOB_STATUS_COMPLETED,
+    RENDER_JOB_STATUS_FAILED,
+    RENDER_JOB_STATUS_RENDERING,
+    RENDER_JOB_VALID_TRANSITIONS,
     RENDER_REVIEW_EVENT_TYPES,
     RENDER_STATUS_APPROVED,
     RENDER_STATUS_REJECTED,
     RENDER_STATUS_SUPERSEDED,
-    RENDER_JOB_STATUS_COMPLETED,
-    RENDER_JOB_STATUS_FAILED,
-    RENDER_JOB_STATUS_RENDERING,
     RENDER_VALID_TRANSITIONS,
-    RENDER_JOB_VALID_TRANSITIONS,
 )
 from app.media.errors import (
     IllegalRenderJobTransitionError,
@@ -34,7 +34,6 @@ from app.media.models import (
     RenderManifest,
     RenderManifestDraft,
     RenderReviewEvent,
-    RenderThumbnail,
 )
 
 
@@ -420,6 +419,10 @@ def record_render_review_event(
     expected_correction: str | None = None,
 ) -> RenderReviewEvent:
     assert event_type in RENDER_REVIEW_EVENT_TYPES, f"Unknown event_type: {event_type!r}"
+    if reason_code == "other" and not notes:
+        raise ValueError("reason_code='other' requires notes to be provided.")
+    if severity is not None and not (1 <= severity <= 5):
+        raise ValueError(f"severity must be between 1 and 5, got {severity!r}.")
 
     manifest = _require_manifest(conn, manifest_id)
     now = _now()
@@ -466,66 +469,6 @@ def list_render_review_events(
         (manifest_id,),
     ).fetchall()
     return [RenderReviewEvent.from_row(r) for r in rows]
-
-
-# ---------------------------------------------------------------------------
-# Thumbnails
-# ---------------------------------------------------------------------------
-
-
-def create_render_thumbnail(
-    conn: sqlite3.Connection,
-    render_job_id: int,
-    *,
-    file_path: str,
-    timestamp_ms: int,
-    scene_index: int | None = None,
-) -> RenderThumbnail:
-    row_id = conn.execute(
-        """
-        INSERT INTO render_thumbnails (render_job_id, file_path, timestamp_ms, scene_index, created_at)
-        VALUES (?,?,?,?,?)
-        """,
-        (render_job_id, file_path, timestamp_ms, scene_index, _now()),
-    ).lastrowid
-    row = conn.execute(
-        "SELECT * FROM render_thumbnails WHERE id = ?", (row_id,)
-    ).fetchone()
-    assert row is not None
-    return RenderThumbnail.from_row(row)
-
-
-def select_thumbnail(
-    conn: sqlite3.Connection, thumbnail_id: int
-) -> RenderThumbnail:
-    now = _now()
-    # Deselect any currently selected thumbnail for the same job
-    row = conn.execute(
-        "SELECT render_job_id FROM render_thumbnails WHERE id = ?", (thumbnail_id,)
-    ).fetchone()
-    if row:
-        conn.execute(
-            "UPDATE render_thumbnails SET selected=0 WHERE render_job_id=?",
-            (row[0],),
-        )
-    conn.execute(
-        "UPDATE render_thumbnails SET selected=1 WHERE id=?", (thumbnail_id,)
-    )
-    updated = conn.execute(
-        "SELECT * FROM render_thumbnails WHERE id = ?", (thumbnail_id,)
-    ).fetchone()
-    assert updated is not None
-    return RenderThumbnail.from_row(updated)
-
-
-def list_render_thumbnails(
-    conn: sqlite3.Connection, render_job_id: int
-) -> list[RenderThumbnail]:
-    rows = conn.execute(
-        "SELECT * FROM render_thumbnails WHERE render_job_id = ? ORDER BY timestamp_ms",
-        (render_job_id,),
-    ).fetchall()
-    return [RenderThumbnail.from_row(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

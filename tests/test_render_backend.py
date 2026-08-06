@@ -1,8 +1,7 @@
 """Tests for the FFmpeg render backend."""
 
-import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,7 +11,7 @@ from app.media.backend import (
     get_default_backend,
 )
 from app.media.constants import BACKEND_FFMPEG, FFMPEG_BACKEND_VERSION
-from app.media.errors import FFmpegNotFoundError, RenderBackendError
+from app.media.errors import FFmpegNotFoundError, RenderBackendError, UnresolvedRequiredAssetError
 from app.media.models import RenderManifestDraft, RenderSceneDraft
 
 
@@ -70,7 +69,15 @@ class TestFFmpegRenderBackend:
         b = FFmpegRenderBackend(ffmpeg_bin="no_such_binary_xyz")
         draft = _make_draft()
         with pytest.raises(FFmpegNotFoundError):
-            b.render(draft, tmp_path / "out.mp4", tmp_path / "tmp")
+            b.render(draft, tmp_path / "out.mp4", tmp_path / "tmp", allow_placeholders=True)
+
+    def test_raises_unresolved_required_asset_without_flag(self, tmp_path):
+        """Production default (allow_placeholders=False) blocks on missing assets."""
+        with patch("app.media.backend.shutil.which", return_value="/usr/bin/ffmpeg"):
+            b = FFmpegRenderBackend()
+            draft = _make_draft()  # primary_asset=None
+            with pytest.raises(UnresolvedRequiredAssetError):
+                b.render(draft, tmp_path / "out.mp4", tmp_path / "tmp")
 
     @patch("app.media.backend.shutil.which", return_value="/usr/bin/ffmpeg")
     @patch("app.media.backend.subprocess.run")
@@ -86,7 +93,7 @@ class TestFFmpegRenderBackend:
         draft = _make_draft()
 
         with patch.object(b, "_sha256", return_value="deadbeef"):
-            result = b.render(draft, output_path, tmp_path / "tmp")
+            result = b.render(draft, output_path, tmp_path / "tmp", allow_placeholders=True)
 
         assert mock_run.called
         assert result.output_sha256 == "deadbeef"
@@ -101,7 +108,7 @@ class TestFFmpegRenderBackend:
         draft = _make_draft()
 
         with pytest.raises(RenderBackendError, match="FFmpeg command failed"):
-            b.render(draft, tmp_path / "out.mp4", tmp_path / "tmp")
+            b.render(draft, tmp_path / "out.mp4", tmp_path / "tmp", allow_placeholders=True)
 
     @patch("app.media.backend.shutil.which", return_value="/usr/bin/ffmpeg")
     @patch("app.media.backend.subprocess.run")
@@ -115,7 +122,7 @@ class TestFFmpegRenderBackend:
         assert draft.scenes[0].primary_asset is None
 
         with patch.object(b, "_sha256", return_value="xx"):
-            b.render(draft, output_path, tmp_path / "tmp")
+            b.render(draft, output_path, tmp_path / "tmp", allow_placeholders=True)
 
         # Check that lavfi was used (placeholder clip)
         calls = [str(c) for c in mock_run.call_args_list]
