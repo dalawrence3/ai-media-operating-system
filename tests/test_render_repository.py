@@ -9,6 +9,7 @@ import pytest
 
 from app.core.database import open_db
 from app.media.errors import (
+    AssetLicenseRejectedError,
     IllegalRenderJobTransitionError,
     IllegalRenderTransitionError,
     RenderManifestAlreadyExistsError,
@@ -18,19 +19,28 @@ from app.media.models import (
     RenderJob,
     RenderManifest,
     RenderManifestDraft,
+    RenderManifestScene,
     RenderReviewEvent,
+    RenderSceneDraft,
+    ResolvedAsset,
+    ResolvedAssetRecord,
 )
 from app.media.repository import (
     approve_render_manifest,
     create_render_job,
     create_render_manifest,
+    create_render_manifest_scene,
+    create_resolved_asset,
     get_approved_render,
     get_or_create_render_manifest,
     get_render_job,
     get_render_manifest,
+    get_resolved_asset,
     list_render_jobs,
+    list_render_manifest_scenes,
     list_render_manifests,
     list_render_review_events,
+    list_resolved_assets_for_manifest,
     mark_render_job_completed,
     mark_render_job_failed,
     mark_render_job_rendering,
@@ -452,6 +462,263 @@ class TestRecordRenderReviewEvent:
 
 
 # ── Approved render handoff ───────────────────────────────────────────────────
+
+
+def _make_scene_draft(
+    scene_index: int = 0,
+    scene_id: int = 10,
+    segment_id: int = 20,
+    primary_asset: ResolvedAsset | None = None,
+) -> RenderSceneDraft:
+    return RenderSceneDraft(
+        scene_index=scene_index,
+        scene_id=scene_id,
+        segment_id=segment_id,
+        narration_asset_id=None,
+        audio_path=None,
+        audio_sha256=None,
+        start_ms=scene_index * 3000,
+        end_ms=(scene_index + 1) * 3000,
+        duration_ms=3000,
+        shot_type="medium",
+        camera_movement="static",
+        visual_objective=f"Scene {scene_index} objective",
+        caption_cue_ids=[1, 2],
+        primary_asset=primary_asset,
+    )
+
+
+def _make_resolved_asset(
+    asset_id: int = 1,
+    scene_id: int = 10,
+    segment_id: int = 20,
+    local_path: str | None = "/tmp/img.jpg",
+    local_sha256: str | None = "abc123",
+    license_status: str = "verified",
+    commercial_safe: bool = True,
+) -> ResolvedAsset:
+    return ResolvedAsset(
+        asset_id=asset_id,
+        scene_id=scene_id,
+        segment_id=segment_id,
+        asset_index=0,
+        category="primary",
+        priority="required",
+        local_path=local_path,
+        local_sha256=local_sha256,
+        source_url="https://example.com/img.jpg",
+        license_status=license_status,
+        commercial_safe=commercial_safe,
+    )
+
+
+# ── RenderManifestScene tests ─────────────────────────────────────────────────
+
+
+class TestRenderManifestScenes:
+    def test_scenes_persisted_on_manifest_create(self, db):
+        seed = _seed(db)
+        scene0 = _make_scene_draft(scene_index=0, scene_id=10, segment_id=20)
+        scene1 = _make_scene_draft(scene_index=1, scene_id=11, segment_id=21)
+        draft = _make_draft(
+            seed, scenes=[scene0, scene1], total_scene_count=2, total_duration_ms=6000
+        )
+        m = create_render_manifest(db, draft)
+
+        rows = list_render_manifest_scenes(db, m.id)
+        assert len(rows) == 2
+        assert all(isinstance(r, RenderManifestScene) for r in rows)
+
+    def test_scenes_ordered_by_scene_index(self, db):
+        seed = _seed(db)
+        scene0 = _make_scene_draft(scene_index=0, scene_id=10, segment_id=20)
+        scene1 = _make_scene_draft(scene_index=1, scene_id=11, segment_id=21)
+        scene2 = _make_scene_draft(scene_index=2, scene_id=12, segment_id=22)
+        draft = _make_draft(
+            seed, scenes=[scene2, scene0, scene1],
+            total_scene_count=3, total_duration_ms=9000,
+        )
+        m = create_render_manifest(db, draft)
+
+        rows = list_render_manifest_scenes(db, m.id)
+        assert [r.scene_index for r in rows] == [0, 1, 2]
+
+    def test_scene_fields_persisted(self, db):
+        seed = _seed(db)
+        scene = _make_scene_draft(scene_index=0, scene_id=77, segment_id=99)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        m = create_render_manifest(db, draft)
+
+        rows = list_render_manifest_scenes(db, m.id)
+        r = rows[0]
+        assert r.scene_id == 77
+        assert r.segment_id == 99
+        assert r.start_ms == 0
+        assert r.end_ms == 3000
+        assert r.duration_ms == 3000
+        assert r.shot_type == "medium"
+        assert r.camera_movement == "static"
+        assert r.caption_cue_ids_json == "[1, 2]"
+
+    def test_has_placeholder_true_when_no_local_path(self, db):
+        seed = _seed(db)
+        scene = _make_scene_draft(primary_asset=None)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        m = create_render_manifest(db, draft)
+
+        rows = list_render_manifest_scenes(db, m.id)
+        assert rows[0].has_placeholder is True
+
+    def test_has_placeholder_false_when_asset_resolved(self, db):
+        seed = _seed(db)
+        asset = _make_resolved_asset(local_path="/tmp/img.jpg")
+        scene = _make_scene_draft(primary_asset=asset)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        m = create_render_manifest(db, draft)
+
+        rows = list_render_manifest_scenes(db, m.id)
+        assert rows[0].has_placeholder is False
+
+    def test_primary_asset_id_links_to_resolved_asset(self, db):
+        seed = _seed(db)
+        asset = _make_resolved_asset(local_path="/tmp/img.jpg")
+        scene = _make_scene_draft(primary_asset=asset)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        m = create_render_manifest(db, draft)
+
+        scene_rows = list_render_manifest_scenes(db, m.id)
+        asset_rows = list_resolved_assets_for_manifest(db, m.id)
+        assert scene_rows[0].primary_asset_id == asset_rows[0].id
+
+    def test_create_render_manifest_scene_standalone(self, db):
+        seed = _seed(db)
+        draft = _make_draft(seed)
+        m = create_render_manifest(db, draft)
+
+        scene = _make_scene_draft(scene_index=5, scene_id=55, segment_id=66)
+        row = create_render_manifest_scene(db, m.id, scene)
+        assert isinstance(row, RenderManifestScene)
+        assert row.scene_index == 5
+        assert row.render_manifest_id == m.id
+
+
+# ── ResolvedAsset tests ───────────────────────────────────────────────────────
+
+
+class TestResolvedAssets:
+    def test_asset_persisted_on_manifest_create(self, db):
+        seed = _seed(db)
+        asset = _make_resolved_asset(license_status="verified")
+        scene = _make_scene_draft(primary_asset=asset)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        m = create_render_manifest(db, draft)
+
+        rows = list_resolved_assets_for_manifest(db, m.id)
+        assert len(rows) == 1
+        assert isinstance(rows[0], ResolvedAssetRecord)
+
+    def test_asset_fields_persisted(self, db):
+        seed = _seed(db)
+        asset = _make_resolved_asset(
+            asset_id=42, scene_id=10, segment_id=20,
+            local_path="/tmp/clip.jpg", local_sha256="deadbeef",
+            license_status="verified", commercial_safe=True,
+        )
+        scene = _make_scene_draft(primary_asset=asset)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        m = create_render_manifest(db, draft)
+
+        rows = list_resolved_assets_for_manifest(db, m.id)
+        r = rows[0]
+        assert r.planned_asset_id == 42
+        assert r.scene_id == 10
+        assert r.segment_id == 20
+        assert r.local_path == "/tmp/clip.jpg"
+        assert r.sha256 == "deadbeef"
+        assert r.license_status == "verified"
+        assert r.commercial_use_verified is True
+        assert r.render_manifest_id == m.id
+
+    def test_rejected_license_blocks_manifest_create(self, db):
+        seed = _seed(db)
+        asset = _make_resolved_asset(license_status="rejected")
+        scene = _make_scene_draft(primary_asset=asset)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+
+        with pytest.raises(AssetLicenseRejectedError):
+            create_render_manifest(db, draft)
+
+    def test_rejected_license_leaves_no_manifest(self, db):
+        seed = _seed(db)
+        asset = _make_resolved_asset(license_status="rejected")
+        scene = _make_scene_draft(primary_asset=asset)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+
+        try:
+            create_render_manifest(db, draft)
+        except AssetLicenseRejectedError:
+            pass
+
+        manifests = list_render_manifests(db)
+        assert len(manifests) == 0
+
+    def test_unverified_license_allowed(self, db):
+        seed = _seed(db)
+        asset = _make_resolved_asset(license_status="unverified")
+        scene = _make_scene_draft(primary_asset=asset)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        m = create_render_manifest(db, draft)
+
+        rows = list_resolved_assets_for_manifest(db, m.id)
+        assert rows[0].license_status == "unverified"
+
+    def test_nonstandard_license_normalises_to_unverified(self, db):
+        seed = _seed(db)
+        asset = _make_resolved_asset(license_status="unknown_custom_status")
+        scene = _make_scene_draft(primary_asset=asset)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        m = create_render_manifest(db, draft)
+
+        rows = list_resolved_assets_for_manifest(db, m.id)
+        assert rows[0].license_status == "unverified"
+
+    def test_no_asset_produces_no_resolved_asset_row(self, db):
+        seed = _seed(db)
+        scene = _make_scene_draft(primary_asset=None)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        m = create_render_manifest(db, draft)
+
+        rows = list_resolved_assets_for_manifest(db, m.id)
+        assert len(rows) == 0
+
+    def test_create_resolved_asset_standalone(self, db):
+        seed = _seed(db)
+        draft = _make_draft(seed)
+        m = create_render_manifest(db, draft)
+
+        asset = _make_resolved_asset(asset_id=7, scene_id=10, segment_id=20)
+        rec = create_resolved_asset(db, asset, render_manifest_id=m.id)
+        assert isinstance(rec, ResolvedAssetRecord)
+        assert rec.id >= 1
+        assert rec.planned_asset_id == 7
+
+    def test_get_resolved_asset(self, db):
+        seed = _seed(db)
+        draft = _make_draft(seed)
+        m = create_render_manifest(db, draft)
+
+        asset = _make_resolved_asset()
+        rec = create_resolved_asset(db, asset, render_manifest_id=m.id)
+        fetched = get_resolved_asset(db, rec.id)
+        assert fetched is not None
+        assert fetched.id == rec.id
+
+    def test_get_resolved_asset_returns_none_for_missing(self, db):
+        _seed(db)
+        assert get_resolved_asset(db, 9999) is None
+
+
+# ── TestGetApprovedRender (original class, kept here) ─────────────────────────
 
 
 class TestGetApprovedRender:

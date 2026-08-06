@@ -30,7 +30,12 @@ from app.media.constants import (
     FFMPEG_BACKEND_VERSION,
     PLACEHOLDER_BG_COLOR,
 )
-from app.media.errors import FFmpegNotFoundError, RenderBackendError, UnresolvedRequiredAssetError
+from app.media.errors import (
+    AssetHashMismatchError,
+    FFmpegNotFoundError,
+    RenderBackendError,
+    UnresolvedRequiredAssetError,
+)
 from app.media.models import RenderJobResult, RenderManifestDraft
 
 
@@ -155,8 +160,18 @@ class FFmpegRenderBackend:
                 )
 
             if not needs_placeholder:
+                asset_path = Path(scene.primary_asset.local_path)  # type: ignore[arg-type]
+                expected_sha = scene.primary_asset.local_sha256  # type: ignore[union-attr]
+                if expected_sha is not None:
+                    actual_sha = self._sha256(asset_path)
+                    if actual_sha != expected_sha:
+                        raise AssetHashMismatchError(
+                            f"Scene {scene.scene_index} asset hash mismatch: "
+                            f"expected {expected_sha!r}, got {actual_sha!r}. "
+                            "Asset may have been modified or corrupted."
+                        )
                 cmd = self._image_clip_cmd(
-                    asset_path=Path(scene.primary_asset.local_path),
+                    asset_path=asset_path,
                     output=clip_path,
                     duration_s=duration_s,
                     width=draft.width,

@@ -53,3 +53,11 @@ class FFprobeNotFoundError(RenderEngineError):
 
 class UnresolvedRequiredAssetError(RenderEngineError):
     """A required visual asset has no resolved local file path."""
+
+
+class AssetLicenseRejectedError(RenderEngineError):
+    """An asset has a rejected license; render manifest cannot be created."""
+
+
+class AssetHashMismatchError(RenderEngineError):
+    """Asset file SHA-256 does not match the stored expected hash."""

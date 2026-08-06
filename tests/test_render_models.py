@@ -175,6 +175,7 @@ class TestResolvedAsset:
         a = ResolvedAsset(
             asset_id=1,
             scene_id=10,
+            segment_id=20,
             asset_index=0,
             category="b_roll",
             priority="required",

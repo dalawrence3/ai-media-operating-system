@@ -37,6 +37,7 @@ def _make_resolved_asset(
     return ResolvedAsset(
         asset_id=1,
         scene_id=1,
+        segment_id=10,
         asset_index=0,
         category="b_roll",
         priority=priority,
@@ -64,7 +65,7 @@ class TestPickPrimaryAsset:
     def test_prefers_required_over_preferred(self):
         preferred = _make_resolved_asset("preferred", "/tmp/p.jpg")
         required = ResolvedAsset(
-            asset_id=2, scene_id=1, asset_index=1,
+            asset_id=2, scene_id=1, segment_id=10, asset_index=1,
             category="b_roll", priority="required",
             local_path="/tmp/r.jpg", local_sha256="sha",
             source_url=None, license_status="royalty_free", commercial_safe=True,
@@ -75,7 +76,7 @@ class TestPickPrimaryAsset:
     def test_skips_unresolved_picks_lower_priority_resolved(self):
         unresolved_required = _make_resolved_asset("required", None)
         resolved_optional = ResolvedAsset(
-            asset_id=3, scene_id=1, asset_index=2,
+            asset_id=3, scene_id=1, segment_id=10, asset_index=2,
             category="b_roll", priority="optional",
             local_path="/tmp/opt.jpg", local_sha256="sha",
             source_url=None, license_status="royalty_free", commercial_safe=True,

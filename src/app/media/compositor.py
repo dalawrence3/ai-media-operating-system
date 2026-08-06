@@ -201,6 +201,7 @@ class SceneInputBuilder:
                 ResolvedAsset(
                     asset_id=a.id,
                     scene_id=a.scene_id,
+                    segment_id=scene.segment_id,
                     asset_index=a.asset_index,
                     category=a.category,
                     priority=a.priority,

@@ -11,8 +11,13 @@ from app.media.backend import (
     get_default_backend,
 )
 from app.media.constants import BACKEND_FFMPEG, FFMPEG_BACKEND_VERSION
-from app.media.errors import FFmpegNotFoundError, RenderBackendError, UnresolvedRequiredAssetError
-from app.media.models import RenderManifestDraft, RenderSceneDraft
+from app.media.errors import (
+    AssetHashMismatchError,
+    FFmpegNotFoundError,
+    RenderBackendError,
+    UnresolvedRequiredAssetError,
+)
+from app.media.models import RenderManifestDraft, RenderSceneDraft, ResolvedAsset
 
 
 def _make_draft(scenes: list[RenderSceneDraft] | None = None) -> RenderManifestDraft:
@@ -160,6 +165,100 @@ class TestFFmpegRenderBackend:
         assert "ffmpeg" in cmd[0]
         assert "-f" in cmd
         assert "lavfi" in cmd
+
+
+    @patch("app.media.backend.shutil.which", return_value="/usr/bin/ffmpeg")
+    @patch("app.media.backend.subprocess.run")
+    def test_raises_asset_hash_mismatch(self, mock_run, mock_which, tmp_path):
+        """Render raises AssetHashMismatchError when stored sha256 ≠ actual file hash."""
+        asset_file = tmp_path / "img.jpg"
+        asset_file.write_bytes(b"real image bytes")
+
+        asset = ResolvedAsset(
+            asset_id=1,
+            scene_id=1,
+            segment_id=10,
+            asset_index=0,
+            category="primary",
+            priority="required",
+            local_path=str(asset_file),
+            local_sha256="0000000000000000000000000000000000000000000000000000000000000000",
+            source_url=None,
+            license_status="verified",
+            commercial_safe=True,
+        )
+        scene = RenderSceneDraft(
+            scene_index=0,
+            scene_id=1,
+            segment_id=10,
+            narration_asset_id=None,
+            audio_path=None,
+            audio_sha256=None,
+            start_ms=0,
+            end_ms=3000,
+            duration_ms=3000,
+            shot_type="medium",
+            camera_movement="static",
+            visual_objective="Hash test",
+            caption_cue_ids=[],
+            primary_asset=asset,
+        )
+        draft = _make_draft([scene])
+
+        b = FFmpegRenderBackend()
+        with pytest.raises(AssetHashMismatchError):
+            b.render(draft, tmp_path / "out.mp4", tmp_path / "tmp", allow_placeholders=False)
+
+    @patch("app.media.backend.shutil.which", return_value="/usr/bin/ffmpeg")
+    @patch("app.media.backend.subprocess.run")
+    def test_asset_hash_match_proceeds(self, mock_run, mock_which, tmp_path):
+        """Render succeeds when stored sha256 matches actual file hash."""
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        output_path = tmp_path / "out.mp4"
+        output_path.write_bytes(b"x" * 64)
+
+        asset_file = tmp_path / "img.jpg"
+        asset_file.write_bytes(b"real image bytes")
+
+        import hashlib
+        expected_sha = hashlib.sha256(b"real image bytes").hexdigest()
+
+        asset = ResolvedAsset(
+            asset_id=1,
+            scene_id=1,
+            segment_id=10,
+            asset_index=0,
+            category="primary",
+            priority="required",
+            local_path=str(asset_file),
+            local_sha256=expected_sha,
+            source_url=None,
+            license_status="verified",
+            commercial_safe=True,
+        )
+        scene = RenderSceneDraft(
+            scene_index=0,
+            scene_id=1,
+            segment_id=10,
+            narration_asset_id=None,
+            audio_path=None,
+            audio_sha256=None,
+            start_ms=0,
+            end_ms=3000,
+            duration_ms=3000,
+            shot_type="medium",
+            camera_movement="static",
+            visual_objective="Hash test match",
+            caption_cue_ids=[],
+            primary_asset=asset,
+        )
+        draft = _make_draft([scene])
+
+        b = FFmpegRenderBackend()
+        with patch.object(b, "_sha256", side_effect=[expected_sha, "output_sha"]):
+            result = b.render(draft, output_path, tmp_path / "tmp", allow_placeholders=False)
+
+        assert result.output_sha256 == "output_sha"
 
 
 class TestCheckFFmpegAvailable:

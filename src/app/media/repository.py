@@ -22,6 +22,7 @@ from app.media.constants import (
     RENDER_VALID_TRANSITIONS,
 )
 from app.media.errors import (
+    AssetLicenseRejectedError,
     IllegalRenderJobTransitionError,
     IllegalRenderTransitionError,
     RenderJobNotFoundError,
@@ -33,12 +34,23 @@ from app.media.models import (
     RenderJob,
     RenderManifest,
     RenderManifestDraft,
+    RenderManifestScene,
     RenderReviewEvent,
+    RenderSceneDraft,
+    ResolvedAsset,
+    ResolvedAssetRecord,
 )
 
 
 def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+_VALID_LICENSE_STATUSES = frozenset({"unverified", "verified", "rejected", "not_required"})
+
+
+def _normalize_license(status: str) -> str:
+    return status if status in _VALID_LICENSE_STATUSES else "unverified"
 
 
 # ---------------------------------------------------------------------------
@@ -50,7 +62,21 @@ def create_render_manifest(
     conn: sqlite3.Connection,
     draft: RenderManifestDraft,
 ) -> RenderManifest:
-    """Insert a new render manifest. Raises RenderManifestAlreadyExistsError on hash clash."""
+    """Insert a new render manifest. Raises RenderManifestAlreadyExistsError on hash clash.
+
+    Also validates asset licenses and persists render_manifest_scenes and resolved_assets.
+    """
+    # Pre-flight: reject manifests containing a license-rejected primary asset.
+    for scene in draft.scenes:
+        if scene.primary_asset is not None:
+            norm = _normalize_license(scene.primary_asset.license_status)
+            if norm == "rejected":
+                raise AssetLicenseRejectedError(
+                    f"Scene {scene.scene_index} primary asset has rejected license "
+                    f"(status={scene.primary_asset.license_status!r}). "
+                    "Resolve the license before creating a render manifest."
+                )
+
     try:
         row_id = conn.execute(
             """
@@ -91,6 +117,16 @@ def create_render_manifest(
                 f"Render manifest already exists for input_hash={draft.input_hash!r}"
             ) from exc
         raise
+
+    # Persist resolved assets and render scenes.
+    for scene in draft.scenes:
+        asset_db_id: int | None = None
+        if scene.primary_asset is not None:
+            asset_rec = create_resolved_asset(
+                conn, scene.primary_asset, render_manifest_id=row_id
+            )
+            asset_db_id = asset_rec.id
+        create_render_manifest_scene(conn, row_id, scene, primary_asset_id=asset_db_id)
 
     manifest = get_render_manifest(conn, row_id)  # type: ignore[arg-type]
     assert manifest is not None
@@ -533,6 +569,128 @@ def get_approved_render(
         audio_codec=d["audio_codec"],
         approved_at=datetime.fromisoformat(d["approved_at"]),
     )
+
+
+# ---------------------------------------------------------------------------
+# RenderManifestScene — create / read
+# ---------------------------------------------------------------------------
+
+
+def create_render_manifest_scene(
+    conn: sqlite3.Connection,
+    render_manifest_id: int,
+    scene: RenderSceneDraft,
+    *,
+    primary_asset_id: int | None = None,
+) -> RenderManifestScene:
+    has_placeholder = scene.primary_asset is None or scene.primary_asset.local_path is None
+    row_id = conn.execute(
+        """
+        INSERT INTO render_manifest_scenes (
+            render_manifest_id, scene_index, scene_id, segment_id,
+            narration_asset_id, audio_path, audio_sha256,
+            start_ms, end_ms, duration_ms,
+            shot_type, camera_movement, visual_objective,
+            caption_cue_ids_json, primary_asset_id, has_placeholder, created_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            render_manifest_id,
+            scene.scene_index,
+            scene.scene_id,
+            scene.segment_id,
+            scene.narration_asset_id,
+            scene.audio_path,
+            scene.audio_sha256,
+            scene.start_ms,
+            scene.end_ms,
+            scene.duration_ms,
+            scene.shot_type,
+            scene.camera_movement,
+            scene.visual_objective,
+            json.dumps(scene.caption_cue_ids),
+            primary_asset_id,
+            1 if has_placeholder else 0,
+            _now(),
+        ),
+    ).lastrowid
+    row = conn.execute(
+        "SELECT * FROM render_manifest_scenes WHERE id = ?", (row_id,)
+    ).fetchone()
+    assert row is not None
+    return RenderManifestScene.from_row(row)
+
+
+def list_render_manifest_scenes(
+    conn: sqlite3.Connection, render_manifest_id: int
+) -> list[RenderManifestScene]:
+    rows = conn.execute(
+        "SELECT * FROM render_manifest_scenes"
+        " WHERE render_manifest_id = ? ORDER BY scene_index",
+        (render_manifest_id,),
+    ).fetchall()
+    return [RenderManifestScene.from_row(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# ResolvedAsset — create / read
+# ---------------------------------------------------------------------------
+
+
+def create_resolved_asset(
+    conn: sqlite3.Connection,
+    asset: ResolvedAsset,
+    *,
+    render_manifest_id: int | None = None,
+) -> ResolvedAssetRecord:
+    now = _now()
+    row_id = conn.execute(
+        """
+        INSERT INTO resolved_assets (
+            planned_asset_id, scene_id, segment_id, render_manifest_id,
+            local_path, sha256, license_status, commercial_use_verified,
+            warnings_json, created_at, updated_at
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            asset.asset_id,
+            asset.scene_id,
+            asset.segment_id,
+            render_manifest_id,
+            asset.local_path,
+            asset.local_sha256,
+            _normalize_license(asset.license_status),
+            1 if asset.commercial_safe else 0,
+            "[]",
+            now,
+            now,
+        ),
+    ).lastrowid
+    row = conn.execute(
+        "SELECT * FROM resolved_assets WHERE id = ?", (row_id,)
+    ).fetchone()
+    assert row is not None
+    return ResolvedAssetRecord.from_row(row)
+
+
+def get_resolved_asset(
+    conn: sqlite3.Connection, asset_id: int
+) -> ResolvedAssetRecord | None:
+    row = conn.execute(
+        "SELECT * FROM resolved_assets WHERE id = ?", (asset_id,)
+    ).fetchone()
+    return ResolvedAssetRecord.from_row(row) if row else None
+
+
+def list_resolved_assets_for_manifest(
+    conn: sqlite3.Connection, render_manifest_id: int
+) -> list[ResolvedAssetRecord]:
+    rows = conn.execute(
+        "SELECT * FROM resolved_assets"
+        " WHERE render_manifest_id = ? ORDER BY scene_id, id",
+        (render_manifest_id,),
+    ).fetchall()
+    return [ResolvedAssetRecord.from_row(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

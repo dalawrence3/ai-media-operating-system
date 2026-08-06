@@ -21,6 +21,7 @@ class ResolvedAsset:
 
     asset_id: int
     scene_id: int
+    segment_id: int
     asset_index: int
     category: str
     priority: str
@@ -198,6 +199,77 @@ class RenderReviewEvent(BaseModel):
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> RenderReviewEvent:
         return cls(**_row_to_dict(row))
+
+
+class RenderManifestScene(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    render_manifest_id: int
+    scene_index: int
+    scene_id: int
+    segment_id: int
+    narration_asset_id: int | None
+    audio_path: str | None
+    audio_sha256: str | None
+    start_ms: int
+    end_ms: int
+    duration_ms: int
+    shot_type: str
+    camera_movement: str
+    visual_objective: str
+    caption_cue_ids_json: str
+    primary_asset_id: int | None
+    has_placeholder: bool
+    created_at: datetime
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> RenderManifestScene:
+        d = _row_to_dict(row)
+        d["has_placeholder"] = bool(d["has_placeholder"])
+        return cls(**d)
+
+
+class ResolvedAssetRecord(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: int
+    planned_asset_id: int
+    scene_id: int
+    segment_id: int
+    render_manifest_id: int | None
+    provider_identity: str
+    provider_asset_id: str | None
+    source_reference: str | None
+    local_path: str | None
+    mime_type: str | None
+    file_size_bytes: int | None
+    sha256: str | None
+    width_px: int | None
+    height_px: int | None
+    duration_s: float | None
+    fps: float | None
+    license_status: str
+    license_id: str | None
+    usage_rights: str | None
+    attribution_required: bool
+    attribution_text: str | None
+    commercial_use_verified: bool
+    verification_actor: str | None
+    verification_method: str | None
+    verified_at: str | None
+    warnings_json: str
+    superseded_at: str | None
+    superseded_by_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> ResolvedAssetRecord:
+        d = _row_to_dict(row)
+        d["attribution_required"] = bool(d["attribution_required"])
+        d["commercial_use_verified"] = bool(d["commercial_use_verified"])
+        return cls(**d)
 
 
 # ── Handoff object for Phase 9 (publishing) ───────────────────────────────────
