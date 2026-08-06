@@ -142,6 +142,63 @@ class TestRenderApproveCommand:
         result = _invoke(["render", "approve", "999"], str(tmp_path / "test.db"))
         assert result.exit_code == 1
 
+    def test_approve_blocked_when_placeholder_scene_exists(self, tmp_path, db):
+        _seed(db)
+        # Insert a placeholder scene row for manifest 1
+        db.execute(
+            "INSERT INTO render_manifest_scenes"
+            " (render_manifest_id, scene_index, scene_id, segment_id,"
+            "  start_ms, end_ms, duration_ms, shot_type, camera_movement,"
+            "  visual_objective, caption_cue_ids_json, has_placeholder, created_at)"
+            " VALUES (1,0,10,20,0,3000,3000,'medium','static','obj','[]',1,'2024-01-01')"
+        )
+        db.commit()
+        result = _invoke(["render", "approve", "1"], str(tmp_path / "test.db"))
+        assert result.exit_code == 1
+        assert "placeholder" in result.output.lower()
+
+    def test_approve_blocked_when_unverified_license(self, tmp_path, db):
+        _seed(db)
+        db.execute(
+            "INSERT INTO resolved_assets"
+            " (planned_asset_id, scene_id, segment_id, render_manifest_id,"
+            "  license_status, commercial_use_verified, warnings_json,"
+            "  created_at, updated_at)"
+            " VALUES (1,10,20,1,'unverified',0,'[]','2024-01-01','2024-01-01')"
+        )
+        db.commit()
+        result = _invoke(["render", "approve", "1"], str(tmp_path / "test.db"))
+        assert result.exit_code == 1
+        assert "unverified" in result.output.lower()
+
+    def test_approve_blocked_when_rejected_license(self, tmp_path, db):
+        _seed(db)
+        db.execute(
+            "INSERT INTO resolved_assets"
+            " (planned_asset_id, scene_id, segment_id, render_manifest_id,"
+            "  license_status, commercial_use_verified, warnings_json,"
+            "  created_at, updated_at)"
+            " VALUES (1,10,20,1,'rejected',0,'[]','2024-01-01','2024-01-01')"
+        )
+        db.commit()
+        result = _invoke(["render", "approve", "1"], str(tmp_path / "test.db"))
+        assert result.exit_code == 1
+        assert "rejected" in result.output.lower()
+
+    def test_approve_succeeds_with_not_required_license(self, tmp_path, db):
+        _seed(db)
+        db.execute(
+            "INSERT INTO resolved_assets"
+            " (planned_asset_id, scene_id, segment_id, render_manifest_id,"
+            "  license_status, commercial_use_verified, warnings_json,"
+            "  created_at, updated_at)"
+            " VALUES (1,10,20,1,'not_required',0,'[]','2024-01-01','2024-01-01')"
+        )
+        db.commit()
+        result = _invoke(["render", "approve", "1"], str(tmp_path / "test.db"))
+        assert result.exit_code == 0
+        assert "approved" in result.output.lower()
+
 
 class TestRenderRejectCommand:
     def test_reject_manifest(self, tmp_path, db):

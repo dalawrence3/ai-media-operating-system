@@ -25,9 +25,11 @@ from app.media.errors import (
     AssetLicenseRejectedError,
     IllegalRenderJobTransitionError,
     IllegalRenderTransitionError,
+    PlaceholderApprovalError,
     RenderJobNotFoundError,
     RenderManifestAlreadyExistsError,
     RenderManifestNotFoundError,
+    UnverifiedLicenseApprovalError,
 )
 from app.media.models import (
     ApprovedRender,
@@ -197,9 +199,47 @@ def approve_render_manifest(
     render_job_id: int | None = None,
 ) -> RenderManifest:
     """Approve a render manifest. Supersedes any previously approved manifest
-    for the same scene_manifest_id."""
+    for the same scene_manifest_id.
+
+    Pre-approval guards (checked before any DB mutation):
+    - No scene may have has_placeholder=1
+    - No resolved asset may have license_status='unverified' or 'rejected'
+    """
     manifest = _require_manifest(conn, manifest_id)
     _check_render_transition(manifest.status, RENDER_STATUS_APPROVED)
+
+    # Guard 1: placeholder check — must run before any mutation so the prior
+    # approved manifest remains untouched if approval fails.
+    placeholder_count = conn.execute(
+        "SELECT COUNT(*) FROM render_manifest_scenes"
+        " WHERE render_manifest_id = ? AND has_placeholder = 1",
+        (manifest_id,),
+    ).fetchone()[0]
+    if placeholder_count:
+        raise PlaceholderApprovalError(
+            f"Render manifest {manifest_id} contains {placeholder_count} placeholder "
+            "scene(s). Resolve all assets and recreate the manifest before approving "
+            "as production-ready."
+        )
+
+    # Guard 2: license status — rejected and unverified both block approval.
+    # 'verified' and 'not_required' are the only permitted statuses.
+    bad_assets = conn.execute(
+        "SELECT id, license_status FROM resolved_assets"
+        " WHERE render_manifest_id = ? AND license_status IN ('unverified', 'rejected')",
+        (manifest_id,),
+    ).fetchall()
+    for row in bad_assets:
+        status = row["license_status"]
+        if status == "rejected":
+            raise AssetLicenseRejectedError(
+                f"Resolved asset {row['id']} has rejected license status. "
+                "Cannot approve a manifest containing rejected assets."
+            )
+        raise UnverifiedLicenseApprovalError(
+            f"Resolved asset {row['id']} has unverified license status. "
+            "Verify all asset licenses before approving for production."
+        )
 
     now = _now()
 

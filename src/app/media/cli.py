@@ -355,7 +355,13 @@ def render_approve(
     ] = None,
 ) -> None:
     """Approve render manifest RENDER_MANIFEST_ID for publication."""
-    from app.media.errors import IllegalRenderTransitionError, RenderManifestNotFoundError
+    from app.media.errors import (
+        AssetLicenseRejectedError,
+        IllegalRenderTransitionError,
+        PlaceholderApprovalError,
+        RenderManifestNotFoundError,
+        UnverifiedLicenseApprovalError,
+    )
     from app.media.repository import approve_render_manifest
 
     conn = _get_db()
@@ -367,6 +373,13 @@ def render_approve(
             notes=notes,
             render_job_id=render_job_id,
         )
+    except (
+        PlaceholderApprovalError,
+        UnverifiedLicenseApprovalError,
+        AssetLicenseRejectedError,
+    ) as exc:
+        typer.echo(f"Approval blocked: {exc}", err=True)
+        raise typer.Exit(1) from None
     except (IllegalRenderTransitionError, RenderManifestNotFoundError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from None

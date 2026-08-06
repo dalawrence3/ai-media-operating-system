@@ -61,3 +61,11 @@ class AssetLicenseRejectedError(RenderEngineError):
 
 class AssetHashMismatchError(RenderEngineError):
     """Asset file SHA-256 does not match the stored expected hash."""
+
+
+class PlaceholderApprovalError(RenderEngineError):
+    """Render manifest contains placeholder scene(s) and cannot be approved as production-ready."""
+
+
+class UnverifiedLicenseApprovalError(RenderEngineError):
+    """Render manifest contains asset(s) with unverified license; approval blocked."""

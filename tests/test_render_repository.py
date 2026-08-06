@@ -12,8 +12,10 @@ from app.media.errors import (
     AssetLicenseRejectedError,
     IllegalRenderJobTransitionError,
     IllegalRenderTransitionError,
+    PlaceholderApprovalError,
     RenderManifestAlreadyExistsError,
     RenderManifestNotFoundError,
+    UnverifiedLicenseApprovalError,
 )
 from app.media.models import (
     RenderJob,
@@ -716,6 +718,113 @@ class TestResolvedAssets:
     def test_get_resolved_asset_returns_none_for_missing(self, db):
         _seed(db)
         assert get_resolved_asset(db, 9999) is None
+
+
+# ── Approval safety tests ─────────────────────────────────────────────────────
+
+
+class TestApprovalSafety:
+    """Licensing and placeholder guards on approve_render_manifest."""
+
+    def _manifest_with_scene(self, db, seed, asset: ResolvedAsset | None) -> RenderManifest:
+        scene = _make_scene_draft(primary_asset=asset)
+        draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
+        return create_render_manifest(db, draft)
+
+    def test_approval_succeeds_with_verified_asset(self, db):
+        seed = _seed(db)
+        asset = _make_resolved_asset(
+            local_path="/tmp/img.jpg", local_sha256="abc", license_status="verified"
+        )
+        m = self._manifest_with_scene(db, seed, asset)
+        approved = approve_render_manifest(db, m.id)
+        assert approved.status == "approved"
+
+    def test_approval_succeeds_with_not_required_license(self, db):
+        """not_required is a legitimate status for self-owned or license-free assets."""
+        seed = _seed(db)
+        asset = _make_resolved_asset(
+            local_path="/tmp/own.jpg", local_sha256="abc", license_status="not_required"
+        )
+        m = self._manifest_with_scene(db, seed, asset)
+        approved = approve_render_manifest(db, m.id)
+        assert approved.status == "approved"
+
+    def test_approval_fails_with_placeholder_scene(self, db):
+        seed = _seed(db)
+        m = self._manifest_with_scene(db, seed, asset=None)  # no asset → placeholder
+        with pytest.raises(PlaceholderApprovalError):
+            approve_render_manifest(db, m.id)
+
+    def test_placeholder_approval_failure_leaves_manifest_in_draft(self, db):
+        seed = _seed(db)
+        m = self._manifest_with_scene(db, seed, asset=None)
+        try:
+            approve_render_manifest(db, m.id)
+        except PlaceholderApprovalError:
+            pass
+        reloaded = get_render_manifest(db, m.id)
+        assert reloaded is not None
+        assert reloaded.status == "draft"
+
+    def test_approval_fails_with_unverified_license(self, db):
+        seed = _seed(db)
+        # Create manifest with no primary asset (so creation succeeds),
+        # then inject an unverified resolved_asset directly.
+        draft = _make_draft(seed)
+        m = create_render_manifest(db, draft)
+        create_resolved_asset(
+            db,
+            _make_resolved_asset(license_status="unverified"),
+            render_manifest_id=m.id,
+        )
+        with pytest.raises(UnverifiedLicenseApprovalError):
+            approve_render_manifest(db, m.id)
+
+    def test_approval_fails_with_rejected_license(self, db):
+        seed = _seed(db)
+        draft = _make_draft(seed)
+        m = create_render_manifest(db, draft)
+        create_resolved_asset(
+            db,
+            _make_resolved_asset(license_status="rejected"),
+            render_manifest_id=m.id,
+        )
+        with pytest.raises(AssetLicenseRejectedError):
+            approve_render_manifest(db, m.id)
+
+    def test_prior_approved_manifest_unchanged_when_replacement_fails(self, db):
+        """When a replacement approval fails, the existing approved manifest stays approved."""
+        seed = _seed(db)
+
+        # First manifest: fully resolved+verified, approve it.
+        asset_ok = _make_resolved_asset(
+            local_path="/tmp/img.jpg", license_status="verified"
+        )
+        m1 = self._manifest_with_scene(db, seed, asset_ok)
+        approve_render_manifest(db, m1.id)
+        db.commit()
+
+        # Second manifest: has a placeholder scene — approval must fail.
+        draft2 = _make_draft(
+            seed, input_hash="render_hash_002",
+            scenes=[_make_scene_draft(primary_asset=None)],
+            total_scene_count=1, total_duration_ms=3000,
+        )
+        m2 = create_render_manifest(db, draft2)
+        with pytest.raises(PlaceholderApprovalError):
+            approve_render_manifest(db, m2.id)
+
+        # m1 must still be approved; m2 must still be draft.
+        assert get_render_manifest(db, m1.id).status == "approved"  # type: ignore[union-attr]
+        assert get_render_manifest(db, m2.id).status == "draft"  # type: ignore[union-attr]
+
+    def test_manifests_without_scenes_approve_without_error(self, db):
+        """A manifest with no scenes (no placeholder, no assets) passes both guards."""
+        seed = _seed(db)
+        m = create_render_manifest(db, _make_draft(seed))
+        approved = approve_render_manifest(db, m.id)
+        assert approved.status == "approved"
 
 
 # ── TestGetApprovedRender (original class, kept here) ─────────────────────────
