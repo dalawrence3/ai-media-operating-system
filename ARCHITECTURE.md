@@ -25,13 +25,12 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 11 complete)
+## Current state (Phase 12 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=17): all prior tables through Phase 10
-  plus Phase 11 `learning_runs`, `optimization_recommendations`,
-  `recommendation_review_events`, and `learning_run_generator_results` tables.
+- Versioned schema (SCHEMA_VERSION=18): all prior tables through Phase 11
+  plus 22 Phase 12 `cp_` prefixed control plane tables.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
 - Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
@@ -483,15 +482,34 @@ src/app/
 │   ├── repository.py         # Append-only CRUD: runs, recommendations, review events
 │   ├── orchestrator.py       # analyze_publication(), accept/reject_recommendation(), list helpers
 │   └── cli.py                # learn_app: analyze/list/show/accept/reject/events/runs
-├── pipeline/                 # Phase 11+: End-to-end pipeline orchestration (deferred)
-├── experiments/              # Phase 12: Controlled experimentation
-│   ├── design.py             # Experiment design and sample-size enforcement
-│   └── outcomes.py           # Result recording and promotion logic
-└── scheduler/                # Phase 13: Reduced-oversight operation
-    ├── runner.py             # Scheduled pipeline execution
-    ├── circuit_breaker.py    # Automatic pause logic
-    ├── audit.py              # Audit log
-    └── notifications.py      # Approval queue notifications
+├── control_plane/            # Phase 12: Media Operations Control Plane
+│   ├── __init__.py
+│   ├── constants.py          # Automation levels, event types, status enums
+│   ├── errors.py             # ControlPlaneError hierarchy
+│   ├── models.py             # Frozen Pydantic records + mutable draft dataclasses
+│   ├── hashing.py            # Deterministic hashing for idempotency keys
+│   ├── repository.py         # CRUD for all 22 cp_ tables
+│   ├── identity.py           # Workspace and channel management
+│   ├── accounts.py           # Platform account lifecycle
+│   ├── credentials.py        # Credential profile management (safe metadata only)
+│   ├── policies.py           # Automation policy resolution (MANUAL/SUPERVISED/AUTONOMOUS)
+│   ├── strategies.py         # Versioned strategy profiles per channel
+│   ├── events.py             # Domain event emission
+│   ├── event_bus.py          # In-process idempotent event dispatch
+│   ├── workflows.py          # Workflow definition and run tracking
+│   ├── workflow_engine.py    # Structured condition evaluation and action dispatch
+│   ├── experiments.py        # Experiment lifecycle (immutable once active)
+│   ├── resources.py          # Cost record creation
+│   ├── costs.py              # Budget policy enforcement
+│   ├── health.py             # Health record management
+│   ├── monitoring.py         # Stuck job detection, health aggregation
+│   ├── jobs.py               # Idempotent operation execution
+│   ├── queues.py             # Review and exception queue queries
+│   ├── reviews.py            # Centralized review queue view
+│   ├── orchestrator.py       # CP orchestration: provision_workspace/channel/account
+│   ├── services.py           # High-level read API boundary
+│   └── cli.py                # ace control workspace/channel/account/policy/experiment
+└── pipeline/                 # Future: End-to-end pipeline orchestration
 ```
 
 ## Database schema (target — evolved per phase)
@@ -548,10 +566,15 @@ Planned additions per phase:
 - Phase 8: `asset_providers`, `resolved_assets`, `renders`, `thumbnails`
 - Phase 9 ✅: `publishing_plans`, `publishing_jobs`, `publications`, `publishing_review_events`
 - Phase 10 ✅: `analytics_snapshots`, `analytics_metrics`, `analytics_aggregates`, `analytics_review_events`
-- Phase 11 ✅: `learning_runs`, `optimization_recommendations`, `recommendation_review_events`
-- Phase 12: `experiments`, `experiment_arms`
-- Phase 13: `audit_log`, `circuit_breaker_events`, `schedules`
-- Phase 14: `accounts`; extend channel tables
+- Phase 11 ✅: `learning_runs`, `optimization_recommendations`, `recommendation_review_events`, `learning_run_generator_results`
+- Phase 12 ✅: 22 `cp_` tables — `cp_organizations`, `cp_workspaces`, `cp_channels`,
+  `cp_platforms`, `cp_credential_profiles`, `cp_platform_accounts`, `cp_publishing_profiles`,
+  `cp_analytics_identities`, `cp_automation_policies`, `cp_strategy_profiles`,
+  `cp_events`, `cp_event_processing`, `cp_workflows`, `cp_workflow_runs`, `cp_experiments`,
+  `cp_experiment_variants`, `cp_experiment_assignments`, `cp_operation_executions`,
+  `cp_cost_records`, `cp_budget_policies`, `cp_health_records`, `cp_provider_registry`
+- Phase 13: Frontend / Studio / Dashboard
+- Phase 14: Deployment & Production Infrastructure
 
 ## External integrations and data-source constraints
 

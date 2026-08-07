@@ -158,6 +158,30 @@
   `analytics_metrics`, `analytics_aggregates`, `analytics_review_events`);
   `ace analytics` CLI (8 subcommands); 230 new tests. 2588 total. Ruff clean.
 
+- **Phase 12: Media Operations Control Plane** — `src/app/control_plane/` package;
+  22-table SCHEMA_VERSION 18 (`cp_organizations`, `cp_workspaces`, `cp_channels`,
+  `cp_platforms`, `cp_credential_profiles`, `cp_platform_accounts`,
+  `cp_publishing_profiles`, `cp_analytics_identities`, `cp_automation_policies`,
+  `cp_strategy_profiles`, `cp_events`, `cp_event_processing`, `cp_workflows`,
+  `cp_workflow_runs`, `cp_experiments`, `cp_experiment_variants`,
+  `cp_experiment_assignments`, `cp_operation_executions`, `cp_cost_records`,
+  `cp_budget_policies`, `cp_health_records`, `cp_provider_registry`);
+  permanent identity hierarchy (organization → workspace → channel → platform →
+  platform_account → credential_profile; publishing_profile and analytics_identity
+  are account-scoped); credentials store `external_ref` only (no plaintext secrets);
+  MANUAL / SUPERVISED / AUTONOMOUS automation levels (most restrictive wins);
+  durable append-only event bus with `UNIQUE(event_id, handler_key)` idempotency
+  and dead-letter after 3 attempts; structured workflow engine (8 operators, 6
+  action types; no eval/exec); experiment immutability (active/concluded/cancelled
+  cannot be mutated); three-tier budget enforcement (workspace/channel/account;
+  warn/pause/block); `concurrency.py` (`check_concurrency_limit()`,
+  `ConcurrencyLimitExceededError`); `workspace_control_center_status()` unified
+  dashboard projection; `workspace_audit_timeline()` chronological audit log;
+  actor-aware mutations throughout; cross-workspace isolation enforced at query
+  boundary; CP service layer (`services.py`) for frontend consumption without
+  direct SQLite access; `ace cp` CLI subcommand group; 255 new tests.
+  3101 total. Ruff clean.
+
 - **Phase 11: Learning & Optimization Engine** — `src/app/learning/` package;
   deterministic, explainable recommendations from analytics history with no
   ML, no embeddings, no network calls, no automatic application; six recommendation
@@ -856,209 +880,135 @@ shows real cost vs. revenue data for at least one video.
 
 ---
 
-### Phase 12 — Experimentation and Optimisation
+### Phase 12 — Media Operations Control Plane (IN PROGRESS)
 
-**Objective:** Propose and track controlled experiments to improve content
-performance, with safeguards against premature or spurious conclusions.
+**Objective:** Transform the collection of specialized engines into a coherent
+Media Operating System by introducing a central Control Plane that owns identity,
+orchestration, multi-account management, policies, workflows, events, experiments,
+resource governance, review queues, and cross-engine visibility.
 
-**Business value:** Systematic experimentation compounds gains over time.
-Without it, optimisation is based on anecdote.
+**Business value:** No single engine can coordinate the full production lifecycle
+across multiple brands, platform accounts, or automation tiers. The Control Plane
+provides the coherent operational layer that a future frontend and production
+infrastructure can build on.
 
 **Technical scope:**
-- `src/app/experiments/` package
-- Experiment types: hook variant, title variant, posting-time variant,
-  video-length variant, format variant (Shorts vs. long-form eventually)
-- Experiment design: hypothesis, treatment vs. control definition,
-  primary metric, minimum sample size (using a simple power calculation),
-  maximum duration
-- Sample-size enforcement: system refuses to declare a winner until minimum
-  sample is reached
-- Statistical note: store p-value and effect size for reference; display
-  with a disclaimer that these are observational signals, not RCTs; avoid
-  treating correlation as causation
-- Result actions: promote winning variant cautiously (update channel
-  defaults); retire consistently unprofitable formats (flag for human
-  confirmation, do not auto-retire)
-- Experiment log: every experiment and its outcome recorded permanently
+- `src/app/control_plane/` package (20+ modules)
+- First-class identity model: workspace → channel → platform → platform_account →
+  credential_profile (these are permanently distinct; see DECISIONS.md)
+- Multi-account/multi-platform: many workspaces, many channels per workspace,
+  many accounts on the same platform, many platforms per channel
+- Credential profiles: safe metadata only — never OAuth tokens, refresh tokens,
+  or API secrets; external_ref points to future secret store
+- Universal provider registry: indexes provider capabilities across all domains
+  (AI, TTS, publishing, analytics, asset, storage, notifications)
+- Durable internal event bus: append-only domain events (ResearchCompleted,
+  ScriptApproved, PublicationCompleted, LearningRunCompleted, etc.); idempotent
+  dispatch; correlation/causation IDs; replay-safe; dead-letter state
+- Strategy profiles: versioned, channel-assigned operational intent
+- Automation policies: MANUAL / SUPERVISED / AUTONOMOUS with explicit allowed
+  actions, cost limits, publishing limits, risk limits, emergency-stop
+- Structured workflow engine: trigger → conditions (equals/not_equals/
+  greater_than/less_than/in/not_in/exists/boolean) → actions; no eval, no
+  arbitrary code; auditable and reproducible
+- Experimentation infrastructure: experiments, variants, assignments; immutable
+  once activated; attribution links to Phase 11 evidence classification
+- Resource/cost management: normalized cost records attributable to workspace/
+  channel/account/engine/job/provider; budget policies with hard limits
+- Health/monitoring: centralized health records for engines, providers, platform
+  accounts, credential profiles, jobs, workflows; stuck-job detection
+- Review queue, exception queue: centralized queryable views over existing engine
+  review work and Control Plane exceptions
+- Pause/resume/emergency-stop: workspace, channel, platform-account, workflow scope
+- Job registry: provider-neutral reference index over existing engine jobs
+- Control Plane service/API boundary: application-service interfaces for future
+  frontend (list workspaces/channels, get pipeline status, get account health, etc.)
+- Actor-aware mutation contracts: all writes carry actor identity for future RBAC
+- Cross-engine idempotency: every Control Plane operation carries correlation_id,
+  idempotency_key, source_event_id; duplicate delivery → no duplicate work
+- Unified audit timeline: reconstruction of who/what/where/why for any action
 
-**Dependencies:** Phase 11 (analytics data required before any experiment
-can be evaluated).
+**Schema:** SCHEMA_VERSION 16→17→18; 19 new `cp_` prefixed tables
 
-**Database changes:**
-- New `experiments` table: `(id, channel_id, experiment_type, hypothesis,
-  primary_metric, min_sample_size, max_duration_days, status, winner_id,
-  created_at, concluded_at)`
-- New `experiment_arms` table: `(id, experiment_id, arm_name, video_ids_json,
-  result_json)`
+**CLI:** `ace control workspace|channel|accounts|providers|health|jobs|reviews|
+exceptions|events|pause|resume|policies|strategies|workflows|experiments|costs|
+doctor`
 
-**Interfaces:**
-- `ace experiments create` — define a new experiment
-- `ace experiments status <id>` — check progress and sample size
-- `ace experiments conclude <id>` — record outcome (human-confirmed)
+**Dependencies:** Phases 1–11 complete; all existing engine public interfaces
+remain unchanged.
 
-**Tests:** Test sample-size enforcement; test premature-conclusion block;
-test result storage.
+**Internal milestones:**
+- M12.1 Identity & Multi-Account Foundation
+- M12.2 Universal Provider Registry & Credential References
+- M12.3 Durable Event Bus
+- M12.4 Strategy, Policy & Automation Levels
+- M12.5 Workflow Automation Engine
+- M12.6 Experimentation Infrastructure
+- M12.7 Resource / Cost / Budget Management
+- M12.8 Monitoring / Health / Reliability
+- M12.9 Jobs, Review Queue, Exception Queue, Pause/Resume
+- M12.10 Control Plane Service/API Boundary
+- M12.11 Integration, Isolation & Cross-Engine Idempotency
+- M12.12 Documentation / Final Validation
 
-**Human approval gates:** Concluding an experiment and promoting a winner
-both require human confirmation.
+**Testing:** Subsystem-based test organization; 12+ test files; covers identity
+separation, workspace/channel/account isolation, credential references, provider
+registry, event idempotency/replay, workflow evaluation, policy resolution,
+experiment immutability/assignment, cost/budget, health, queues, pause/resume,
+job registry, concurrency, cross-engine idempotency, audit timeline, CLI,
+migrations.
 
-**Risks:** YouTube not being an RCT environment; confounders (seasonality,
-algorithm changes, trending topics); small channels not reaching sample
-sizes quickly; over-optimising on noise.
-
-**Definition of done:** Experiment lifecycle works end to end; sample-size
-gate enforced; all tests pass; ruff clean.
-
-**Demonstrable capability:** Create a hook-variant experiment, collect data,
-attempt to conclude before sample size reached (blocked), reach sample size,
-conclude with human confirmation.
-
-**What waits:** Reduced-oversight operation.
+**Constraints:** No network. No live providers. No frontend. No production
+infrastructure (Phase 14). No Phase 13 scope.
 
 ---
 
-### Phase 13 — Reduced-Oversight Operation and Publishing Mode Graduation
+### Phase 13 — Frontend / Studio / Dashboard
 
-**Objective:** Allow the system to run scheduled production cycles with
-minimal human intervention; implement the publishing-mode graduation path
-from manual approval through to qualified autonomous publishing.
+**Objective:** Build the operator frontend — Studio UI, dashboard, review
+interfaces, and analytics views — consuming the Control Plane service boundary
+established in Phase 12.
 
-**Business value:** Reduces operating cost per video. Human time becomes the
-bottleneck only at high-risk decisions, not at routine coordination. Channels
-that demonstrate consistent quality, compliance, and cost control can
-graduate to autonomous publishing, enabling the commercial scale the product
-requires.
+**Business value:** Replaces CLI-only operation with a visual interface for
+non-technical operators and enables at-a-glance channel health and queue management.
 
 **Technical scope:**
-- `src/app/scheduler/` package
-- Approval queues: pending gate items delivered via CLI notification and
-  optional email/webhook (provider TBD at implementation time)
-- Scheduling: APScheduler or cron-compatible; configurable production
-  cadence per channel
-- Circuit breakers: automatic pause if any of these thresholds are exceeded:
-  — daily API spend above limit
-  — LLM error rate above threshold
-  — TTS error rate above threshold
-  — YouTube upload rejection rate above threshold
-  — consecutive critique failures above threshold
-  — consecutive performance anomalies (view rate drop, retention drop)
-- Spending limits: per-day and per-video caps; hard block, not a soft warning
-- Failure recovery: failed pipeline stages auto-retry up to N times, then
-  pause and notify
-- Audit log: every autonomous action recorded with timestamp, actor
-  (system or user), decision, and cost
-- Content-quality thresholds: configurable minimum critique score;
-  auto-pauses if recent videos fall below threshold
-- Publishing mode graduation engine:
-  — Evaluates a channel against qualification thresholds using Phase 11
-    analytics data and Phase 12 experiment outcomes
-  — Produces a qualification report the operator reviews before promoting
-  — Records the promotion decision, thresholds met, and qualifying window
-  — Monitors for threshold breach and demotes automatically; notifies
-    operator
-  — High-risk content category list maintained here; overrides channel mode
-- Kill switch: `ace publish pause <channel_id>` halts all autonomous
-  publishing immediately, regardless of mode
+- Studio web interface (technology TBD at implementation time)
+- Consumes Phase 12 Control Plane service/API boundary
+- Workspace, channel, platform-account management UI
+- Production pipeline status and review queues
+- Analytics and recommendation review
+- Experiment management
+- Cost and budget dashboards
+- Health and alert monitoring
 
-**Dependencies:** Phase 12 (analytics data and experiment outcomes required
-to evaluate qualification thresholds).
+**Dependencies:** Phase 12 (Control Plane service boundary complete)
 
-**Database changes:**
-- New `audit_log` table: `(id, action, actor, entity_type, entity_id,
-  detail_json, cost_usd, created_at)`
-- New `circuit_breaker_events` table: trigger, threshold, value, resolved_at
-- New `schedules` table: channel_id, cadence, next_run_at, paused, config_json
-- New `mode_transitions` table: channel_id, from_mode, to_mode, reason,
-  qualification_report_json, operator, created_at
-
-**Interfaces:**
-- `ace schedule set <channel_id> --cadence <cron>`
-- `ace schedule pause <channel_id>`
-- `ace channel qualify <channel_id>` — run qualification check, print report
-- `ace channel promote <channel_id>` — promote to next publishing mode
-  (operator-confirmed; shows qualification report first)
-- `ace channel demote <channel_id>` — manually demote publishing mode
-- `ace publish pause <channel_id>` — kill switch
-- `ace audit log` — display recent audit log entries
-- `ace status` — overall system health, active circuit breakers, queue depth,
-  channels by publishing mode
-
-**Tests:** Test circuit-breaker triggers; test spending-limit hard block;
-test audit log completeness; test schedule cadence; test qualification check
-correctly evaluates all thresholds; test automatic demotion on breach; test
-kill switch; test high-risk category override.
-
-**Human approval gates:** Creative gates (script, narration, manifest)
-remain in all modes. Publishing gates depend on channel mode per Phase 10.
-Mode promotion always requires operator confirmation. Circuit breakers
-trigger human intervention.
-
-**Risks:** Qualification thresholds set too low, graduating channels
-prematurely; threshold breach detection delay if analytics polling is
-infrequent; circuit breakers not covering all edge cases; notification
-delivery failure leaving queues unattended.
-
-**Definition of done:** Scheduled run produces a video through all stages;
-circuit breakers fire correctly; audit log complete; spending limit blocks
-overage; qualification report correctly evaluates thresholds; mode promotion
-and automatic demotion both work; kill switch halts autonomous publishing;
-all tests pass; ruff clean.
-
-**Demonstrable capability:** Schedule a channel, let it run a full cycle
-autonomously through all automated stages, pause at human gates, resume
-after approval.
-
-**What waits:** Multi-channel scaling, additional platforms.
+**What waits:** Phase 14 (Deployment & Production Infrastructure)
 
 ---
 
-### Phase 14 — Multi-Channel Scaling
+### Phase 14 — Deployment & Production Infrastructure
 
-**Objective:** Operate multiple YouTube channels independently, with channel-
-specific configuration, niche separation, and account-level budget controls.
+**Objective:** Harden the system for production operation.
 
-**Business value:** Revenue scales with channel count once a single channel
-is proven. Niche separation prevents cannibalisation.
+**Business value:** Enables commercial-scale operation with production reliability.
 
-**Technical scope:**
-- Channel-specific configs already in DB from Phase 3; this phase activates
-  independent scheduling and budget tracking per channel
-- Account-level budget: aggregate daily spend cap across all channels
-- Cross-channel duplicate prevention: content originality check spans all
-  channels in the same account
-- Niche isolation: channels in the same niche flagged; content similarity
-  above threshold blocks production
-- Role-based permissions: optional, if multiple human operators manage
-  different channels (simple password or API-key-based; no OAuth user
-  management needed initially)
-- Reporting: cross-channel profitability comparison
+**Technical scope (may include):**
+- PostgreSQL migration from SQLite
+- Object storage (S3 or compatible) for artifacts
+- Job queues / workers (Celery, RQ, or similar)
+- Docker / container deployment
+- Production secret management (Vault, AWS Secrets Manager, or similar)
+- Database backups and point-in-time recovery
+- Monitoring and alerting (Prometheus, Grafana, or similar)
+- Horizontal scaling
+- Disaster recovery procedures
+- Deployment configuration management
 
-**Dependencies:** Phase 13 (single-channel reduced-oversight operation).
+**Dependencies:** Phase 13 (frontend complete; application stable)
 
-**Database changes:**
-- `accounts` table: account-level config and budget
-- Extend existing tables to enforce account-level foreign keys
-
-**Interfaces:**
-- `ace accounts add/list`
-- `ace channels list --account <id>`
-- `ace report cross-channel`
-
-**Tests:** Test budget enforcement across channels; test cross-channel
-duplicate detection; test niche isolation flag.
-
-**Human approval gates:** Adding a new channel requires human confirmation.
-
-**Risks:** Complexity growing faster than value; YouTube per-account API
-quotas; niche isolation being overly conservative.
-
-**Definition of done:** Two channels run independently; account-level budget
-enforced; cross-channel duplicate detection fires; all tests pass; ruff clean.
-
-**Demonstrable capability:** Two independent channels producing content,
-with a cross-channel profitability report.
-
-**What waits:** Additional platform adapters.
+**What waits:** Multi-tenant SaaS (future consideration)
 
 ---
 

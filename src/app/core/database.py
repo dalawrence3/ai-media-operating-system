@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -1797,6 +1797,371 @@ CREATE TABLE IF NOT EXISTS learning_run_generator_results (
 CREATE INDEX IF NOT EXISTS idx_lrgr_run ON learning_run_generator_results (learning_run_id);
 """
 
+# Phase 12 DDL — Media Operations Control Plane (22 cp_ tables).
+# All table names carry the cp_ prefix to avoid conflicts with the existing
+# Phase 3 `channels` intelligence table.
+# Identity hierarchy: cp_organizations → cp_workspaces → cp_channels →
+#   cp_platform_accounts (with cp_credential_profiles, cp_publishing_profiles,
+#   cp_analytics_identities as satellite identity concepts).
+_DDL_V18_CONTROL_PLANE = """
+CREATE TABLE IF NOT EXISTS cp_organizations (
+    id          TEXT    PRIMARY KEY,
+    name        TEXT    NOT NULL,
+    slug        TEXT    NOT NULL UNIQUE,
+    owner_email TEXT,
+    actor       TEXT    NOT NULL,
+    created_at  TEXT    NOT NULL,
+    updated_at  TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cp_workspaces (
+    id              TEXT    PRIMARY KEY,
+    name            TEXT    NOT NULL,
+    slug            TEXT    NOT NULL UNIQUE,
+    status          TEXT    NOT NULL DEFAULT 'active'
+                            CHECK (status IN ('active', 'suspended', 'archived')),
+    actor           TEXT    NOT NULL,
+    metadata_json   TEXT,
+    created_at      TEXT    NOT NULL,
+    updated_at      TEXT    NOT NULL,
+    organization_id TEXT    REFERENCES cp_organizations(id)
+);
+
+CREATE TABLE IF NOT EXISTS cp_channels (
+    id              TEXT    PRIMARY KEY,
+    workspace_id    TEXT    NOT NULL REFERENCES cp_workspaces(id),
+    name            TEXT    NOT NULL,
+    slug            TEXT    NOT NULL,
+    status          TEXT    NOT NULL DEFAULT 'active'
+                            CHECK (status IN ('active', 'paused', 'archived')),
+    actor           TEXT    NOT NULL,
+    description     TEXT,
+    metadata_json   TEXT,
+    created_at      TEXT    NOT NULL,
+    updated_at      TEXT    NOT NULL,
+    UNIQUE (workspace_id, slug)
+);
+
+CREATE TABLE IF NOT EXISTS cp_platforms (
+    id                  TEXT    PRIMARY KEY,
+    platform_key        TEXT    NOT NULL UNIQUE,
+    display_name        TEXT    NOT NULL,
+    is_active           INTEGER NOT NULL DEFAULT 1,
+    capabilities_json   TEXT,
+    created_at          TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cp_credential_profiles (
+    id                  TEXT    PRIMARY KEY,
+    workspace_id        TEXT    NOT NULL REFERENCES cp_workspaces(id),
+    display_name        TEXT    NOT NULL,
+    credential_type     TEXT    NOT NULL
+                                CHECK (credential_type IN ('oauth2', 'api_key', 'service_account')),
+    status              TEXT    NOT NULL DEFAULT 'active'
+                                CHECK (status IN (
+                                    'active', 'expiring', 'expired', 'revoked', 'pending_validation'
+                                )),
+    external_ref        TEXT    NOT NULL,
+    actor               TEXT    NOT NULL,
+    expires_at          TEXT,
+    created_at          TEXT    NOT NULL,
+    updated_at          TEXT    NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cp_platform_accounts (
+    id                      TEXT    PRIMARY KEY,
+    channel_id              TEXT    NOT NULL REFERENCES cp_channels(id),
+    platform_id             TEXT    NOT NULL REFERENCES cp_platforms(id),
+    platform_key            TEXT    NOT NULL,
+    external_account_id     TEXT    NOT NULL,
+    display_name            TEXT    NOT NULL,
+    status                  TEXT    NOT NULL DEFAULT 'connected'
+                                    CHECK (status IN (
+                                        'connected', 'disconnected', 'credential_invalid',
+                                        'credential_expiring', 'quota_limited', 'paused'
+                                    )),
+    credential_profile_id   TEXT    REFERENCES cp_credential_profiles(id),
+    actor                   TEXT    NOT NULL,
+    metadata_json           TEXT,
+    created_at              TEXT    NOT NULL,
+    updated_at              TEXT    NOT NULL,
+    UNIQUE (channel_id, platform_key, external_account_id)
+);
+
+CREATE TABLE IF NOT EXISTS cp_publishing_profiles (
+    id                      TEXT    PRIMARY KEY,
+    platform_account_id     TEXT    NOT NULL REFERENCES cp_platform_accounts(id),
+    config_json             TEXT    NOT NULL DEFAULT '{}',
+    is_active               INTEGER NOT NULL DEFAULT 1,
+    actor                   TEXT    NOT NULL,
+    created_at              TEXT    NOT NULL,
+    updated_at              TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cp_pubprofile_account
+    ON cp_publishing_profiles (platform_account_id, is_active);
+
+CREATE TABLE IF NOT EXISTS cp_analytics_identities (
+    id                      TEXT    PRIMARY KEY,
+    platform_account_id     TEXT    NOT NULL REFERENCES cp_platform_accounts(id),
+    analytics_provider_key  TEXT    NOT NULL,
+    analytics_account_id    TEXT    NOT NULL,
+    metadata_json           TEXT,
+    created_at              TEXT    NOT NULL,
+    UNIQUE (platform_account_id, analytics_provider_key)
+);
+CREATE INDEX IF NOT EXISTS idx_cp_analytics_account
+    ON cp_analytics_identities (platform_account_id);
+
+CREATE TABLE IF NOT EXISTS cp_automation_policies (
+    id                      TEXT    PRIMARY KEY,
+    scope                   TEXT    NOT NULL
+                                    CHECK (scope IN ('workspace', 'channel', 'platform_account')),
+    scope_id                TEXT    NOT NULL,
+    automation_level        TEXT    NOT NULL
+                                    CHECK (automation_level IN (
+                                        'manual', 'supervised', 'autonomous'
+                                    )),
+    allowed_actions_json    TEXT    NOT NULL DEFAULT '[]',
+    actor                   TEXT    NOT NULL,
+    created_at              TEXT    NOT NULL,
+    is_active               INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_cp_policy_scope
+    ON cp_automation_policies (scope, scope_id, is_active);
+
+CREATE TABLE IF NOT EXISTS cp_strategy_profiles (
+    id              TEXT    PRIMARY KEY,
+    channel_id      TEXT    NOT NULL REFERENCES cp_channels(id),
+    version         INTEGER NOT NULL,
+    config_json     TEXT    NOT NULL DEFAULT '{}',
+    actor           TEXT    NOT NULL,
+    created_at      TEXT    NOT NULL,
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    UNIQUE (channel_id, version)
+);
+CREATE INDEX IF NOT EXISTS idx_cp_strategy_channel ON cp_strategy_profiles (channel_id, is_active);
+
+CREATE TABLE IF NOT EXISTS cp_events (
+    id                      TEXT    PRIMARY KEY,
+    event_type              TEXT    NOT NULL,
+    workspace_id            TEXT    NOT NULL REFERENCES cp_workspaces(id),
+    actor                   TEXT    NOT NULL,
+    payload_json            TEXT    NOT NULL DEFAULT '{}',
+    correlation_id          TEXT,
+    causation_id            TEXT,
+    created_at              TEXT    NOT NULL,
+    channel_id              TEXT    REFERENCES cp_channels(id),
+    platform_account_id     TEXT    REFERENCES cp_platform_accounts(id),
+    source_engine           TEXT,
+    source_entity_id        TEXT,
+    schema_version          TEXT    NOT NULL DEFAULT '1',
+    experiment_id           TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cp_events_workspace ON cp_events (workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cp_events_type ON cp_events (event_type, workspace_id);
+
+CREATE TABLE IF NOT EXISTS cp_event_processing (
+    id              TEXT    PRIMARY KEY,
+    event_id        TEXT    NOT NULL REFERENCES cp_events(id),
+    handler_key     TEXT    NOT NULL,
+    status          TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK (status IN (
+                                'pending', 'processing', 'completed', 'failed', 'dead_lettered'
+                            )),
+    attempt_count   INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at TEXT,
+    completed_at    TEXT,
+    error_message   TEXT,
+    created_at      TEXT    NOT NULL,
+    UNIQUE (event_id, handler_key)
+);
+CREATE INDEX IF NOT EXISTS idx_cp_ep_pending ON cp_event_processing (status, created_at ASC);
+
+CREATE TABLE IF NOT EXISTS cp_workflows (
+    id                  TEXT    PRIMARY KEY,
+    workspace_id        TEXT    NOT NULL REFERENCES cp_workspaces(id),
+    name                TEXT    NOT NULL,
+    trigger_event_type  TEXT    NOT NULL,
+    conditions_json     TEXT    NOT NULL DEFAULT '[]',
+    actions_json        TEXT    NOT NULL DEFAULT '[]',
+    status              TEXT    NOT NULL DEFAULT 'draft'
+                                CHECK (status IN ('draft', 'active', 'paused', 'archived')),
+    actor               TEXT    NOT NULL,
+    created_at          TEXT    NOT NULL,
+    updated_at          TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cp_wf_workspace ON cp_workflows (workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_cp_wf_trigger ON cp_workflows (trigger_event_type, status);
+
+CREATE TABLE IF NOT EXISTS cp_workflow_runs (
+    id                  TEXT    PRIMARY KEY,
+    workflow_id         TEXT    NOT NULL REFERENCES cp_workflows(id),
+    trigger_event_id    TEXT    NOT NULL REFERENCES cp_events(id),
+    status              TEXT    NOT NULL DEFAULT 'running'
+                                CHECK (status IN ('running', 'completed', 'failed')),
+    result_json         TEXT,
+    error_message       TEXT,
+    started_at          TEXT    NOT NULL,
+    completed_at        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cp_wfrun_workflow ON cp_workflow_runs (workflow_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS cp_experiments (
+    id                      TEXT    PRIMARY KEY,
+    workspace_id            TEXT    NOT NULL REFERENCES cp_workspaces(id),
+    channel_id              TEXT    NOT NULL REFERENCES cp_channels(id),
+    name                    TEXT    NOT NULL,
+    hypothesis              TEXT    NOT NULL,
+    status                  TEXT    NOT NULL DEFAULT 'draft'
+                                    CHECK (status IN (
+                                        'draft', 'active', 'paused', 'concluded', 'cancelled'
+                                    )),
+    primary_metric          TEXT    NOT NULL,
+    actor                   TEXT    NOT NULL,
+    created_at              TEXT    NOT NULL,
+    updated_at              TEXT    NOT NULL,
+    activated_at            TEXT,
+    concluded_at            TEXT,
+    secondary_metrics_json  TEXT,
+    guardrails_json         TEXT,
+    min_sample_size         INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_cp_exp_workspace ON cp_experiments (workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_cp_exp_channel ON cp_experiments (channel_id);
+
+CREATE TABLE IF NOT EXISTS cp_experiment_variants (
+    id              TEXT    PRIMARY KEY,
+    experiment_id   TEXT    NOT NULL REFERENCES cp_experiments(id),
+    name            TEXT    NOT NULL,
+    variant_type    TEXT    NOT NULL CHECK (variant_type IN ('control', 'treatment')),
+    description     TEXT,
+    config_json     TEXT,
+    created_at      TEXT    NOT NULL,
+    UNIQUE (experiment_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS cp_experiment_assignments (
+    id              TEXT    PRIMARY KEY,
+    experiment_id   TEXT    NOT NULL REFERENCES cp_experiments(id),
+    variant_id      TEXT    NOT NULL REFERENCES cp_experiment_variants(id),
+    unit_id         TEXT    NOT NULL,
+    status          TEXT    NOT NULL DEFAULT 'active'
+                            CHECK (status IN ('active', 'excluded')),
+    assigned_at     TEXT    NOT NULL,
+    UNIQUE (experiment_id, unit_id)
+);
+CREATE INDEX IF NOT EXISTS idx_cp_assign_exp ON cp_experiment_assignments (experiment_id, unit_id);
+
+CREATE TABLE IF NOT EXISTS cp_operation_executions (
+    id                      TEXT    PRIMARY KEY,
+    operation_type          TEXT    NOT NULL,
+    workspace_id            TEXT    NOT NULL REFERENCES cp_workspaces(id),
+    channel_id              TEXT    REFERENCES cp_channels(id),
+    platform_account_id     TEXT    REFERENCES cp_platform_accounts(id),
+    idempotency_key         TEXT    NOT NULL UNIQUE,
+    status                  TEXT    NOT NULL DEFAULT 'pending'
+                                    CHECK (status IN (
+                                        'pending', 'running', 'completed', 'failed', 'superseded'
+                                    )),
+    actor                   TEXT    NOT NULL,
+    correlation_id          TEXT,
+    source_event_id         TEXT    REFERENCES cp_events(id),
+    input_json              TEXT,
+    output_json             TEXT,
+    error_message           TEXT,
+    created_at              TEXT    NOT NULL,
+    updated_at              TEXT    NOT NULL,
+    engine                  TEXT,
+    attempt_count           INTEGER NOT NULL DEFAULT 1,
+    target_entity_id        TEXT,
+    target_entity_type      TEXT,
+    error_category          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cp_op_workspace ON cp_operation_executions (workspace_id, status);
+CREATE INDEX IF NOT EXISTS idx_cp_op_idem ON cp_operation_executions (idempotency_key);
+
+CREATE TABLE IF NOT EXISTS cp_cost_records (
+    id                          TEXT    PRIMARY KEY,
+    workspace_id                TEXT    NOT NULL REFERENCES cp_workspaces(id),
+    channel_id                  TEXT    REFERENCES cp_channels(id),
+    platform_account_id         TEXT    REFERENCES cp_platform_accounts(id),
+    operation_execution_id      TEXT    REFERENCES cp_operation_executions(id),
+    provider_key                TEXT    NOT NULL,
+    cost_unit                   TEXT    NOT NULL
+                                        CHECK (cost_unit IN (
+                                            'usd', 'tokens', 'characters', 'requests'
+                                        )),
+    quantity                    REAL    NOT NULL,
+    usd_equivalent              REAL    NOT NULL,
+    description                 TEXT,
+    recorded_at                 TEXT    NOT NULL,
+    engine                      TEXT,
+    experiment_id               TEXT,
+    entity_id                   TEXT,
+    entity_type                 TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cp_cost_workspace
+    ON cp_cost_records (workspace_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cp_cost_channel ON cp_cost_records (channel_id, recorded_at DESC);
+
+CREATE TABLE IF NOT EXISTS cp_budget_policies (
+    id                  TEXT    PRIMARY KEY,
+    scope               TEXT    NOT NULL
+                                CHECK (scope IN ('workspace', 'channel', 'platform_account')),
+    scope_id            TEXT    NOT NULL,
+    period              TEXT    NOT NULL CHECK (period IN ('daily', 'weekly', 'monthly')),
+    limit_usd           REAL    NOT NULL,
+    warning_threshold   REAL    NOT NULL DEFAULT 0.8,
+    on_exceed_action    TEXT    NOT NULL DEFAULT 'warn'
+                                CHECK (on_exceed_action IN ('warn', 'pause', 'block')),
+    actor               TEXT    NOT NULL,
+    created_at          TEXT    NOT NULL,
+    is_active           INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_cp_budget_scope ON cp_budget_policies (scope, scope_id, is_active);
+
+CREATE TABLE IF NOT EXISTS cp_health_records (
+    id              TEXT    PRIMARY KEY,
+    entity_type     TEXT    NOT NULL
+                            CHECK (entity_type IN (
+                                'workspace', 'channel', 'platform_account', 'provider',
+                                'engine', 'workflow', 'credential_profile'
+                            )),
+    entity_id       TEXT    NOT NULL,
+    status          TEXT    NOT NULL
+                            CHECK (status IN (
+                                'healthy', 'degraded', 'unavailable', 'credential_expired',
+                                'quota_limited', 'paused', 'failed'
+                            )),
+    detail          TEXT,
+    recorded_by     TEXT    NOT NULL,
+    recorded_at     TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cp_health_entity
+    ON cp_health_records (entity_type, entity_id, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_cp_health_status ON cp_health_records (status, recorded_at DESC);
+
+CREATE TABLE IF NOT EXISTS cp_provider_registry (
+    id                  TEXT    PRIMARY KEY,
+    provider_key        TEXT    NOT NULL UNIQUE,
+    domain              TEXT    NOT NULL
+                                CHECK (domain IN (
+                                    'ai', 'tts', 'publishing', 'analytics',
+                                    'asset', 'storage', 'notification'
+                                )),
+    display_name        TEXT    NOT NULL,
+    status              TEXT    NOT NULL DEFAULT 'active'
+                                CHECK (status IN ('active', 'degraded', 'inactive')),
+    capabilities_json   TEXT,
+    registered_at       TEXT    NOT NULL,
+    updated_at          TEXT    NOT NULL,
+    quota_json          TEXT,
+    cost_metadata_json  TEXT,
+    version_info        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cp_provider_domain ON cp_provider_registry (domain, status);
+"""
+
 
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
@@ -1837,6 +2202,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -1858,6 +2224,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1878,6 +2245,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1897,6 +2265,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1915,6 +2284,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1932,6 +2302,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1948,6 +2319,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1963,6 +2335,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1977,6 +2350,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1990,6 +2364,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2002,6 +2377,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2013,6 +2389,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2023,6 +2400,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2032,6 +2410,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2040,6 +2419,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2047,12 +2427,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 15 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 16:
         logger.info("Migrating schema from version 16 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V17_LEARNING)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 17:
+        logger.info("Migrating schema from version 17 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V18_CONTROL_PLANE)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

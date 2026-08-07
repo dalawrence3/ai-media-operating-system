@@ -14,16 +14,20 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 11 (Learning & Optimization Engine) is complete.**
+**Phase 12 (Media Operations Control Plane) is complete. Phases 1–12 are complete.**
 
-The system now ingests analytics data, generates deterministic human-reviewable
-optimization recommendations (no ML, no automatic changes, no automatic application),
-and provides a full review lifecycle for each recommendation. Recommendations are
-classified as `exploratory` or `actionable` based on evidence volume and confidence.
-Confidence scores are deterministic heuristic signal-strength values, not statistical
-confidence intervals. All Phase 11 evidence is observational; experiment_id alone
-does not qualify as controlled-experiment evidence. 2846 tests pass (1 skipped).
-SCHEMA_VERSION 17.
+The system now includes a central operations control plane coordinating organizations,
+workspaces, channels, platform accounts, credentials, publishing profiles, analytics
+identities, automation policies, an internal event bus, structured workflow automation,
+A/B experiment management, cost/budget enforcement, health monitoring, and a provider
+registry. The control plane sits above all existing engines and enforces permanent
+identity separation (organization ≠ workspace ≠ channel ≠ platform ≠
+platform_account ≠ credential_profile ≠ publishing_profile ≠ analytics_identity).
+Credentials store only vault references (`external_ref`), never OAuth tokens or
+secrets. Automation policies enforce MANUAL / SUPERVISED / AUTONOMOUS levels with
+the most restrictive level winning across the workspace→channel→account hierarchy.
+Experiments are immutable once activated. All CP writes carry an actor field for
+future RBAC. 3101 tests pass (1 skipped). SCHEMA_VERSION 18.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -135,12 +139,36 @@ Implemented phases:
   - `asset_strategy.py` as Phase 8 seam module for provider integration
   - CLI: `ace scenes plan/list/show/approve/reject/reject-scene/events/manifest`
 
+- **Phase 12** — Media Operations Control Plane (`src/app/control_plane/`):
+  - SCHEMA_VERSION 18: 19 `cp_` prefixed tables: `cp_workspaces`, `cp_channels`,
+    `cp_platforms`, `cp_credential_profiles`, `cp_platform_accounts`,
+    `cp_automation_policies`, `cp_strategy_profiles`, `cp_events`,
+    `cp_event_processing`, `cp_workflows`, `cp_workflow_runs`, `cp_experiments`,
+    `cp_experiment_variants`, `cp_experiment_assignments`, `cp_operation_executions`,
+    `cp_cost_records`, `cp_budget_policies`, `cp_health_records`, `cp_provider_registry`
+  - Permanent identity model: Workspace → Channel → PlatformAccount (never collapsed;
+    distinct from Phase 3 intelligence `channels` table)
+  - Credential profiles: `external_ref` vault pointer only — no OAuth tokens, no secrets
+  - Automation levels: MANUAL / SUPERVISED / AUTONOMOUS; effective = most restrictive
+    across hierarchy; defaults to MANUAL when no policy is set
+  - Durable idempotent in-process event bus: `UNIQUE(event_id, handler_key)`;
+    dead-letter after `MAX_DELIVERY_ATTEMPTS` (3); replay-safe
+  - Structured workflow engine: trigger → conditions (8 operators, dot-notation fields)
+    → actions (6 types); no eval, no arbitrary code execution
+  - Experiments immutable once activated; `ExperimentAlreadyActiveError` on any
+    mutation attempt against active/concluded/cancelled experiments
+  - Budget enforcement: three-tier check (workspace/channel/account); warn / pause /
+    block actions; `BudgetExceededError` on block
+  - Actor-aware mutations throughout for future RBAC
+  - CLI: `ace control workspace/channel/account/policy/experiment/events review-queue costs`
+
 End-to-end workflow: channel strategy → discovery → scoring → topic promotion
 → source ingestion → claim extraction → script generation → human approval
 → production plan creation → human review (approve/reject) → narration
 synthesis → narration review → caption generation → caption review → scene
 manifest planning → scene review → rendering → render review → publishing →
-analytics ingestion → optimization recommendations → human recommendation review.
+analytics ingestion → optimization recommendations → human recommendation review
+→ control plane coordination (workspaces, accounts, policies, experiments, costs).
 
 
 ## Requirements

@@ -11,13 +11,13 @@ from app.core.database import SCHEMA_VERSION, open_db
 
 
 class TestSchemaMigration:
-    def test_schema_version_is_17(self):
-        assert SCHEMA_VERSION == 17
+    def test_schema_version_is_18(self):
+        assert SCHEMA_VERSION == 18
 
-    def test_fresh_db_at_version_17(self, tmp_path: Path):
+    def test_fresh_db_at_version_18(self, tmp_path: Path):
         conn = open_db(tmp_path / "test.db")
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 17
+        assert version == 18
 
     def test_analytics_tables_created(self, tmp_path: Path):
         conn = open_db(tmp_path / "test.db")
@@ -156,7 +156,7 @@ class TestSchemaMigration:
         # Now open with the current engine — it should migrate
         conn = open_db(db_path)
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 17
+        assert version == 18
         tables = {
             r[0]
             for r in conn.execute(

@@ -1300,3 +1300,93 @@ Operationally: review event tables are insert-only; no application `UPDATE` or `
 **Decision:** `ReviewedOptimizationHandoff` is a frozen Pydantic model (immutable after construction) that bundles the learning run metadata, accepted/rejected/pending recommendations with their review histories, generator results, and version provenance. Phase 12 MUST consume this handoff as its sole input from Phase 11. It must not query raw learning tables or apply recommendations automatically.
 
 **Reasoning:** Defining an explicit frozen handoff at the phase boundary prevents Phase 12 from depending on internal Phase 11 implementation details and ensures that the hand-off contract is testable in isolation.
+
+---
+
+## Phase 12 — Media Operations Control Plane
+
+**D-P12-1 — Permanent identity hierarchy: workspace ≠ channel ≠ platform ≠ platform_account ≠ credential_profile**
+
+**Decision:** Five distinct identity concepts are never collapsed: `cp_workspaces` (the top-level organizational unit), `cp_channels` (a branded content channel within a workspace), `cp_platforms` (a platform type registry entry, e.g. "youtube"), `cp_platform_accounts` (a specific account on a platform connected to a channel), and `cp_credential_profiles` (a credential set referenced by vault pointer). These are separate tables with FK relationships, never merged or aliased. Additionally, these are distinct from the Phase 3 intelligence `channels` table, which tracks discovery/scoring data — that table is never referenced by the CP layer.
+
+**Reasoning:** Collapsing identity concepts leads to schema rigidity and data integrity failures as the system grows (one channel can have multiple platform accounts; one workspace can have many channels; credentials are reusable across accounts). The Phase 3 `channels` name collision was resolved by prefixing all Phase 12 tables with `cp_`.
+
+---
+
+**D-P12-2 — Credential profiles store only external_ref vault pointers, never secrets**
+
+**Decision:** `cp_credential_profiles` stores `external_ref` (a string pointer to the secret in an external vault, e.g. HashiCorp Vault or AWS Secrets Manager) and safe metadata (`display_name`, `credential_type`, `status`, `expires_at`). It never stores OAuth tokens, refresh tokens, API secrets, passwords, or any credential material.
+
+**Reasoning:** Storing credential material in the application database creates a high-value exfiltration target, complicates rotation, and violates least-privilege. The external vault pattern ensures that even full database compromise does not expose live secrets.
+
+---
+
+**D-P12-3 — Automation levels: MANUAL is the default and most restrictive**
+
+**Decision:** Three automation levels exist: `manual` (all operations require explicit human approval), `supervised` (system can propose, human must approve), `autonomous` (system can act without approval). The effective level for any operation is the minimum (most restrictive) across the workspace policy, channel policy (if any), and platform_account policy (if any). When no policy is set for a scope, that scope contributes `manual` to the resolution. `resolve_effective_level()` always returns `manual` when no policies exist.
+
+**Reasoning:** Safe-by-default automation prevents runaway automation when policies are absent or misconfigured. Operators must explicitly grant autonomy; the system cannot accidentally become autonomous.
+
+---
+
+**D-P12-4 — In-process event bus: durable, idempotent, append-only, replay-safe**
+
+**Decision:** The control plane event bus uses `cp_events` (one row per event, append-only) and `cp_event_processing` (one row per handler per event, with `UNIQUE(event_id, handler_key)` constraint). Handlers are registered in-process via `register_handler()`. Dispatch is synchronous. On failure, the existing `cp_event_processing` row is updated in place (attempt count incremented) rather than inserting a new row. After `MAX_DELIVERY_ATTEMPTS` (3), the row is marked `dead_lettered`. Completed or dead-lettered rows are never re-processed.
+
+**Reasoning:** The UNIQUE constraint provides idempotency guarantees — replaying the same event cannot double-deliver to a completed handler. Updating in place (rather than inserting) on retry avoids UNIQUE violations while preserving the attempt audit trail. Dead-lettering after 3 attempts prevents infinite retry loops for persistently failing handlers.
+
+---
+
+**D-P12-5 — Structured workflow engine: no eval, no arbitrary code**
+
+**Decision:** Workflows are defined as: `trigger_event_type` (string) + `conditions` (list of `{field, operator, value}`) + `actions` (list of `{action_type, params}`). Conditions use dot-notation field access against the event payload and support 8 operators: `equals`, `not_equals`, `greater_than`, `less_than`, `in`, `not_in`, `exists`, `boolean`. Actions are one of 6 types: `pause_account`, `resume_account`, `notify`, `update_policy`, `queue_review`, `trigger_workflow`. Conditions and actions are validated at creation time against these allowlists. No `eval()`, no `exec()`, no arbitrary Python or SQL injection is possible.
+
+**Reasoning:** Allowing arbitrary code in workflow definitions would make the system exploitable via malicious workflow creation. The allowlist approach provides rich automation capability while maintaining a fully auditable, safely serializable workflow definition.
+
+---
+
+**D-P12-6 — Experiments are immutable once activated**
+
+**Decision:** `EXPERIMENT_IMMUTABLE_STATUSES = frozenset({"active", "concluded", "cancelled"})`. Any attempt to modify an experiment (add variants, re-activate, change config) when its status is in this set raises `ExperimentAlreadyActiveError`. `conclude_experiment()` requires `status == "active"` or raises `ExperimentNotActiveError`. Variant assignment is deterministic hash-based and idempotent via `get_or_create_assignment()`.
+
+**Reasoning:** Modifying an active experiment's definition invalidates already-collected assignments and corrupts causal attribution. Immutability once active is the standard practice in A/B testing platforms to ensure result validity.
+
+---
+
+**D-P12-7 — Budget enforcement: three-tier check with warn/pause/block actions**
+
+**Decision:** `check_budget()` checks three tiers in order: workspace-scoped budget, channel-scoped budget, and platform_account-scoped budget. For each applicable active budget policy, it computes the spend in the current period and compares against the `limit_usd`. At `BUDGET_WARNING_THRESHOLD` (0.8) of the limit, a warning is appended to the result. At the limit, the configured `action` determines behavior: `warn` (warning only), `pause` (warning + recommended pause), `block` (raises `BudgetExceededError`). Budget periods: `daily`, `weekly`, `monthly`.
+
+**Reasoning:** Three-tier checking ensures that channel-level or account-level overspend is caught even if the workspace aggregate is within budget. The `block` action with a typed error allows callers to enforce hard stops before committing spend.
+
+---
+
+**D-P12-8 — All CP writes carry an actor field**
+
+**Decision:** Every create/update operation in the control plane accepts an `actor: str` parameter (CLI user, system process, API caller). This field is persisted in the relevant table (e.g. `cp_workspaces.created_by`, `cp_channels.created_by`, `cp_automation_policies.created_by`). No write bypasses actor attribution.
+
+**Reasoning:** Actor attribution is the prerequisite for future RBAC (Role-Based Access Control) implementation. Adding it now to all writes costs nothing architecturally and avoids a future migration that would require retroactively attributing historical mutations.
+
+---
+
+**D-P12-9 — cp_ prefix for all Phase 12 tables to avoid Phase 3 name collision**
+
+**Decision:** All 22 Phase 12 tables use the `cp_` prefix: `cp_organizations`, `cp_workspaces`, `cp_channels`, `cp_platforms`, etc. The Phase 3 `channels` table is not renamed and not referenced by the CP layer.
+
+**Reasoning:** Phase 3's `channels` table predates the CP concept and tracks discovery/opportunity intelligence data — it is semantically distinct from the CP `cp_channels` identity table. Renaming Phase 3's table would be a breaking migration across hundreds of tests. The prefix cleanly namespaces the new layer without touching existing tables.
+
+---
+
+**D-P12-10 — Operation executions use idempotency keys; DuplicateIdempotencyKeyError on collision**
+
+**Decision:** `cp_operation_executions` has a `UNIQUE(idempotency_key)` constraint. `start_operation()` checks for an existing row with the same key before inserting; if found, it returns the existing record unchanged (idempotent retry). If the caller passes a custom `idempotency_key` and the key already exists with a different operation type, `DuplicateIdempotencyKeyError` is raised. Default idempotency keys are computed from `(operation_type, workspace_id, timestamp-truncated-to-minute)`.
+
+**Reasoning:** Idempotent operation start prevents duplicate operations when a caller retries after a network failure. The typed error on key collision lets callers distinguish "this exact operation already ran" from "a different operation used this key."
+
+---
+
+**D-P12-11 — Three additional identity layers: organization, publishing profile, analytics identity**
+
+**Decision:** During the Phase 12 production-readiness review, three identity concepts were added to the v18 DDL: `cp_organizations` (top-level owner boundary above workspace), `cp_publishing_profiles` (account-scoped publishing defaults per platform account), and `cp_analytics_identities` (provider-side analytics identity per platform account, unique per `(platform_account_id, analytics_provider_key)`). These bring the total to 22 `cp_` tables. The schema version was not bumped (still v18); the tables were added in-place before commit.
+
+**Reasoning:** The original v18 model left a gap in the identity hierarchy at the top (no organization concept above workspace) and at the account level (no explicit record of publishing preferences or analytics-provider identity). Without `cp_organizations`, multi-tenant and white-label scenarios have no owner boundary above workspace. Without `cp_publishing_profiles`, per-account publishing defaults must be passed through every operation. Without `cp_analytics_identities`, the analytics pipeline cannot distinguish which provider-side account is the source of metrics when a single platform account connects to multiple analytics providers.

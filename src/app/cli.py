@@ -9,6 +9,7 @@ import typer
 
 from app import __version__
 from app.analytics.cli import analytics_app
+from app.control_plane.cli import control_app
 from app.core.config import get_config
 from app.core.database import open_db
 from app.core.logging import configure_logging, get_logger
@@ -50,6 +51,7 @@ app.add_typer(render_app, name="render")
 app.add_typer(publish_app, name="publish")
 app.add_typer(analytics_app, name="analytics")
 app.add_typer(learn_app, name="learn")
+app.add_typer(control_app, name="control")
 logger = get_logger(__name__)
 
 

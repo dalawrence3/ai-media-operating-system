@@ -1,8 +1,8 @@
 # Project State Snapshot
 
 **Date:** 2026-08-07
-**Latest implemented milestone:** Phase 11 — Learning & Optimization Engine
-**Next milestone:** Phase 12 (TBD)
+**Latest implemented milestone:** Phase 12 — Media Operations Control Plane
+**Next milestone:** Phase 13 (TBD)
 
 ---
 
@@ -30,16 +30,17 @@
 | Phase 9 — Publishing & Orchestration Engine | ✅ Complete | 2358 | 15 |
 | Phase 10 — Platform Analytics Engine | ✅ Complete | 2588 | 16 |
 | Phase 11 — Learning & Optimization Engine | ✅ Complete | 2846 | 17 |
+| Phase 12 — Media Operations Control Plane | ✅ Complete | 3101 | 18 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 17`
+`SCHEMA_VERSION = 18`
 
 ### Test count
-**2846 passed, 1 skipped** (ruff lint clean; skipped test is the always-skipped live smoke test)
+**3101 passed, 1 skipped** (ruff lint clean; skipped test is the always-skipped live smoke test)
 
 ### Packages implemented
 
@@ -59,6 +60,7 @@
 | Publishing & Orchestration Engine | `src/app/publishing/` | ✅ |
 | Platform Analytics Engine | `src/app/analytics/` | ✅ |
 | Learning & Optimization Engine | `src/app/learning/` | ✅ |
+| Media Operations Control Plane | `src/app/control_plane/` | ✅ |
 
 ### CLI subcommand groups
 
@@ -505,4 +507,4 @@ The `src/app/scenes/` package is the root of the Visual Intelligence Engine. Cur
 
 ### What waits
 
-Phase 12 (TBD).
+Phase 13 (TBD).
