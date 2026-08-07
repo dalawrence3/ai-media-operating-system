@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -1536,6 +1536,137 @@ CREATE INDEX IF NOT EXISTS idx_pre_plan ON publishing_review_events (publishing_
 CREATE INDEX IF NOT EXISTS idx_pre_event_type ON publishing_review_events (event_type);
 """
 
+# Phase 16 DDL — Analytics Engine (provider-neutral, immutable, append-only)
+_DDL_V16_ANALYTICS = """
+CREATE TABLE IF NOT EXISTS analytics_snapshots (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Full publication provenance (attribution)
+    publication_id              INTEGER NOT NULL,
+    publishing_plan_id          INTEGER NOT NULL,
+    publishing_job_id           INTEGER NOT NULL,
+    render_manifest_id          INTEGER NOT NULL,
+    scene_manifest_id           INTEGER NOT NULL,
+    production_plan_id          INTEGER NOT NULL,
+    script_id                   INTEGER NOT NULL,
+    topic_id                    INTEGER NOT NULL,
+    narration_run_id            INTEGER NOT NULL,
+    caption_run_id              INTEGER NOT NULL,
+    experiment_id               TEXT,
+
+    -- Provider identity
+    provider                    TEXT NOT NULL,
+    provider_version            TEXT NOT NULL,
+    adapter_version             TEXT NOT NULL,
+    engine_version              TEXT NOT NULL,
+    analytics_schema_version    TEXT NOT NULL,
+    db_schema_version           INTEGER NOT NULL,
+
+    -- Content (raw preserved, canonical in metrics table)
+    input_hash                  TEXT NOT NULL UNIQUE,
+    raw_metrics_json            TEXT NOT NULL DEFAULT '{}',
+
+    -- Coverage window
+    period_start                TEXT,
+    period_end                  TEXT,
+
+    -- Reporting completeness.  0 = provisional/partial, 1 = provider-confirmed final.
+    -- Providers may not report complete data for the current day or near-current periods.
+    -- Aggregates must not silently mix provisional and final data without recording this.
+    is_period_complete          INTEGER NOT NULL DEFAULT 0
+                                    CHECK (is_period_complete IN (0,1)),
+
+    -- Monetary context.  Required when any monetary metric (revenue_estimate) is present.
+    -- ISO 4217 three-letter currency code (e.g. 'USD').  NULL for non-monetary snapshots.
+    -- revenue_estimate is labeled 'estimate' because providers may later revise figures.
+    currency_code               TEXT
+                                    CHECK (currency_code IS NULL OR length(currency_code) = 3),
+
+    -- Timestamps (no updated_at — immutable)
+    ingested_at                 TEXT NOT NULL,
+    created_at                  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_as_publication ON analytics_snapshots (publication_id);
+CREATE INDEX IF NOT EXISTS idx_as_topic ON analytics_snapshots (topic_id);
+CREATE INDEX IF NOT EXISTS idx_as_provider ON analytics_snapshots (provider);
+
+CREATE TABLE IF NOT EXISTS analytics_metrics (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id                 INTEGER NOT NULL REFERENCES analytics_snapshots(id),
+    publication_id              INTEGER NOT NULL,
+    topic_id                    INTEGER NOT NULL,
+    provider                    TEXT NOT NULL,
+
+    metric_name                 TEXT NOT NULL,
+    metric_value                REAL NOT NULL,
+    period_start                TEXT,
+    period_end                  TEXT,
+
+    input_hash                  TEXT NOT NULL,
+    created_at                  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_am_snapshot ON analytics_metrics (snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_am_publication ON analytics_metrics (publication_id);
+CREATE INDEX IF NOT EXISTS idx_am_metric_name ON analytics_metrics (metric_name);
+
+CREATE TABLE IF NOT EXISTS analytics_aggregates (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    publication_id              INTEGER NOT NULL,
+    topic_id                    INTEGER NOT NULL,
+    provider                    TEXT NOT NULL,
+
+    period_type                 TEXT NOT NULL
+                                    CHECK (period_type IN ('daily','weekly','monthly','lifetime')),
+    period_key                  TEXT NOT NULL,
+
+    metric_name                 TEXT NOT NULL,
+    metric_value                REAL NOT NULL,
+    snapshot_count              INTEGER NOT NULL DEFAULT 0,
+
+    -- Calculation method: 'sum' for additive/monetary; 'latest_observation' for
+    -- gauge/ratio metrics (AGG_LAST).  Phase 11 must not treat a latest_observation
+    -- as a mathematically recomputed aggregate.
+    calculation_method          TEXT NOT NULL DEFAULT 'sum'
+                                    CHECK (calculation_method IN ('sum','latest_observation')),
+
+    -- Aggregate-level currency code.  Carried from source snapshots for monetary metrics.
+    -- NULL for non-monetary aggregates.  Aggregation raises CurrencyMismatchError if
+    -- source snapshots carry different currency codes for the same monetary metric.
+    currency_code               TEXT
+                                    CHECK (currency_code IS NULL OR length(currency_code) = 3),
+
+    -- JSON array of snapshot IDs that contributed to this aggregate.
+    -- Enables reproducible lineage: Phase 11 can trace every aggregate back to
+    -- the exact snapshot versions that produced it.
+    source_snapshot_ids_json    TEXT NOT NULL DEFAULT '[]',
+
+    input_hash                  TEXT NOT NULL,
+    created_at                  TEXT NOT NULL,
+
+    UNIQUE (publication_id, provider, period_type, period_key, metric_name)
+);
+CREATE INDEX IF NOT EXISTS idx_aa_publication ON analytics_aggregates (publication_id);
+CREATE INDEX IF NOT EXISTS idx_aa_topic ON analytics_aggregates (topic_id);
+CREATE INDEX IF NOT EXISTS idx_aa_period ON analytics_aggregates (period_type, period_key);
+
+CREATE TABLE IF NOT EXISTS analytics_review_events (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id                 INTEGER NOT NULL REFERENCES analytics_snapshots(id),
+
+    severity                    TEXT NOT NULL
+                                    CHECK (severity IN (
+                                        'info','warning','error','critical','other'
+                                    )),
+    notes                       TEXT NOT NULL DEFAULT '',
+    reviewer                    TEXT NOT NULL DEFAULT '',
+    input_hash                  TEXT NOT NULL,
+
+    created_at                  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_are_snapshot ON analytics_review_events (snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_are_severity ON analytics_review_events (severity);
+"""
+
 
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
@@ -1574,6 +1705,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -1593,6 +1725,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1611,6 +1744,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1628,6 +1762,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1644,6 +1779,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1659,6 +1795,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1673,6 +1810,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1686,6 +1824,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1698,6 +1837,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1709,6 +1849,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1719,6 +1860,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1728,6 +1870,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1736,6 +1879,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V13_SCENES)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1743,12 +1887,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 13 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 14:
         logger.info("Migrating schema from version 14 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V15_PUBLISHING)
+        conn.executescript(_DDL_V16_ANALYTICS)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 15:
+        logger.info("Migrating schema from version 15 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V16_ANALYTICS)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

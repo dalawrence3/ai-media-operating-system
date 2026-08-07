@@ -466,12 +466,18 @@ src/app/
 │   │   ├── fake.py           # FakePublishingProvider — deterministic, zero network, test double
 │   │   └── youtube.py        # YouTubePublishingProvider + FakeYouTubeAPIClient (injectable test boundary)
 │   └── cli.py                # publish_app: prepare/start/schedule/list/show/approve/reject/retry/cancel/events/doctor
+├── analytics/                # Phase 10 ✅: Platform Analytics Engine
+│   ├── constants.py          # Canonical metrics, aggregation ops, calculation methods
+│   ├── models.py             # AnalyticsSnapshot, AnalyticsMetric, AnalyticsAggregate, AnalyticsHandoff (frozen Pydantic)
+│   ├── orchestrator.py       # AnalyticsOrchestrator — ingest, aggregate, review; 7-check eligibility
+│   ├── aggregation.py        # Deterministic rollups: AGG_SUM / AGG_LAST, dedup, currency validation
+│   ├── repository.py         # Append-only persistence: snapshots, metrics, aggregates, review events
+│   ├── protocol.py           # AnalyticsProvider @runtime_checkable Protocol
+│   ├── providers/
+│   │   ├── fake.py           # FakeAnalyticsProvider — deterministic, zero network, test double
+│   │   └── youtube.py        # YouTubeAnalyticsProvider — normalization boundary, fixture-tested only
+│   └── cli.py                # analytics_app: ingest/snapshot/metrics/aggregate/show/list/events/doctor
 ├── pipeline/                 # Phase 10+: End-to-end pipeline orchestration (deferred)
-├── analytics/                # Phase 11: YouTube Analytics API (deferred)
-├── analytics/                # Phase 11: YouTube Analytics API
-│   ├── collector.py          # Metric collection and storage
-│   ├── profitability.py      # Cost vs. revenue calculation
-│   └── reports.py            # CLI report generation
 ├── experiments/              # Phase 12: Controlled experimentation
 │   ├── design.py             # Experiment design and sample-size enforcement
 │   └── outcomes.py           # Result recording and promotion logic
@@ -534,9 +540,9 @@ for one-active-approved-per-narration-run enforcement
 Planned additions per phase:
 - Phase 7 ✅: `scene_manifests`, `scene_manifest_scenes`, `scene_manifest_assets`, `scene_manifest_review_events`
 - Phase 8: `asset_providers`, `resolved_assets`, `renders`, `thumbnails`
-- Phase 9: extend `runs`
-- Phase 10: `publications`
-- Phase 11: `video_metrics`, `channel_metrics`, `cost_records`
+- Phase 9 ✅: `publishing_plans`, `publishing_jobs`, `publications`, `publishing_review_events`
+- Phase 10 ✅: `analytics_snapshots`, `analytics_metrics`, `analytics_aggregates`, `analytics_review_events`
+- Phase 11: optimization engine tables (TBD)
 - Phase 12: `experiments`, `experiment_arms`
 - Phase 13: `audit_log`, `circuit_breaker_events`, `schedules`
 - Phase 14: `accounts`; extend channel tables

@@ -1,8 +1,8 @@
 # Project State Snapshot
 
 **Date:** 2026-08-06
-**Latest implemented milestone:** Phase 9 — Publishing & Orchestration Engine
-**Next milestone:** Phase 10 (TBD)
+**Latest implemented milestone:** Phase 10 — Platform Analytics Engine
+**Next milestone:** Phase 11 (Optimization Engine)
 
 ---
 
@@ -28,16 +28,17 @@
 | Phase 7 — Visual Intelligence & Scene Planning | ✅ Complete | 2019 | 13 |
 | Phase 8 — Rendering Engine | ✅ Complete | 2154 | 14 |
 | Phase 9 — Publishing & Orchestration Engine | ✅ Complete | 2358 | 15 |
+| Phase 10 — Platform Analytics Engine | ✅ Complete | 2588 | 16 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 15`
+`SCHEMA_VERSION = 16`
 
 ### Test count
-**2358 passing, 1 skipped** (ruff clean; skipped test is the always-skipped live smoke test)
+**2588 passing, 1 skipped** (ruff lint clean; skipped test is the always-skipped live smoke test)
 
 ### Packages implemented
 
@@ -55,6 +56,7 @@
 | Visual Intelligence Engine (scene manifests) | `src/app/scenes/` | ✅ |
 | Rendering Engine (render manifests, jobs, review) | `src/app/media/` | ✅ |
 | Publishing & Orchestration Engine | `src/app/publishing/` | ✅ |
+| Platform Analytics Engine | `src/app/analytics/` | ✅ |
 
 ### CLI subcommand groups
 
@@ -73,6 +75,7 @@ ace captions        — caption and timing artifacts
 ace scenes          — Visual Intelligence: plan and review scene manifests
 ace render          — Rendering Engine: compose, render, validate, and review MP4s
 ace publish         — Publishing Engine: prepare, approve, start, schedule, retry, cancel, review
+ace analytics       — Analytics Engine: ingest, normalize, aggregate, and review publication metrics
 ace version         — version info
 ace doctor          — environment diagnostics
 ```
@@ -380,8 +383,66 @@ The `src/app/scenes/` package is the root of the Visual Intelligence Engine. Cur
 
 ---
 
-## What waits
+## Phase 10 completion details
 
-### Immediate next: Phase 10 (TBD)
+### New files (Phase 10)
 
-Dependencies: Phases 0–9 complete ✅.
+**Source — Platform Analytics Engine (`src/app/analytics/`):**
+- `src/app/analytics/__init__.py`
+- `src/app/analytics/constants.py` — 12 canonical metrics, METRIC_KIND, METRIC_AGGREGATION_OP (AGG_SUM / AGG_LAST only), MONETARY_METRICS, CALC_METHOD_SUM / CALC_METHOD_LATEST_OBSERVATION, calc_method_for(), PUBLICATION_ELIGIBLE_STATUSES
+- `src/app/analytics/errors.py` — PublicationIneligibleError, MissingCurrencyError, CurrencyMismatchError, DuplicateSnapshotError, and 6 others
+- `src/app/analytics/hashing.py` — `AnalyticsHashInput`, `compute_analytics_input_hash()` (SHA-256, deterministic)
+- `src/app/analytics/models.py` — `AnalyticsSnapshot`, `AnalyticsMetric`, `AnalyticsAggregate`, `AnalyticsReviewEvent` (frozen Pydantic); `AnalyticsHandoff` (Phase 11 bundle); `AnalyticsIngestDraft`, `ReviewEventDraft` (mutable dataclasses)
+- `src/app/analytics/normalization.py` — `validate_canonical_metrics()`
+- `src/app/analytics/validation.py` — `validate_ingest_draft()`, `validate_review_severity()`, `validate_review_notes()`
+- `src/app/analytics/protocol.py` — `AnalyticsProvider` `@runtime_checkable` Protocol, `ProviderMetrics`
+- `src/app/analytics/metrics.py` — period key helpers: `daily_key()`, `weekly_key()`, `monthly_key()`, `LIFETIME_KEY`, `parse_iso_datetime()`
+- `src/app/analytics/aggregation.py` — `aggregate_publication()`, `aggregate_all_periods()`, `_ReductionResult`, `_reduce_metrics()`, `_resolve_currency()`, `_build_snapshot_currency_map()`
+- `src/app/analytics/repository.py` — `create_snapshot()`, `upsert_aggregate()`, `create_metric()`, `create_review_event()`, list/get functions; all append-only
+- `src/app/analytics/orchestrator.py` — `AnalyticsOrchestrator` (ingest, aggregate, record_review, list_*); `_validate_publication_eligibility()` (7-check chain, no bypass)
+- `src/app/analytics/cli.py` — `analytics_app` with 8 subcommands
+- `src/app/analytics/providers/__init__.py`
+- `src/app/analytics/providers/fake.py` — `FakeAnalyticsProvider` (deterministic, zero-network, default for all tests)
+- `src/app/analytics/providers/youtube.py` — `YouTubeAnalyticsProvider` (fixture-tested normalization boundary, not live)
+
+**Tests (230 analytics-specific tests):**
+- `tests/test_analytics_constants.py` (18 tests)
+- `tests/test_analytics_hashing.py` (12 tests)
+- `tests/test_analytics_normalization.py` (12 tests)
+- `tests/test_analytics_validation.py` (14 tests)
+- `tests/test_analytics_metrics.py` (12 tests)
+- `tests/test_analytics_models.py` (20 tests)
+- `tests/test_analytics_repository.py` (28 tests)
+- `tests/test_analytics_aggregation.py` (18 tests)
+- `tests/test_analytics_orchestrator.py` (36 tests)
+- `tests/test_analytics_providers.py` (20 tests)
+- `tests/test_analytics_cli.py` (18 tests)
+- `tests/test_analytics_migration.py` (8 tests)
+
+### Modified files (Phase 10)
+
+- `src/app/core/database.py` — SCHEMA_VERSION 15→16; `_DDL_V16_ANALYTICS` (4 tables: `analytics_snapshots`, `analytics_metrics`, `analytics_aggregates`, `analytics_review_events`); v16 DDL includes `is_period_complete`, `currency_code` on snapshots; `calculation_method`, `currency_code`, `source_snapshot_ids_json` on aggregates
+- `src/app/cli.py` — registered `analytics_app` (`ace analytics`)
+- `tests/test_database.py` — v15→v16 assertions
+
+### Key architectural invariants (Phase 10)
+
+1. **Append-only, no UPDATE or DELETE** — Every analytics table is strictly append-only. Corrections create new snapshot rows; old rows remain for audit.
+2. **Deterministic SHA-256 hashing** — `AnalyticsHashInput` fields → `input_hash`; identical replay returns the existing snapshot without a new insert.
+3. **No production bypass** — `_validate_publication_eligibility()` performs 7 checks (publication exists, status eligible, provider_video_id set, provider matches, render_manifest exists, approved, not superseded). No flag can skip this check.
+4. **Metric semantics clearly labeled** — `calculation_method` field on every aggregate: `'sum'` (additive/monetary) vs `'latest_observation'` (gauge/ratio). Phase 11 must not treat a `latest_observation` as a recomputed aggregate.
+5. **Deduplication for additive metrics** — For `AGG_SUM` metrics with explicit `period_start/end`, the most recently ingested snapshot per `(period_start, period_end)` base period wins. No double-counting on re-ingest.
+6. **Gauge and ratio use AGG_LAST** — `likes`, `dislikes`, `comments`, `ctr`, `average_view_duration` all use AGG_LAST (latest provider observation). These are not summed.
+7. **Currency contract** — `currency_code TEXT` (ISO 4217, 3-char) on snapshots and aggregates. Required when monetary metrics (`revenue_estimate`) are present; `MissingCurrencyError` raised at ingest time if absent. `CurrencyMismatchError` raised if aggregation spans mixed currencies.
+8. **Source lineage** — `source_snapshot_ids_json TEXT` on every aggregate row; enables reproducible lineage tracing to source snapshots.
+9. **Period completeness** — `is_period_complete INTEGER` on snapshots: 0=provisional (default), 1=provider-confirmed final.
+10. **YouTube adapter is fixture-tested only** — `YouTubeAnalyticsProvider` is an injectable normalization boundary tested with deterministic fixtures. Not verified against the live YouTube Analytics API.
+11. **Provider isolation** — YouTube API field names (camelCase) exist only inside `providers/youtube.py`. The rest of the codebase uses canonical snake_case metric names.
+12. **`AnalyticsHandoff` for Phase 11** — Frozen Pydantic bundle carrying the full attribution chain, aggregates with calculation methods, source snapshot IDs, and currency context. Phase 11 reads; never writes back to analytics tables.
+13. **Schema version stays at 16** — v16 DDL revised in-place (no version bump) to add `is_period_complete`, `currency_code`, `calculation_method`, and `source_snapshot_ids_json`.
+
+### What waits
+
+### Immediate next: Phase 11 (Optimization Engine)
+
+Dependencies: Phases 0–10 complete ✅.
