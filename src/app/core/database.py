@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -1667,6 +1667,136 @@ CREATE INDEX IF NOT EXISTS idx_are_snapshot ON analytics_review_events (snapshot
 CREATE INDEX IF NOT EXISTS idx_are_severity ON analytics_review_events (severity);
 """
 
+# Phase 11 DDL — Learning & Optimization Engine.
+# Three tables, all append-only:
+#   learning_runs             — one row per optimizer invocation
+#   optimization_recommendations — one row per recommendation (superseded not deleted)
+#   recommendation_review_events — append-only human review actions
+_DDL_V17_LEARNING = """
+CREATE TABLE IF NOT EXISTS learning_runs (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic_id                INTEGER NOT NULL REFERENCES topics(id),
+    publication_id          INTEGER,
+
+    -- Counts populated on completion
+    publication_count       INTEGER NOT NULL DEFAULT 0,
+    recommendation_count    INTEGER NOT NULL DEFAULT 0,
+
+    status                  TEXT NOT NULL DEFAULT 'running'
+                                CHECK (status IN ('running','completed','partial','failed')),
+
+    engine_version          TEXT NOT NULL,
+    schema_version          TEXT NOT NULL,
+    input_hash              TEXT NOT NULL,
+
+    error                   TEXT,
+
+    created_at              TEXT NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    completed_at            TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_lr_topic ON learning_runs (topic_id);
+CREATE INDEX IF NOT EXISTS idx_lr_status ON learning_runs (status);
+
+CREATE TABLE IF NOT EXISTS optimization_recommendations (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    learning_run_id         INTEGER NOT NULL REFERENCES learning_runs(id),
+    topic_id                INTEGER NOT NULL REFERENCES topics(id),
+    publication_id          INTEGER,
+
+    -- What this recommendation targets
+    domain                  TEXT NOT NULL
+                                CHECK (domain IN (
+                                    'topics','research','scripts','narration',
+                                    'captions','scenes','media','publishing','analytics'
+                                )),
+    subsystem               TEXT NOT NULL,
+    measure                 TEXT NOT NULL,
+
+    -- Human-readable content
+    title                   TEXT NOT NULL,
+    explanation             TEXT NOT NULL,
+    expected_improvement    TEXT NOT NULL,
+
+    -- Evidence and confidence
+    evidence_json           TEXT NOT NULL DEFAULT '[]',
+    evidence_classification TEXT NOT NULL DEFAULT 'observational'
+                                CHECK (evidence_classification IN (
+                                    'observational','controlled_experiment',
+                                    'human_preference','operational_failure','mixed'
+                                )),
+    recommendation_strength TEXT NOT NULL DEFAULT 'exploratory'
+                                CHECK (recommendation_strength IN ('exploratory','actionable')),
+    confidence              TEXT NOT NULL
+                                CHECK (confidence IN ('low','medium','high')),
+    confidence_score        REAL NOT NULL
+                                CHECK (confidence_score >= 0.0 AND confidence_score <= 1.0),
+
+    -- Attribution back to upstream subsystem
+    affected_subsystem      TEXT NOT NULL DEFAULT '',
+    subsystem_entity_type   TEXT NOT NULL DEFAULT '',
+    subsystem_entity_id     INTEGER,
+
+    -- Experiment context (nullable)
+    experiment_id           TEXT,
+
+    -- Provenance
+    engine_version          TEXT NOT NULL,
+    schema_version          TEXT NOT NULL,
+    input_hash              TEXT NOT NULL,
+
+    -- Lifecycle (append-only: superseded replaces deleted)
+    status                  TEXT NOT NULL DEFAULT 'pending'
+                                CHECK (status IN ('pending','accepted','rejected','superseded')),
+    superseded_at           TEXT,
+    superseded_by_id        INTEGER REFERENCES optimization_recommendations(id),
+
+    created_at              TEXT NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_or_learning_run ON optimization_recommendations (learning_run_id);
+CREATE INDEX IF NOT EXISTS idx_or_topic ON optimization_recommendations (topic_id);
+CREATE INDEX IF NOT EXISTS idx_or_domain ON optimization_recommendations (domain);
+CREATE INDEX IF NOT EXISTS idx_or_status ON optimization_recommendations (status);
+
+CREATE TABLE IF NOT EXISTS recommendation_review_events (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    recommendation_id       INTEGER NOT NULL
+                                REFERENCES optimization_recommendations(id),
+    topic_id                INTEGER NOT NULL REFERENCES topics(id),
+
+    event_type              TEXT NOT NULL
+                                CHECK (event_type IN ('accepted','rejected','noted')),
+    reviewer                TEXT NOT NULL DEFAULT '',
+    notes                   TEXT NOT NULL DEFAULT '',
+    expected_outcome        TEXT NOT NULL DEFAULT '',
+
+    input_hash              TEXT NOT NULL,
+    created_at              TEXT NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_rre_recommendation
+    ON recommendation_review_events (recommendation_id);
+CREATE INDEX IF NOT EXISTS idx_rre_topic ON recommendation_review_events (topic_id);
+
+CREATE TABLE IF NOT EXISTS learning_run_generator_results (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    learning_run_id         INTEGER NOT NULL REFERENCES learning_runs(id),
+    generator_name          TEXT NOT NULL
+                                CHECK (generator_name IN (
+                                    'ctr','retention','engagement',
+                                    'watch_time','subscribers','shares'
+                                )),
+    status                  TEXT NOT NULL
+                                CHECK (status IN ('succeeded','failed')),
+    recommendation_count    INTEGER NOT NULL DEFAULT 0,
+    error_message           TEXT,
+    created_at              TEXT NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_lrgr_run ON learning_run_generator_results (learning_run_id);
+"""
+
 
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
@@ -1706,6 +1836,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -1726,6 +1857,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1745,6 +1877,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1763,6 +1896,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1780,6 +1914,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1796,6 +1931,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1811,6 +1947,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1825,6 +1962,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1838,6 +1976,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1850,6 +1989,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1861,6 +2001,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1871,6 +2012,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1880,6 +2022,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1888,6 +2031,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V14_RENDERS)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -1895,12 +2039,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 14 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V15_PUBLISHING)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 15:
         logger.info("Migrating schema from version 15 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V16_ANALYTICS)
+        conn.executescript(_DDL_V17_LEARNING)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 16:
+        logger.info("Migrating schema from version 16 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V17_LEARNING)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

@@ -25,21 +25,13 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 7 complete)
+## Current state (Phase 11 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
-- Versioned schema (SCHEMA_VERSION=13): `topics`, `sources`, `scripts`,
-  `runs`, `ai_calls`, Phase 3 intelligence tables, `source_contents`,
-  Phase 4.2 claim extraction tables, Phase 5 `script_generation_runs`
-  and `script_citations` tables, Phase 6 M6.1 `production_plans`,
-  `production_segments`, `production_segment_citations`, and
-  `production_plan_review_events` tables, Phase 6 M6.2
-  `voice_profiles`, `narration_runs`, `narration_segment_assets`,
-  `tts_calls`, and `narration_review_events` tables, Phase 6 M6.3A
-  `caption_runs`, `caption_cues`, and `caption_review_events` tables,
-  Phase 7 `scene_manifests`, `scene_manifest_scenes`,
-  `scene_manifest_assets`, and `scene_manifest_review_events` tables.
+- Versioned schema (SCHEMA_VERSION=17): all prior tables through Phase 10
+  plus Phase 11 `learning_runs`, `optimization_recommendations`,
+  `recommendation_review_events`, and `learning_run_generator_results` tables.
 - Phase 1 domain entities: `Topic`, `Source`, `Script`, `Run` — Pydantic
   models, typed repository layer.
 - Phase 2: `src/app/ai/` package — provider-independent LLM abstraction
@@ -329,8 +321,9 @@ optional adapters after YouTube is stable.
     training signal
   - CLI: `ace scenes plan/list/show/approve/reject/reject-scene/events/manifest`
 - Typer CLI with `topics`, `sources`, `scripts`, `runs`, `ai`, `channels`,
-  `discover`, `intelligence`, `production`, `narration`, `captions`, `scenes`
-  subcommand groups and diagnostic `version`, `doctor` commands.
+  `discover`, `intelligence`, `production`, `narration`, `captions`, `scenes`,
+  `render`, `publish`, `analytics`, `learn` subcommand groups and diagnostic
+  `version`, `doctor` commands.
 - Stdlib structured logging via `ACE_LOG_LEVEL`.
 
 ## Package layout (target — populated phase by phase)
@@ -477,7 +470,20 @@ src/app/
 │   │   ├── fake.py           # FakeAnalyticsProvider — deterministic, zero network, test double
 │   │   └── youtube.py        # YouTubeAnalyticsProvider — normalization boundary, fixture-tested only
 │   └── cli.py                # analytics_app: ingest/snapshot/metrics/aggregate/show/list/events/doctor
-├── pipeline/                 # Phase 10+: End-to-end pipeline orchestration (deferred)
+├── learning/                 # Phase 11 ✅: Learning & Optimization Engine
+│   ├── __init__.py           # Package docstring: constraints and public interface
+│   ├── constants.py          # Domain/subsystem taxonomy, confidence thresholds, review statuses
+│   ├── errors.py             # LearningError hierarchy (run/recommendation/review errors)
+│   ├── hashing.py            # SHA-256 hashes for runs, recommendations, and review events
+│   ├── models.py             # EvidenceItem dataclass; draft dataclasses; frozen Pydantic DB models
+│   ├── scoring.py            # Three-factor confidence: volume, effect, consistency
+│   ├── attribution.py        # resolve_attribution(): maps domain → AnalyticsHandoff FK field
+│   ├── recommendations.py    # Six deterministic generators; generate_all_recommendations()
+│   ├── validation.py         # Domain, subsystem, confidence, status, review-event validators
+│   ├── repository.py         # Append-only CRUD: runs, recommendations, review events
+│   ├── orchestrator.py       # analyze_publication(), accept/reject_recommendation(), list helpers
+│   └── cli.py                # learn_app: analyze/list/show/accept/reject/events/runs
+├── pipeline/                 # Phase 11+: End-to-end pipeline orchestration (deferred)
 ├── experiments/              # Phase 12: Controlled experimentation
 │   ├── design.py             # Experiment design and sample-size enforcement
 │   └── outcomes.py           # Result recording and promotion logic
@@ -542,7 +548,7 @@ Planned additions per phase:
 - Phase 8: `asset_providers`, `resolved_assets`, `renders`, `thumbnails`
 - Phase 9 ✅: `publishing_plans`, `publishing_jobs`, `publications`, `publishing_review_events`
 - Phase 10 ✅: `analytics_snapshots`, `analytics_metrics`, `analytics_aggregates`, `analytics_review_events`
-- Phase 11: optimization engine tables (TBD)
+- Phase 11 ✅: `learning_runs`, `optimization_recommendations`, `recommendation_review_events`
 - Phase 12: `experiments`, `experiment_arms`
 - Phase 13: `audit_log`, `circuit_breaker_events`, `schedules`
 - Phase 14: `accounts`; extend channel tables

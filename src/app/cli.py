@@ -32,6 +32,7 @@ from app.core.repository import (
 from app.intelligence.cli import channels_app, discover_app
 from app.intelligence.repository import promote_opportunity
 from app.intelligence.scoring_cli import scoring_app
+from app.learning.cli import learn_app
 from app.media.cli import render_app
 from app.publishing.cli import publish_app
 from app.scenes.cli import scenes_app
@@ -48,6 +49,7 @@ app.add_typer(scenes_app, name="scenes")
 app.add_typer(render_app, name="render")
 app.add_typer(publish_app, name="publish")
 app.add_typer(analytics_app, name="analytics")
+app.add_typer(learn_app, name="learn")
 logger = get_logger(__name__)
 
 

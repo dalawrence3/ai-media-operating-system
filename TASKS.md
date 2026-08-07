@@ -147,6 +147,42 @@
   credential file design: path-only env vars, never secrets in SQLite;
   204 new tests. 2358 total. Ruff clean.
 
+- **Phase 10: Platform Analytics Engine** — `src/app/analytics/` package
+  with `AnalyticsProvider` Protocol, `FakeAnalyticsProvider`,
+  `YouTubeAnalyticsProvider` (fixture-tested boundary, no live calls);
+  AGG_SUM/AGG_LAST metric semantics; deterministic SHA-256 hashing;
+  7-check publication eligibility guard (no bypass); deduplication for
+  additive metrics; currency contract; source lineage via
+  `source_snapshot_ids_json`; `AnalyticsHandoff` Phase 11 bundle;
+  SCHEMA_VERSION 15→16 (4 new tables: `analytics_snapshots`,
+  `analytics_metrics`, `analytics_aggregates`, `analytics_review_events`);
+  `ace analytics` CLI (8 subcommands); 230 new tests. 2588 total. Ruff clean.
+
+- **Phase 11: Learning & Optimization Engine** — `src/app/learning/` package;
+  deterministic, explainable recommendations from analytics history with no
+  ML, no embeddings, no network calls, no automatic application; six recommendation
+  generators (CTR, retention, engagement, watch-time, subscribers, shares) each with
+  named `GeneratorResult` tracking; three-factor confidence scoring (volume × effect
+  × consistency) — scores are deterministic heuristic signal strength, not statistical
+  confidence intervals; single observation period yields zero consistency contribution;
+  duplicate snapshot IDs across evidence items do not inflate volume; recommendations
+  classified as `exploratory` (insufficient evidence) or `actionable` (≥2 unique
+  snapshots AND confidence ≥ 0.4); all Phase 11 evidence is `observational` —
+  `experiment_id` alone does NOT qualify as `controlled_experiment`; append-only
+  `optimization_recommendations` with full evidence JSON and SHA-256 hashes;
+  hashes include `evidence_classification` and `recommendation_strength`; human-only
+  review lifecycle (pending → accepted/rejected); supersession is not rejection —
+  superseded recommendations remain inspectable; generator failures recorded in
+  `learning_run_generator_results` (visible and attributable); mixed generator
+  success/failure yields `partial` run status; attribution through AnalyticsHandoff
+  FK chain; Phase 11 consumes only `AnalyticsHandoff` — upstream human-review
+  signals (scripts, narration, scenes, rendering, publishing) are not ingested;
+  `ReviewedOptimizationHandoff` is the frozen Phase 12 input boundary;
+  SCHEMA_VERSION 16→17 (4 new tables: `learning_runs`,
+  `optimization_recommendations`, `recommendation_review_events`,
+  `learning_run_generator_results`); `ace learn` CLI (7 subcommands);
+  258 new tests. 2846 total. Ruff clean.
+
 ---
 
 ## Roadmap

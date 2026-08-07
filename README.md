@@ -14,14 +14,16 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 6 Milestone 6.3A (Caption and Timing Artifacts) is complete.**
+**Phase 11 (Learning & Optimization Engine) is complete.**
 
-The system can generate SRT, WebVTT, and JSON caption artifacts for every
-approved narration run, then produce deterministic scene manifests that
-describe every second of future video with shot types, camera grammar,
-transitions, asset recommendations (with licensing metadata and evidence
-linkage), and immutable review governance.
-2019 tests pass. SCHEMA_VERSION 13.
+The system now ingests analytics data, generates deterministic human-reviewable
+optimization recommendations (no ML, no automatic changes, no automatic application),
+and provides a full review lifecycle for each recommendation. Recommendations are
+classified as `exploratory` or `actionable` based on evidence volume and confidence.
+Confidence scores are deterministic heuristic signal-strength values, not statistical
+confidence intervals. All Phase 11 evidence is observational; experiment_id alone
+does not qualify as controlled-experiment evidence. 2846 tests pass (1 skipped).
+SCHEMA_VERSION 17.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -136,9 +138,10 @@ Implemented phases:
 End-to-end workflow: channel strategy → discovery → scoring → topic promotion
 → source ingestion → claim extraction → script generation → human approval
 → production plan creation → human review (approve/reject) → narration
-synthesis → narration review (approve/reject segments) → caption generation
-→ caption review (approve/reject runs and cues) → scene manifest planning
-→ scene review (approve/reject manifests and scenes).
+synthesis → narration review → caption generation → caption review → scene
+manifest planning → scene review → rendering → render review → publishing →
+analytics ingestion → optimization recommendations → human recommendation review.
+
 
 ## Requirements
 

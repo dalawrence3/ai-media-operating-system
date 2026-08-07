@@ -1194,3 +1194,109 @@ Operationally: review event tables are insert-only; no application `UPDATE` or `
 **Decision:** When creating a `Publication` record before the upload begins, `provider_video_id` is set to `__pending_job_{job_id}__`. After upload succeeds, it is updated to the real provider-assigned ID via a raw SQL UPDATE.
 
 **Reasoning:** The `publications` table has a partial unique index on `(provider, provider_video_id) WHERE deleted_at IS NULL` to prevent duplicate live publications. Storing an empty string as the initial `provider_video_id` would violate this constraint on the second attempt (e.g. retry). A job-ID-scoped placeholder is guaranteed unique per job and is replaced atomically before any downstream reads.
+
+---
+
+## Phase 11: Learning & Optimization Engine decisions
+
+**D-P11-1 — No automatic optimization; recommendations are read-only artifacts**
+
+**Decision:** The engine never mutates any production data. It produces `optimization_recommendations` rows that a human must explicitly `accept` or `reject`. No code path in `src/app/learning/` modifies any table outside the four Phase 11 tables (`learning_runs`, `optimization_recommendations`, `recommendation_review_events`, `learning_run_generator_results`). Acceptance of a recommendation does not modify any upstream engine table (scripts, narration, scenes, rendering, publishing).
+
+**Reasoning:** Automatic prompt mutation or parameter changes based on analytics signals would make production behavior non-reproducible and bypass the human approval gates that every other engine enforces. An observation engine that can only observe, attribute, measure, explain, and recommend is safe to run repeatedly; one that can act is not.
+
+---
+
+**D-P11-2 — Three-factor confidence scoring, not a single metric**
+
+**Decision:** Confidence is the average of three capped sub-scores: volume (log2 of deduplicated snapshot count, cap 1.0), effect (gap/threshold ratio, cap 1.0), and consistency (unique period diversity, cap 1.0). All three have equal weight. The combined score maps to `low/medium/high` at thresholds 0.4 and 0.7. The returned score is a **heuristic signal strength**, not a statistical confidence interval — it reflects the quality and breadth of observational evidence, not a probability of a hypothesis being true. A single independent observation period yields zero consistency contribution (not a neutral 0.5). Duplicate snapshot IDs across multiple evidence items are deduplicated before computing the volume factor.
+
+**Reasoning:** Any single metric misleads. High volume with a negligible effect is weak evidence. A large effect on a single data point is unreliable. Either alone could produce high confidence for an unsupported recommendation. The three-factor structure prevents each of these failure modes.
+
+---
+
+**D-P11-3 — Evidence stored as JSON blob, not normalized rows**
+
+**Decision:** `optimization_recommendations.evidence_json` stores the full `EvidenceItem` list as a JSON array. Evidence is not stored in a separate normalized table.
+
+**Reasoning:** Evidence is immutable once a recommendation is created — it is a snapshot of the aggregate values that justified the recommendation. Normalizing it would add joins without enabling any mutable update. A JSON blob is simpler, faster to read, and sufficient for the human-reviewable audit trail.
+
+---
+
+**D-P11-4 — SHA-256 hashes for all three entity types**
+
+**Decision:** `learning_runs`, `optimization_recommendations`, and `recommendation_review_events` each have a dedicated `input_hash` (SHA-256). For recommendations, the hash incorporates the sorted `snapshot_ids` from all evidence items.
+
+**Reasoning:** Deterministic hashes allow replay detection and enable future deduplication across runs. Sorting snapshot IDs before hashing ensures that the hash is stable regardless of the order in which evidence items were appended.
+
+---
+
+**D-P11-5 — Generator-level exception isolation**
+
+**Decision:** `generate_all_recommendations()` wraps each of the six generators in its own `try/except`. A generator that raises does not abort the analysis run — the remaining generators still execute.
+
+**Reasoning:** A defect in one generator (e.g., a metric with unexpected data shape) should not suppress potentially valid recommendations from the other five. Each generator is independent, and their outputs are independent. Isolation makes the engine more robust without hiding bugs — the exception is still logged.
+
+---
+
+**D-P11-6 — AnalyticsHandoff is the only cross-phase input; no analytics tables are joined directly**
+
+**Decision:** `orchestrator._build_handoff_from_db()` assembles an `AnalyticsHandoff` from `analytics_snapshots` and `analytics_aggregates` and passes it to generators. Generators call `_get_lifetime_aggregate(conn, publication_id, metric_name)` which queries `analytics_aggregates` directly — but they do not access any other Phase 10 table, and they never write to Phase 10 tables.
+
+**Reasoning:** The `AnalyticsHandoff` contract was defined in Phase 10 as the explicit Phase 11 handoff interface. Consuming it preserves the phase boundary. Direct DB queries for aggregates (not raw snapshots) are permitted because aggregates are the unit of analysis — raw snapshots are opaque to Phase 11.
+
+---
+
+**D-P11-7 — Evidence classification is always observational in Phase 11; experiment_id alone does not qualify**
+
+**Decision:** `_classify_evidence()` always returns `observational`. The presence of `experiment_id` on an `AnalyticsHandoff` does not trigger `controlled_experiment` classification. A `controlled_experiment` classification requires validated A/B experiment attribution with explicit treatment/control semantics — which Phase 11 does not implement. The `evidence_classification` field is extensible for future phases.
+
+**Reasoning:** Misclassifying observational data as experimental would mislead downstream consumers about the epistemological status of a recommendation. Observational data cannot support controlled-experiment claims regardless of whether an experiment_id happens to be present in the handoff.
+
+---
+
+**D-P11-8 — Recommendation strength: exploratory vs actionable**
+
+**Decision:** Each recommendation carries `recommendation_strength: exploratory | actionable`. A recommendation is `actionable` only when confidence_score ≥ 0.4 AND the evidence contains ≥ 2 unique snapshot IDs. All other recommendations are `exploratory` (insufficient evidence; hypothesis only). The thresholds are named constants (`MIN_CONFIDENCE_ACTIONABLE`, `MIN_UNIQUE_SNAPSHOTS_ACTIONABLE`) and included in the SHA-256 hash payload.
+
+**Reasoning:** Presenting every recommendation with equal weight is misleading. A recommendation backed by a single data point in one period is a hypothesis worth watching, not a call to action. Separating exploratory from actionable gives reviewers a clear signal about which recommendations have earned priority attention.
+
+---
+
+**D-P11-9 — Causal language is prohibited in observational recommendation text**
+
+**Decision:** Recommendation `title` and `explanation` fields must not contain causal claims (causes, increases, decreases, improves, reduces, leads to, results in, because of). All recommendation text must use associative language (associated with, observed alongside, correlated with, whether X responds to Y). Contract tests enforce this at every generated recommendation.
+
+**Reasoning:** Observational data from a single channel is not a controlled experiment. Causal claims in recommendation text would misrepresent the epistemological status of the evidence and could lead operators to over-invest in unvalidated hypotheses.
+
+---
+
+**D-P11-10 — Generator failures yield partial run status; failed generators do not supersede prior recommendations**
+
+**Decision:** When some generators succeed and some fail during `analyze_publication()`, the learning run status is `partial` (not `failed`). A failed generator records a `GeneratorResult` with `status='failed'` and an error message in `learning_run_generator_results`. It does not suppress recommendations from successful generators, and it does not supersede any prior active recommendation for its domain.
+
+**Reasoning:** A defect in one generator should not erase valid recommendations from the other five. Partial failure is distinguishable from total failure. Keeping the previous recommendation active when a generator fails prevents regression in recommendation coverage.
+
+---
+
+**D-P11-11 — Supersession is not rejection**
+
+**Decision:** A recommendation is superseded when a new learning run produces a recommendation for the same `(topic_id, publication_id, domain, subsystem, measure)` key with a different `input_hash`. The old row receives `status='superseded'`, `superseded_at`, and `superseded_by_id`. It is never deleted. Supersession is system-initiated only. Human operators may only `accept` or `reject`; they cannot supersede.
+
+**Reasoning:** A superseded recommendation was valid when created — its evidence has simply been updated. Keeping the history enables auditing of how recommendations evolved over time. Conflating supersession with rejection would destroy the attribution chain.
+
+---
+
+**D-P11-12 — Phase 11 does not ingest upstream human-review signals**
+
+**Decision:** Phase 11 consumes only `AnalyticsHandoff` (Phase 10 output). Human review signals from upstream phases (script approval/rejection, narration review events, scene manifest decisions, render approval, publishing review) are not read by Phase 11 and are not used to weight or filter recommendations.
+
+**Reasoning:** Upstream review signals represent qualitative production decisions, not quantitative performance outcomes. Mixing them with analytics-derived recommendations without a principled integration model would produce confounded results. This integration is deferred to a future phase where the signals can be properly attributed.
+
+---
+
+**D-P11-13 — ReviewedOptimizationHandoff is the frozen Phase 12 input boundary**
+
+**Decision:** `ReviewedOptimizationHandoff` is a frozen Pydantic model (immutable after construction) that bundles the learning run metadata, accepted/rejected/pending recommendations with their review histories, generator results, and version provenance. Phase 12 MUST consume this handoff as its sole input from Phase 11. It must not query raw learning tables or apply recommendations automatically.
+
+**Reasoning:** Defining an explicit frozen handoff at the phase boundary prevents Phase 12 from depending on internal Phase 11 implementation details and ensures that the hand-off contract is testable in isolation.

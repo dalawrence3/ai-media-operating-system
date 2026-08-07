@@ -1,8 +1,8 @@
 # Project State Snapshot
 
-**Date:** 2026-08-06
-**Latest implemented milestone:** Phase 10 — Platform Analytics Engine
-**Next milestone:** Phase 11 (Optimization Engine)
+**Date:** 2026-08-07
+**Latest implemented milestone:** Phase 11 — Learning & Optimization Engine
+**Next milestone:** Phase 12 (TBD)
 
 ---
 
@@ -29,16 +29,17 @@
 | Phase 8 — Rendering Engine | ✅ Complete | 2154 | 14 |
 | Phase 9 — Publishing & Orchestration Engine | ✅ Complete | 2358 | 15 |
 | Phase 10 — Platform Analytics Engine | ✅ Complete | 2588 | 16 |
+| Phase 11 — Learning & Optimization Engine | ✅ Complete | 2846 | 17 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 16`
+`SCHEMA_VERSION = 17`
 
 ### Test count
-**2588 passing, 1 skipped** (ruff lint clean; skipped test is the always-skipped live smoke test)
+**2846 passed, 1 skipped** (ruff lint clean; skipped test is the always-skipped live smoke test)
 
 ### Packages implemented
 
@@ -57,6 +58,7 @@
 | Rendering Engine (render manifests, jobs, review) | `src/app/media/` | ✅ |
 | Publishing & Orchestration Engine | `src/app/publishing/` | ✅ |
 | Platform Analytics Engine | `src/app/analytics/` | ✅ |
+| Learning & Optimization Engine | `src/app/learning/` | ✅ |
 
 ### CLI subcommand groups
 
@@ -76,6 +78,7 @@ ace scenes          — Visual Intelligence: plan and review scene manifests
 ace render          — Rendering Engine: compose, render, validate, and review MP4s
 ace publish         — Publishing Engine: prepare, approve, start, schedule, retry, cancel, review
 ace analytics       — Analytics Engine: ingest, normalize, aggregate, and review publication metrics
+ace learn           — Learning Engine: analyze publications, list/show/accept/reject recommendations
 ace version         — version info
 ace doctor          — environment diagnostics
 ```
@@ -441,8 +444,65 @@ The `src/app/scenes/` package is the root of the Visual Intelligence Engine. Cur
 12. **`AnalyticsHandoff` for Phase 11** — Frozen Pydantic bundle carrying the full attribution chain, aggregates with calculation methods, source snapshot IDs, and currency context. Phase 11 reads; never writes back to analytics tables.
 13. **Schema version stays at 16** — v16 DDL revised in-place (no version bump) to add `is_period_complete`, `currency_code`, `calculation_method`, and `source_snapshot_ids_json`.
 
+---
+
+## Phase 11 completion details
+
+### New files (Phase 11)
+
+**Source — Learning & Optimization Engine (`src/app/learning/`):**
+- `src/app/learning/__init__.py` — package docstring listing constraints and public interface
+- `src/app/learning/constants.py` — domain/subsystem taxonomy, confidence thresholds (LOW=0.4, HIGH=0.7), review statuses, analytics metric thresholds, `confidence_label()`; `STRENGTH_EXPLORATORY`/`STRENGTH_ACTIONABLE` with `MIN_UNIQUE_SNAPSHOTS_ACTIONABLE=2` and `MIN_CONFIDENCE_ACTIONABLE=0.4`; generator identifier constants (`GENERATOR_CTR`, etc.); `EVIDENCE_CLASSIFICATIONS` frozenset; `RUN_STATUS_PARTIAL`
+- `src/app/learning/errors.py` — `LearningError` hierarchy: `LearningRunNotFoundError`, `RecommendationNotFoundError`, `InvalidRecommendationDomainError`, `ReviewerRequiredError`, `NotesRequiredError`, `RecommendationNotReviewableError`, `InsufficientAnalyticsDataError`, and others
+- `src/app/learning/models.py` — `EvidenceItem` dataclass with `to_dict()`/`from_dict()`; `GeneratorResult`, `AllGeneratorResults` dataclasses; `RecommendationDraft` (with `evidence_classification` and `recommendation_strength` fields), `ReviewEventDraft` (mutable dataclasses); `LearningRun`, `OptimizationRecommendation` (with `evidence_classification` and `recommendation_strength`), `RecommendationReviewEvent`, `LearningRunGeneratorResult` (frozen Pydantic with `from_row()`); `ReviewedRecommendationItem`, `ReviewedOptimizationHandoff` (frozen Phase 12 handoff models)
+- `src/app/learning/hashing.py` — `LearningRunHashInput`, `RecommendationHashInput`, `ReviewEventHashInput`; `compute_learning_run_hash()`, `compute_recommendation_hash()`, `compute_review_event_hash()` (all SHA-256, sorted snapshot IDs for determinism)
+- `src/app/learning/scoring.py` — `_volume_score()` (log2 scale), `_effect_score()` (gap/threshold ratio), `_consistency_score()` (period diversity), `compute_confidence()`, `compute_confidence_from_evidence()`, `meets_minimum_confidence()`
+- `src/app/learning/attribution.py` — `resolve_attribution()`: maps each domain to upstream `AnalyticsHandoff` FK field (topics, research, scripts, narration, captions, scenes, media, publishing, analytics)
+- `src/app/learning/recommendations.py` — six deterministic generators: `generate_ctr_recommendations`, `generate_retention_recommendations`, `generate_engagement_recommendations`, `generate_watch_time_recommendations`, `generate_subscriber_recommendations`, `generate_shares_recommendations`; `generate_all_recommendations()` returns `AllGeneratorResults` (drafts + per-generator `GeneratorResult` records), catches per-generator exceptions; `_classify_evidence()` (always `observational`; `experiment_id` alone ≠ `controlled_experiment`); `_classify_strength()` (deterministic `exploratory`/`actionable` thresholds)
+- `src/app/learning/validation.py` — `validate_domain`, `validate_subsystem`, `validate_confidence_level`, `validate_confidence_score`, `validate_recommendation_status`, `validate_review_event_type`, `validate_review_eligible`, `validate_review_event`
+- `src/app/learning/repository.py` — append-only CRUD: `create_learning_run`, `complete_learning_run`, `partial_learning_run`, `fail_learning_run`, `get_learning_run`, `list_learning_runs`; `create_recommendation`, `get_recommendation`, `list_recommendations`, `find_active_recommendation_by_key`, `supersede_recommendation`, `update_recommendation_status`; `create_review_event`, `list_review_events`; `create_generator_result`, `list_generator_results`
+- `src/app/learning/orchestrator.py` — `_build_handoff_from_db()` (assembles AnalyticsHandoff from DB); `analyze_publication()` (full pipeline → run_id; persists generator results; handles supersession; determines partial/completed/failed status); `accept_recommendation()`, `reject_recommendation()`; `build_reviewed_handoff()` (assembles `ReviewedOptimizationHandoff` for Phase 12); convenience wrappers `get_run`, `list_runs`, `list_recs`, `list_events`
+- `src/app/learning/cli.py` — `learn_app` Typer app: `analyze`, `list`, `show`, `accept`, `reject`, `events`, `runs`
+
+**Tests (258 new tests; 2846 total):**
+- `tests/test_learning_constants.py` (12 tests)
+- `tests/test_learning_hashing.py` (14 tests)
+- `tests/test_learning_models.py` (18 tests)
+- `tests/test_learning_scoring.py` (37 tests — includes 13 pathological-input tests)
+- `tests/test_learning_attribution.py` (12 tests)
+- `tests/test_learning_validation.py` (20 tests)
+- `tests/test_learning_repository.py` (26 tests)
+- `tests/test_learning_migration.py` (10 tests)
+- `tests/test_learning_recommendations.py` (29 tests)
+- `tests/test_learning_orchestrator.py` (18 tests)
+- `tests/test_learning_cli.py` (20 tests)
+- `tests/test_learning_contracts.py` (31 tests — causal-language enforcement, evidence/strength contracts, partial run semantics, supersession, ReviewedOptimizationHandoff)
+
+### Modified files (Phase 11)
+
+- `src/app/core/database.py` — SCHEMA_VERSION 16→17; `_DDL_V17_LEARNING` (4 tables: `learning_runs`, `optimization_recommendations`, `recommendation_review_events`, `learning_run_generator_results`); `learning_runs.status` CHECK includes `'partial'`; `optimization_recommendations` includes `evidence_classification` and `recommendation_strength` columns; v16 migration branch; all earlier branches updated
+- `src/app/cli.py` — registered `learn_app` (`ace learn`)
+- `tests/test_database.py` — version assertions updated 16→17
+- `tests/test_analytics_migration.py` — version assertions updated 16→17
+
+### Key architectural invariants (Phase 11)
+
+1. **Observe, attribute, measure, explain, recommend — never act** — the engine never modifies prompts, parameters, or any production data. Recommendations are rows in `optimization_recommendations` until a human acts. Accepting a recommendation does not mutate any upstream engine table.
+2. **No ML, no embeddings, no network, no autonomous optimization** — all logic is deterministic arithmetic over aggregate DB rows. No external calls, no fine-tuning, no reinforcement learning, no embeddings of any kind.
+3. **Every recommendation is traceable** — `evidence_json` stores the exact `(metric_name, observed_value, comparison_value, period_type, period_key, snapshot_ids)` chain that produced it. SHA-256 `input_hash` (including `evidence_classification` and `recommendation_strength`) pins the recommendation to its inputs.
+4. **Append-only, never updated or deleted** — supersession stamps `superseded_at` and `superseded_by_id`; old recommendations remain for audit. Supersession is not rejection. Review events are immutable.
+5. **Confidence is a heuristic signal strength, not a statistical confidence interval** — three-factor score: volume (log2 of deduplicated snapshot count), effect (gap/threshold ratio), consistency (period diversity). All three capped at 1.0 and averaged equally. A single observation period yields zero consistency contribution. Duplicate snapshot IDs across evidence items are deduplicated before computing volume.
+6. **Recommendation strength is deterministic** — `exploratory` (insufficient evidence) vs `actionable` (confidence ≥ 0.4 AND ≥ 2 unique snapshot IDs). Thresholds are named constants included in the hash payload.
+7. **Evidence classification is always observational** — `_classify_evidence()` always returns `observational` in Phase 11. `experiment_id` alone does NOT qualify a recommendation for `controlled_experiment` classification.
+8. **Observational recommendations must not make causal claims** — recommendation text must use associative language. Prohibited: causes, increases, decreases, improves, reduces, leads to, results in, because of.
+9. **Human review gates all status changes** — `pending → accepted/rejected` requires a named reviewer. `pending → superseded` is system-only. No automated accept/reject exists. Accept/reject events are human review signals for recommendations themselves, not for upstream production artifacts.
+10. **Generator failures are visible and attributable** — each generator records a `GeneratorResult` in `learning_run_generator_results`. A failed generator does not suppress recommendations from other generators and does not supersede prior active recommendations for its domain.
+11. **Partial run status** — if some generators succeed and some fail, the run status is `partial` (distinct from `completed` and `failed`). A run where all generators fail is `failed`.
+12. **Supersession is not rejection** — supersession is initiated by the system when new evidence produces a different recommendation for the same key. Human operators may only accept or reject. Superseded recommendations remain queryable.
+13. **Attribution through AnalyticsHandoff** — every recommendation carries `affected_subsystem`, `subsystem_entity_type`, and `subsystem_entity_id` derived from the upstream AnalyticsHandoff FK fields. Phase 12+ can use these to target regeneration.
+14. **Phase 11 consumes only AnalyticsHandoff** — upstream human-review signals (script approval/rejection, narration review events, scene manifest decisions, render approval, publishing review) are not ingested by Phase 11. This integration is deferred to a future phase.
+15. **ReviewedOptimizationHandoff is the frozen Phase 12 boundary** — a frozen Pydantic model bundling accepted/rejected/pending recommendations with review histories, generator results, and version provenance. Phase 12 must consume this handoff and must not automatically apply recommendations.
+
 ### What waits
 
-### Immediate next: Phase 11 (Optimization Engine)
-
-Dependencies: Phases 0–10 complete ✅.
+Phase 12 (TBD).
