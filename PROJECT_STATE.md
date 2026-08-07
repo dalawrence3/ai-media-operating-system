@@ -1,8 +1,8 @@
 # Project State Snapshot
 
 **Date:** 2026-08-07
-**Latest implemented milestone:** Phase 13 — Backend Integration & System Architecture
-**Next milestone:** Phase 14 — Frontend Studio & Dashboard
+**Latest implemented milestone:** Phase 14 — Frontend Studio & Dashboard
+**Next milestone:** Phase 15 — Deployment, Infrastructure & Production Operations
 
 ---
 
@@ -32,6 +32,7 @@
 | Phase 11 — Learning & Optimization Engine | ✅ Complete | 2846 | 17 |
 | Phase 12 — Media Operations Control Plane | ✅ Complete | 3101 | 18 |
 | Phase 13 — Backend Integration & System Architecture | ✅ Complete | 3368 | 19 |
+| Phase 14 — Frontend Studio & Dashboard | ✅ Complete | 3368 + 111 frontend | 19 |
 
 ---
 
@@ -41,7 +42,8 @@
 `SCHEMA_VERSION = 19`
 
 ### Test count
-**3368 passed, 1 skipped** (ruff lint clean; skipped test is the always-skipped live smoke test)
+**Backend:** 3368 passed, 1 skipped (ruff lint clean; skipped test is the always-skipped live smoke test)
+**Frontend:** 111 passed (13 test files; Vitest + RTL + MSW; typecheck clean; lint clean; build clean)
 
 ### Packages implemented
 
@@ -507,6 +509,48 @@ The `src/app/scenes/` package is the root of the Visual Intelligence Engine. Cur
 14. **Phase 11 consumes only AnalyticsHandoff** — upstream human-review signals (script approval/rejection, narration review events, scene manifest decisions, render approval, publishing review) are not ingested by Phase 11. This integration is deferred to a future phase.
 15. **ReviewedOptimizationHandoff is the frozen Phase 12 boundary** — a frozen Pydantic model bundling accepted/rejected/pending recommendations with review histories, generator results, and version provenance. Phase 12 must consume this handoff and must not automatically apply recommendations.
 
+---
+
+## Phase 14 completion details
+
+### New directory: `frontend/`
+
+React 19 + TypeScript + Vite 8 Single-Page Application. All backend interaction goes through a centralized typed API client (`src/api/client.ts`) — no raw `fetch()` calls in components.
+
+**Pages implemented:**
+- `Dashboard` — workspace health, dead-letter count, cost tiles, recent operations
+- `Pipelines` — pipeline list with stage bar, status states, blocked/failed detail, pause/recover/resume actions
+- `Reviews` — review queue with item type filter, row selection, approve/reject modal (reject requires reason)
+- `Channels` — channel list with multi-account view, account status/external-ID/credential per account
+- `Analytics` — metric table with AGG_SUM/AGG_LAST calculation method display
+- `Learning` — recommendation list with evidence classification and observational-only language contract
+- `Exceptions` — exception center with category, severity badge, entity ID
+- `Operations` — operation lifecycle with actor, correlation ID, retry-on-failure action
+- `Experiments` / `Workflows` / `Automation` — placeholder pages (Phase 15 content)
+- `AppShell` — sidebar nav, workspace selector, token-level authorization boundary
+
+**Frontend boundary contract:**
+- React / browser → `src/api/client.ts` (single point of entry) → FastAPI thin transport → ApplicationService → Control Plane / engines
+- No backend imports, no sqlite3, no DB paths in frontend source
+- Dev actor header (`X-Dev-Actor: dev:studio-user`) centralized in client.ts, labeled DEV-ONLY; replaced by JWT in Phase 15
+- `SCHEMA_VERSION` and `APPLICATION_CONTRACT_VERSION` remain 19 and "13.0.0" respectively (no backend schema changes in Phase 14)
+
+**Frontend test suite (M14.11):**
+- 13 test files, 111 tests — Vitest 4 + React Testing Library + MSW v2
+- Coverage: Architecture boundary, API client transport, AppShell, Dashboard, Pipelines, Reviews, Channels, Analytics, Learning, Exceptions, Operations, Experiments/Workflows/Automation, Accessibility
+- MSW handlers use absolute `http://localhost:5173/api/v1/...` URLs; jsdom URL set to match
+- `process.cwd()` used in architecture test (not `import.meta.url`) for reliable filesystem path
+
+**Quality gate results:**
+- `npm test`: 13/13 files, 111/111 tests pass
+- `npm run test:coverage`: 73.5% statements, 75.4% branches, 62.7% functions, 76.2% lines
+- `npm run typecheck`: clean (0 errors)
+- `npm run lint`: clean (oxlint)
+- `npm run build`: clean (326 kB JS bundle, 17.6 kB CSS)
+- `python -m ruff check src/`: all checks passed
+- `python -m pytest`: 3368 passed, 1 skipped
+- `git diff --check`: clean
+
 ### What waits
 
-Phase 13 (TBD).
+Phase 15 — Deployment, Infrastructure & Production Operations.

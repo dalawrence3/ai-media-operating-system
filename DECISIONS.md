@@ -1390,3 +1390,36 @@ Operationally: review event tables are insert-only; no application `UPDATE` or `
 **Decision:** During the Phase 12 production-readiness review, three identity concepts were added to the v18 DDL: `cp_organizations` (top-level owner boundary above workspace), `cp_publishing_profiles` (account-scoped publishing defaults per platform account), and `cp_analytics_identities` (provider-side analytics identity per platform account, unique per `(platform_account_id, analytics_provider_key)`). These bring the total to 22 `cp_` tables. The schema version was not bumped (still v18); the tables were added in-place before commit.
 
 **Reasoning:** The original v18 model left a gap in the identity hierarchy at the top (no organization concept above workspace) and at the account level (no explicit record of publishing preferences or analytics-provider identity). Without `cp_organizations`, multi-tenant and white-label scenarios have no owner boundary above workspace. Without `cp_publishing_profiles`, per-account publishing defaults must be passed through every operation. Without `cp_analytics_identities`, the analytics pipeline cannot distinguish which provider-side account is the source of metrics when a single platform account connects to multiple analytics providers.
+
+
+---
+
+**D-P14-1 — Single centralized typed API client as the only fetch() point**
+
+**Decision:** All browser→backend communication goes through `frontend/src/api/client.ts`. No component or page may call `fetch()` directly. Architecture tests enforce this at CI time by scanning all non-test TypeScript source files for raw `fetch(` calls.
+
+**Reasoning:** A single entry point enables: (1) consistent header injection (dev actor, future JWT); (2) uniform error handling and HTTP timeout; (3) typed return values for every endpoint via a single import; (4) easy Phase 15 swap of the dev actor for real auth without touching components.
+
+---
+
+**D-P14-2 — Dev actor header is DEV-ONLY and centralized**
+
+**Decision:** The `X-Dev-Actor: dev:studio-user` header is a single named constant in `client.ts`, with both inline comments and the constant name itself marking it as development-only. It is replaced by `Authorization: Bearer <token>` in Phase 15.
+
+**Reasoning:** Centralizing the header means Phase 15 changes exactly one file. Explicit labeling prevents the header from being treated as a permanent authorization mechanism. Having it in one place makes it impossible to miss in a security review.
+
+---
+
+**D-P14-3 — MSW v2 with absolute URLs for test HTTP interception**
+
+**Decision:** All MSW handlers in the test suite use absolute `http://localhost:5173/api/v1/...` URLs. The jsdom environment is initialized with `url: 'http://localhost:5173'` so that `window.location.origin` resolves correctly and `new URL('/api/v1/...', window.location.origin)` in the client produces the expected origin.
+
+**Reasoning:** MSW's `setupServer` (Node.js) cannot resolve relative paths against a document origin the way a real browser would. Without an explicit jsdom URL, `window.location.origin` is empty/null and all handler patterns would fail to match, causing every test to time out. Absolute URLs with a consistent origin are the minimal fix that requires no changes to the client under test.
+
+---
+
+**D-P14-4 — FastAPI routes remain thin transport; no business logic in routes**
+
+**Decision:** FastAPI route handlers call `ApplicationService` methods and return typed Pydantic models. No domain logic (validation, state transitions, policy evaluation, authorization beyond the existing auth hook) is permitted in routes.
+
+**Reasoning:** The `ApplicationService` facade (Phase 13) is the single coordinating boundary above the Control Plane and domain engines. Duplicating or fragmenting business logic in routes would create a maintenance split and undermine the typed command/query bus contract established in Phase 13.

@@ -182,6 +182,14 @@
   direct SQLite access; `ace cp` CLI subcommand group; 255 new tests.
   3101 total. Ruff clean.
 
+- **Phase 14: Frontend Studio & Dashboard** — `frontend/` React 19 + TypeScript + Vite 8
+  SPA; 12 production pages (Dashboard, Pipelines, Reviews, Channels, Analytics, Learning,
+  Exceptions, Operations, + Experiments/Workflows/Automation placeholders); centralized typed
+  API client (`src/api/client.ts`) as the sole fetch boundary; dev actor header (`X-Dev-Actor:
+  dev:studio-user`) centralized and labeled DEV-ONLY; Vitest 4 + RTL + MSW v2 test suite
+  (13 files, 111 tests); typecheck clean, oxlint clean, production build clean (326 kB JS);
+  backend ruff clean, 3368 backend tests pass; git diff --check clean.
+
 - **Phase 11: Learning & Optimization Engine** — `src/app/learning/` package;
   deterministic, explainable recommendations from analytics history with no
   ML, no embeddings, no network calls, no automatic application; six recommendation
@@ -1027,11 +1035,24 @@ and bounded ApplicationService facade for Phase 14.
 
 ---
 
-### Phase 14 — Frontend Studio & Dashboard
+### Phase 14 — Frontend Studio & Dashboard ✅ COMPLETE
+
+**Objective:** React SPA with typed API client, full dashboard, pipeline studio, review queue, multi-account channel view, analytics, learning, and exception/operations centers.
+
+**Delivered:**
+- `frontend/` — React 19 + TypeScript + Vite 8 SPA
+- 12 production pages: Dashboard, Pipelines, Reviews, Channels, Analytics, Learning, Exceptions, Operations, Experiments, Workflows, Automation (placeholders), AppShell with workspace selector
+- Centralized typed API client (`src/api/client.ts`) — single fetch() point; dev actor header labeled DEV-ONLY; all components import only from this module
+- Vitest 4 + React Testing Library + MSW v2 test suite: 13 test files, 111 tests passing
+- Quality gates all green: typecheck, oxlint, production build (326 kB JS), backend ruff + pytest (3368+1), git diff --check
+- No backend imports, no secrets, no mock data in production views
+- Frontend boundary preserved: React → typed client → FastAPI → ApplicationService → Control Plane / engines
+
+**What waits:** Phase 15 — Deployment, Infrastructure & Production Operations
 
 ---
 
-### Phase 14 — Deployment & Production Infrastructure
+### Phase 15 — Deployment & Production Infrastructure
 
 **Objective:** Harden the system for production operation.
 

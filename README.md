@@ -14,21 +14,18 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 13 (Backend Integration & System Architecture) is complete. Phases 1–13 are complete.**
+**Phase 14 (Frontend Studio & Dashboard) is complete. Phases 1–14 are complete.**
 
-The application layer (`src/app/application/`) now sits above the Control Plane and all
-engines, providing a typed command bus, canonical pipeline controller (research →
-script_generation → production_plan → narration → captions → visual_intelligence →
-rendering → publishing → analytics → learning), `StageExecutorRegistry` with the
-`PipelineStageExecutor` protocol (two real executable stages: `production_plan` and
-`learning`; eight provider/live-gated stages return typed blocked results), fail-closed
-authorization contract (`default_auth_hook` — system actors always permitted; non-system
-actors require explicit injected hook; no JWT/RBAC yet), schedule management, pipeline
-recovery, cross-workspace health projection, unified review queue, extension registry,
-structured executor diagnostics, and the `ApplicationService` bounded facade that Phase 14
-will consume. SCHEMA_VERSION 19 adds 3 `app_` tables. APPLICATION_CONTRACT_VERSION
-"13.0.0". EXECUTOR_CONTRACT_VERSION "13.0.0". Cross-workspace isolation is enforced on
-every command and query path. 3368 tests pass (1 skipped). Ruff clean.
+The React SPA (`frontend/`) sits above the FastAPI transport layer, consuming the
+`ApplicationService` facade via a centralized typed API client. 12 production pages cover
+Dashboard, Pipeline Studio, Review Queue, Multi-Account Channels, Analytics, Learning,
+Exception Center, and Operations. All browser API calls go through `src/api/client.ts`
+(the sole `fetch()` point); no backend imports, credentials, or mock data exist in
+production views. Dev actor header is centralized and labeled DEV-ONLY; Phase 15
+replaces it with JWT. Frontend test suite: 13 files, 111 tests (Vitest 4 + React Testing
+Library + MSW v2), typecheck clean, oxlint clean, 326 kB production build. Backend: 3368
+tests pass (1 skipped), ruff clean. SCHEMA_VERSION 19. APPLICATION_CONTRACT_VERSION
+"13.0.0". Cross-workspace isolation enforced on every command and query path.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI

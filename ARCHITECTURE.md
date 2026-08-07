@@ -25,7 +25,7 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 12 complete)
+## Current state (Phase 14 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
@@ -652,6 +652,29 @@ by automated pre-publish checks: quality score, licence verification,
 duplicate check, factual-risk threshold, daily/weekly publishing limits,
 spending limit. Any failure halts, notifies, and may demote the channel.
 The operator always has an immediate kill switch.
+
+## Frontend boundary (Phase 14)
+
+The `frontend/` directory is a React 19 + TypeScript + Vite 8 SPA. The permanent
+boundary contract:
+
+```
+React / browser
+  → src/api/client.ts (centralized typed client — the ONLY fetch() point)
+    → FastAPI thin transport (routes are transport only; no business logic in routes)
+      → ApplicationService (src/app/application/services.py)
+        → Control Plane (src/app/control_plane/)
+          → Domain engines (src/app/*/orchestrator.py)
+```
+
+Rules enforced by architecture tests and build:
+- No raw `fetch()` outside `src/api/client.ts`
+- No backend imports (`database.py`, `sqlite3`, repos, engines, control_plane)
+- No secrets, credentials, OAuth tokens, or SQLite paths in client source
+- Dev actor header (`X-Dev-Actor: dev:studio-user`) is a single constant in
+  `client.ts`, labeled DEV-ONLY; Phase 15 replaces it with `Authorization: Bearer`
+- FastAPI routes are thin transport: they call `ApplicationService` methods and
+  return typed Pydantic models; no domain logic lives in routes
 
 ## Why no cloud infrastructure yet
 
