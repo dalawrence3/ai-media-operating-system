@@ -14,20 +14,21 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 12 (Media Operations Control Plane) is complete. Phases 1–12 are complete.**
+**Phase 13 (Backend Integration & System Architecture) is complete. Phases 1–13 are complete.**
 
-The system now includes a central operations control plane coordinating organizations,
-workspaces, channels, platform accounts, credentials, publishing profiles, analytics
-identities, automation policies, an internal event bus, structured workflow automation,
-A/B experiment management, cost/budget enforcement, health monitoring, and a provider
-registry. The control plane sits above all existing engines and enforces permanent
-identity separation (organization ≠ workspace ≠ channel ≠ platform ≠
-platform_account ≠ credential_profile ≠ publishing_profile ≠ analytics_identity).
-Credentials store only vault references (`external_ref`), never OAuth tokens or
-secrets. Automation policies enforce MANUAL / SUPERVISED / AUTONOMOUS levels with
-the most restrictive level winning across the workspace→channel→account hierarchy.
-Experiments are immutable once activated. All CP writes carry an actor field for
-future RBAC. 3101 tests pass (1 skipped). SCHEMA_VERSION 18.
+The application layer (`src/app/application/`) now sits above the Control Plane and all
+engines, providing a typed command bus, canonical pipeline controller (research →
+script_generation → production_plan → narration → captions → visual_intelligence →
+rendering → publishing → analytics → learning), `StageExecutorRegistry` with the
+`PipelineStageExecutor` protocol (two real executable stages: `production_plan` and
+`learning`; eight provider/live-gated stages return typed blocked results), fail-closed
+authorization contract (`default_auth_hook` — system actors always permitted; non-system
+actors require explicit injected hook; no JWT/RBAC yet), schedule management, pipeline
+recovery, cross-workspace health projection, unified review queue, extension registry,
+structured executor diagnostics, and the `ApplicationService` bounded facade that Phase 14
+will consume. SCHEMA_VERSION 19 adds 3 `app_` tables. APPLICATION_CONTRACT_VERSION
+"13.0.0". EXECUTOR_CONTRACT_VERSION "13.0.0". Cross-workspace isolation is enforced on
+every command and query path. 3368 tests pass (1 skipped). Ruff clean.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -161,6 +162,19 @@ Implemented phases:
     block actions; `BudgetExceededError` on block
   - Actor-aware mutations throughout for future RBAC
   - CLI: `ace control workspace/channel/account/policy/experiment/events review-queue costs`
+- **Phase 13** — Backend Integration & System Architecture (`src/app/application/`): (`src/app/application/`):
+  - Application layer: typed command bus, 11-step dispatch pipeline
+  - Canonical pipeline controller: research → script_generation → production_plan →
+    narration → captions → visual_intelligence → rendering → publishing → analytics → learning
+  - Prerequisite graph, review-gate stages, waiting_for_review parking
+  - Scheduler: cron / interval / once / after_event with next_run_at tracking
+  - Recovery engine: recover from failed/blocked/paused pipelines; safe event replay allowlist
+  - Workspace health projection: budget + dead-letters + stuck-ops + active pipelines
+  - Unified review queue: CP review items + pipeline waiting_for_review
+  - Extension registry: typed, versioned, no eval/exec/dynamic imports
+  - `ApplicationService` bounded facade for Phase 14 consumption
+  - CONTRACT_VERSION "13.0.0"; semver compatibility checking
+  - Cross-workspace isolation enforced on every command and query
 
 End-to-end workflow: channel strategy → discovery → scoring → topic promotion
 → source ingestion → claim extraction → script generation → human approval

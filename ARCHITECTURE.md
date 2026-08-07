@@ -573,8 +573,14 @@ Planned additions per phase:
   `cp_events`, `cp_event_processing`, `cp_workflows`, `cp_workflow_runs`, `cp_experiments`,
   `cp_experiment_variants`, `cp_experiment_assignments`, `cp_operation_executions`,
   `cp_cost_records`, `cp_budget_policies`, `cp_health_records`, `cp_provider_registry`
-- Phase 13: Frontend / Studio / Dashboard
-- Phase 14: Deployment & Production Infrastructure
+- Phase 13 ✅: Backend Integration & System Architecture — `app_pipeline_executions`,
+  `app_pipeline_stage_log` (with `attempt_number`, `artifact_id`, `artifact_type`),
+  `app_schedule_definitions`; typed command bus (`dispatcher`), `StageExecutorRegistry`
+  + `PipelineStageExecutor` protocol (2 executable stages: `production_plan`, `learning`;
+  8 provider/live-gated stages), fail-closed authorization contract, `ApplicationService`
+  bounded facade, structured executor diagnostics; EXECUTOR_CONTRACT_VERSION "13.0.0"
+- Phase 14: Frontend Studio & Dashboard
+- Phase 15: Deployment & Production Infrastructure
 
 ## External integrations and data-source constraints
 

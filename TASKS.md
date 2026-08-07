@@ -880,7 +880,7 @@ shows real cost vs. revenue data for at least one video.
 
 ---
 
-### Phase 12 — Media Operations Control Plane (IN PROGRESS)
+### Phase 12 — Media Operations Control Plane ✅ COMPLETE
 
 **Objective:** Transform the collection of specialized engines into a coherent
 Media Operating System by introducing a central Control Plane that owns identity,
@@ -963,28 +963,71 @@ infrastructure (Phase 14). No Phase 13 scope.
 
 ---
 
-### Phase 13 — Frontend / Studio / Dashboard
+### Phase 13 — Backend Integration & System Architecture ✅ COMPLETE
 
-**Objective:** Build the operator frontend — Studio UI, dashboard, review
-interfaces, and analytics views — consuming the Control Plane service boundary
-established in Phase 12.
+**Objective:** Application coordination layer above all Phase 12 engines —
+typed command bus, pipeline controller, scheduler, recovery, health
+projection, review queue, extension registry, real stage executor protocol,
+and bounded ApplicationService facade for Phase 14.
 
-**Business value:** Replaces CLI-only operation with a visual interface for
-non-technical operators and enables at-a-glance channel health and queue management.
+**Delivered:**
+- `src/app/application/` — 19 modules: errors, contracts, commands, queries,
+  versioning, registry, configuration, observability, state, pipeline,
+  scheduler, recovery, health, review, exception_queue, dispatcher, services,
+  composition, authorization, executor, diagnostics (expanded)
+- SCHEMA_VERSION 18 → 19; 3 new `app_` tables: `app_pipeline_executions`,
+  `app_pipeline_stage_log` (with `attempt_number`, `artifact_id`,
+  `artifact_type`), `app_schedule_definitions`
+- APPLICATION_CONTRACT_VERSION "13.0.0"; EXECUTOR_CONTRACT_VERSION "13.0.0"
+- `StageExecutorRegistry` + `PipelineStageExecutor` protocol — guarded
+  registration (duplicate raises; same class+version is idempotent no-op)
+- **Stage execution classification (all 10 canonical stages):**
+  - `production_plan` — Class A: executes `content.repository.get_active_approved_generated_script`
+    + `production.renderer.build_production_plan` + `production.repository.get_or_create_production_plan`;
+    returns `waiting_for_review`
+  - `learning` — Class A: executes `learning.orchestrator.analyze_publication`;
+    returns `waiting_for_review`; recommendations never applied automatically
+  - `research`, `publishing`, `analytics` — Class C: `ExternalProviderRequiredExecutor`;
+    returns `blocked` (live HTTP/platform provider — Phase 15)
+  - `script_generation`, `narration`, `captions`, `visual_intelligence`, `rendering` — Class B:
+    `ProviderRequiredExecutor`; returns `blocked` (AI/TTS provider — Phase 14 studio layer)
+- **Authorization contract:** `default_auth_hook` fails closed for non-system actors;
+  system actors (prefix `system:`) always permitted; `allow_all_auth_hook` explicit
+  opt-in for dev/test; auth checked **before** budget/concurrency/executor — no JWT/RBAC yet
+- `ExecutePipelineStageCommand` — 18-step execution flow; workspace-pause gate
+  enforced for all mutating pipeline commands including stage execution
+- Canonical artifact references persisted (`artifact_id`, `artifact_type`) on
+  every completed stage row; `executor_key`/`executor_version` carried in
+  `StageExecutionResult` (not yet in schema — deferred to Phase 14)
+- `explain_executor_status()` diagnostics — typed findings for executor_unavailable,
+  executor_disabled, external_provider_required, provider_required, executor_ok
+- Cross-workspace isolation enforced on every command and query
+- 3368 tests (262 new); ruff clean
 
-**Technical scope:**
-- Studio web interface (technology TBD at implementation time)
-- Consumes Phase 12 Control Plane service/API boundary
-- Workspace, channel, platform-account management UI
-- Production pipeline status and review queues
-- Analytics and recommendation review
-- Experiment management
-- Cost and budget dashboards
-- Health and alert monitoring
+**Authorization:**
+- No JWT/RBAC implemented — Phase 14 responsibility
+- Non-system actor without injected hook → `AuthorizationRequiredError` (fail-closed)
+- User mutations require explicit `auth_hook` injection at `build_application_service()`
+- Trusted internal actors: `system:pipeline`, `system:control-plane`, `system:scheduler`,
+  `system:recovery`, `system:test`
 
-**Dependencies:** Phase 12 (Control Plane service boundary complete)
+**Scheduling:**
+- Named schedule shortcuts only: `@daily`, `@hourly`, `@weekly`
+- No five-field cron expression support
+- No background daemon — caller must check `is_scheduled_time_due()`
 
-**What waits:** Phase 14 (Deployment & Production Infrastructure)
+**Known deferred:**
+- `executor_key`/`executor_version` not persisted to stage schema rows (SCHEMA_VERSION stays 19)
+- N+1 query in `list_pipelines` — Phase 15 optimization
+- Provider executors (B/C) blocked until Phase 14/15 supply providers
+
+**Dependencies:** Phase 12 complete
+
+**What waits:** Phase 14 (Frontend Studio & Dashboard)
+
+---
+
+### Phase 14 — Frontend Studio & Dashboard
 
 ---
 

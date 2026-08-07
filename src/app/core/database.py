@@ -10,7 +10,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -2162,6 +2162,84 @@ CREATE TABLE IF NOT EXISTS cp_provider_registry (
 CREATE INDEX IF NOT EXISTS idx_cp_provider_domain ON cp_provider_registry (domain, status);
 """
 
+# Phase 13 DDL — Application layer: pipeline executions, stage log, schedule definitions.
+_DDL_V19_APPLICATION = """
+CREATE TABLE IF NOT EXISTS app_pipeline_executions (
+    id                      TEXT    PRIMARY KEY,
+    workspace_id            TEXT    NOT NULL REFERENCES cp_workspaces(id),
+    channel_id              TEXT    REFERENCES cp_channels(id),
+    platform_account_id     TEXT    REFERENCES cp_platform_accounts(id),
+    topic_id                INTEGER REFERENCES topics(id),
+    correlation_id          TEXT    NOT NULL UNIQUE,
+    idempotency_key         TEXT    NOT NULL UNIQUE,
+    status                  TEXT    NOT NULL DEFAULT 'pending'
+                                    CHECK (status IN (
+                                        'pending', 'running', 'waiting_for_review',
+                                        'blocked', 'completed', 'failed',
+                                        'cancelled', 'paused'
+                                    )),
+    current_stage           TEXT,
+    end_stage               TEXT    NOT NULL DEFAULT 'learning',
+    experiment_id           TEXT,
+    actor                   TEXT    NOT NULL,
+    policy_snapshot_json    TEXT,
+    error_message           TEXT,
+    blocked_reason          TEXT,
+    created_at              TEXT    NOT NULL,
+    updated_at              TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_app_pipeline_workspace
+    ON app_pipeline_executions (workspace_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_app_pipeline_channel
+    ON app_pipeline_executions (channel_id, status);
+CREATE INDEX IF NOT EXISTS idx_app_pipeline_corr
+    ON app_pipeline_executions (correlation_id);
+
+CREATE TABLE IF NOT EXISTS app_pipeline_stage_log (
+    id              TEXT    PRIMARY KEY,
+    pipeline_id     TEXT    NOT NULL REFERENCES app_pipeline_executions(id),
+    stage           TEXT    NOT NULL,
+    attempt_number  INTEGER NOT NULL DEFAULT 1,
+    status          TEXT    NOT NULL DEFAULT 'pending'
+                            CHECK (status IN (
+                                'pending', 'running', 'completed', 'failed',
+                                'skipped', 'waiting_for_review', 'blocked'
+                            )),
+    artifact_id     TEXT,
+    artifact_type   TEXT,
+    error_message   TEXT,
+    duration_ms     INTEGER,
+    started_at      TEXT,
+    completed_at    TEXT,
+    created_at      TEXT    NOT NULL,
+    UNIQUE(pipeline_id, stage, attempt_number)
+);
+CREATE INDEX IF NOT EXISTS idx_app_stage_pipeline
+    ON app_pipeline_stage_log (pipeline_id, stage);
+
+CREATE TABLE IF NOT EXISTS app_schedule_definitions (
+    id                      TEXT    PRIMARY KEY,
+    workspace_id            TEXT    NOT NULL REFERENCES cp_workspaces(id),
+    channel_id              TEXT    REFERENCES cp_channels(id),
+    name                    TEXT    NOT NULL,
+    operation_type          TEXT    NOT NULL,
+    schedule_type           TEXT    NOT NULL
+                                    CHECK (schedule_type IN (
+                                        'cron', 'interval', 'once', 'after_event'
+                                    )),
+    schedule_config_json    TEXT    NOT NULL DEFAULT '{}',
+    timezone                TEXT    NOT NULL DEFAULT 'UTC',
+    is_active               INTEGER NOT NULL DEFAULT 1,
+    last_run_at             TEXT,
+    next_run_at             TEXT,
+    actor                   TEXT    NOT NULL,
+    created_at              TEXT    NOT NULL,
+    updated_at              TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_app_schedule_workspace
+    ON app_schedule_definitions (workspace_id, is_active, next_run_at);
+"""
+
 
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
@@ -2203,6 +2281,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -2225,6 +2304,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2246,6 +2326,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2266,6 +2347,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2285,6 +2367,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2303,6 +2386,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2320,6 +2404,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2336,6 +2421,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2351,6 +2437,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2365,6 +2452,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2378,6 +2466,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2390,6 +2479,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2401,6 +2491,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2411,6 +2502,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2420,6 +2512,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2428,6 +2521,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V16_ANALYTICS)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2435,12 +2529,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 16 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V17_LEARNING)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 17:
         logger.info("Migrating schema from version 17 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V18_CONTROL_PLANE)
+        conn.executescript(_DDL_V19_APPLICATION)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 18:
+        logger.info("Migrating schema from version 18 to %d", SCHEMA_VERSION)
+        conn.executescript(_DDL_V19_APPLICATION)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

@@ -1,8 +1,8 @@
 # Project State Snapshot
 
 **Date:** 2026-08-07
-**Latest implemented milestone:** Phase 12 — Media Operations Control Plane
-**Next milestone:** Phase 13 (TBD)
+**Latest implemented milestone:** Phase 13 — Backend Integration & System Architecture
+**Next milestone:** Phase 14 — Frontend Studio & Dashboard
 
 ---
 
@@ -31,16 +31,17 @@
 | Phase 10 — Platform Analytics Engine | ✅ Complete | 2588 | 16 |
 | Phase 11 — Learning & Optimization Engine | ✅ Complete | 2846 | 17 |
 | Phase 12 — Media Operations Control Plane | ✅ Complete | 3101 | 18 |
+| Phase 13 — Backend Integration & System Architecture | ✅ Complete | 3368 | 19 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 18`
+`SCHEMA_VERSION = 19`
 
 ### Test count
-**3101 passed, 1 skipped** (ruff lint clean; skipped test is the always-skipped live smoke test)
+**3368 passed, 1 skipped** (ruff lint clean; skipped test is the always-skipped live smoke test)
 
 ### Packages implemented
 
@@ -61,6 +62,7 @@
 | Platform Analytics Engine | `src/app/analytics/` | ✅ |
 | Learning & Optimization Engine | `src/app/learning/` | ✅ |
 | Media Operations Control Plane | `src/app/control_plane/` | ✅ |
+| Application Layer (command bus, pipeline controller, scheduler, recovery, health) | `src/app/application/` | ✅ |
 
 ### CLI subcommand groups
 
