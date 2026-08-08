@@ -1,0 +1,198 @@
+# AI Content Engine — local production stack
+#
+# Usage:
+#   docker compose up -d
+#
+# Required environment variables (set in .env or export before running):
+#   ACE_SECRET_KEY      — JWT signing secret (≥32 random bytes, required)
+#   ACE_DATABASE_URL    — PostgreSQL DSN (auto-configured below if using local postgres)
+#   ACE_REDIS_URL       — Redis URL (auto-configured below)
+#
+# Optional:
+#   ACE_ANTHROPIC_API_KEY, ACE_ELEVENLABS_API_KEY — provider keys (Class B/C stages)
+#   ACE_PUBLISHING_LIVE_ENABLED=true              — enable Class C live publishing
+#   ACE_TTS_LIVE_ENABLED=true                     — enable live TTS
+#
+# STOP: Do not run this against a production database or with live provider keys
+#       without operator review. All provider flags default to false (fake providers).
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ace
+      POSTGRES_USER: ace
+      POSTGRES_PASSWORD: ace_dev_password_change_in_production
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ace -d ace"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - ace_internal
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ace_internal
+
+  # ── Alembic migrations (runs once, then exits) ─────────────────────────────
+  migrate:
+    build:
+      context: .
+      target: runtime
+    restart: "no"
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      ACE_DATABASE_URL: postgresql://ace:ace_dev_password_change_in_production@postgres:5432/ace
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ace_internal
+
+  # ── API server ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - uvicorn
+      - app.api.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --workers
+      - "2"
+    ports:
+      - "8000:8000"
+    environment:
+      ACE_DATABASE_URL: postgresql://ace:ace_dev_password_change_in_production@postgres:5432/ace
+      ACE_REDIS_URL: redis://redis:6379/0
+      ACE_SECRET_KEY: ${ACE_SECRET_KEY:?ACE_SECRET_KEY must be set}
+      ACE_LOG_LEVEL: ${ACE_LOG_LEVEL:-INFO}
+      ACE_CORS_ORIGINS: ${ACE_CORS_ORIGINS:-http://localhost:3000}
+      ACE_AI_PROVIDER: ${ACE_AI_PROVIDER:-fake}
+      ACE_ANTHROPIC_API_KEY: ${ACE_ANTHROPIC_API_KEY:-}
+      ACE_TTS_PROVIDER: ${ACE_TTS_PROVIDER:-fake}
+      ACE_ELEVENLABS_API_KEY: ${ACE_ELEVENLABS_API_KEY:-}
+      ACE_TTS_LIVE_ENABLED: ${ACE_TTS_LIVE_ENABLED:-false}
+      ACE_PUBLISHING_LIVE_ENABLED: ${ACE_PUBLISHING_LIVE_ENABLED:-false}
+      ACE_OBJECT_STORAGE_BACKEND: ${ACE_OBJECT_STORAGE_BACKEND:-local}
+      ACE_ARTIFACTS_PATH: /app/artifacts
+    volumes:
+      - artifacts:/app/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - ace_internal
+      - ace_public
+
+  # ── RQ Worker ──────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - rq
+      - worker
+      - default
+      - high
+      - low
+      - --url
+      - redis://redis:6379/0
+      - --serializer
+      - rq.serializers.JSONSerializer
+    environment:
+      ACE_DATABASE_URL: postgresql://ace:ace_dev_password_change_in_production@postgres:5432/ace
+      ACE_REDIS_URL: redis://redis:6379/0
+      ACE_SECRET_KEY: ${ACE_SECRET_KEY:?ACE_SECRET_KEY must be set}
+      ACE_LOG_LEVEL: ${ACE_LOG_LEVEL:-INFO}
+      ACE_AI_PROVIDER: ${ACE_AI_PROVIDER:-fake}
+      ACE_ANTHROPIC_API_KEY: ${ACE_ANTHROPIC_API_KEY:-}
+      ACE_TTS_PROVIDER: ${ACE_TTS_PROVIDER:-fake}
+      ACE_ELEVENLABS_API_KEY: ${ACE_ELEVENLABS_API_KEY:-}
+      ACE_TTS_LIVE_ENABLED: ${ACE_TTS_LIVE_ENABLED:-false}
+      ACE_PUBLISHING_LIVE_ENABLED: ${ACE_PUBLISHING_LIVE_ENABLED:-false}
+      ACE_OBJECT_STORAGE_BACKEND: ${ACE_OBJECT_STORAGE_BACKEND:-local}
+      ACE_ARTIFACTS_PATH: /app/artifacts
+    volumes:
+      - artifacts:/app/artifacts
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - ace_internal
+
+  # ── Scheduler daemon ───────────────────────────────────────────────────────
+  scheduler:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    command:
+      - python
+      - -m
+      - app.workers.scheduler
+    environment:
+      ACE_DATABASE_URL: postgresql://ace:ace_dev_password_change_in_production@postgres:5432/ace
+      ACE_REDIS_URL: redis://redis:6379/0
+      ACE_LOG_LEVEL: ${ACE_LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - ace_internal
+
+volumes:
+  postgres_data:
+  redis_data:
+  artifacts:
+
+networks:
+  ace_internal:
+    driver: bridge
+  ace_public:
+    driver: bridge

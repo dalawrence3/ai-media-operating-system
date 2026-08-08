@@ -13,6 +13,208 @@
   Typer CLI with `topics`, `sources`, `scripts`, `runs` subcommands;
   structured logging; configuration module. 63 tests pass.
 
+- **Phase 2: AI Foundation** — Provider-independent LLM abstraction
+  (`src/app/ai/`); `FakeProvider` (deterministic); `ClaudeProvider`
+  (Anthropic SDK, injectable client for test isolation); versioned TOML
+  prompt registry; structured output via Pydantic; bounded retry with
+  injectable sleep; token/cost tracking with configurable pricing registry;
+  `ai_calls` DB table (SCHEMA_VERSION 2); CLI: `ace ai prompts list/show`,
+  `ace ai demo`; no live API calls in any test. 149 tests pass.
+
+- **Phase 3 Milestone 3.1: Versioned Channel Strategy Foundation** —
+  `src/app/intelligence/` package; 5 new DB tables (SCHEMA_VERSION 3):
+  `channels`, `channel_monetization_strategies`, `channel_profile_versions`,
+  `channel_capacity_policies`, `channel_operating_mode_events`; versioned
+  immutable profile snapshots (niche, audience, format, discovery config,
+  portfolio targets, D5 dedup threshold 0.70, scoring policy reference);
+  versioned monetization strategy (16 named objectives, weights validated to
+  sum 1.0, pre/active status); capacity policy with D6 ceilings (not quotas);
+  append-only operating mode event log; Phase 3 restricts set-mode to
+  `manual` only (`supervised`/`autonomous` are schema reservations); operator
+  decisions D1–D7 implemented and recorded; CLI: `ace channels add/list/show/
+  versions/new-version/activate-version/new-strategy/activate-strategy/
+  set-mode/capacity/set-capacity`; no external API integrations; no scoring
+  execution; no opportunity discovery; no placeholder code. 259 tests pass.
+
+- **Phase 3 Milestone 3.2: Discovery Foundation** —
+  `discovery_runs`, `opportunities`, `opportunity_observations`,
+  `opportunity_source_evidence`, `opportunity_state_events` DB tables
+  (SCHEMA_VERSION 4); opportunity lifecycle with append-only state event log
+  and denormalized `current_lifecycle_state`; adapter abstraction
+  (`adapters/base.py`) with injectable stub; `ManualAdapter`;
+  `YouTubeDataAPIAdapter` (injectable client, no live calls in tests);
+  Jaccard dedup against active opportunities (`dedup.py`); discovery
+  orchestrator (`discovery.py`); CLI: `ace discover run/list/show`;
+  no placeholder code.
+
+- **Phase 3 Milestone 3.3: Versioned Scoring and Confidence Engine** —
+  `scoring_policies`, `opportunity_scores` DB tables (SCHEMA_VERSION 5);
+  versioned immutable scoring policies (6 factors, weights validated to
+  sum 1.0); active-policy enforcement via partial unique index; six scoring
+  factors: trend_strength, audience_demand, competition, evergreen_value,
+  audience_fit, content_novelty; confidence engine (source quality, data
+  completeness, freshness, corroboration); `FactorStatus` per factor;
+  missing-data policies (`reweight_available`, `apply_prior`,
+  `reduce_confidence_only`) with weight rebalancing so composite sums to
+  1.0; score rows append-only; latest score by `scored_at DESC, id DESC`;
+  `scoring/` sub-package (engine, factors, weights, confidence, snapshot);
+  CLI: `ace intelligence score/score-all/explain` and
+  `ace intelligence policy list/show/create/clone/update/activate`;
+  no placeholder code. 476 tests pass.
+
+- **Phase 3 Milestone 3.4: Opportunity Promotion Workflow** —
+  `topics.promoted_opportunity_id` nullable FK column with partial unique
+  index (SCHEMA_VERSION 6); `promote_opportunity()`: score prerequisite
+  guard; lifecycle guard (`new`/`under_review` only); SAVEPOINT atomicity
+  (topics INSERT + lifecycle transition in one savepoint); idempotent (returns
+  existing topic on second call); `get_topic_by_promoted_opportunity()`;
+  CLI: `ace topics promote <opportunity_id> [--angle] [--operator]
+  [--allow-unscored]`; architectural decisions D-M3.4-1 through D-M3.4-6
+  recorded; no placeholder code. 513 tests pass. **Phase 3 complete.**
+
+- **Phase 4 Milestone 4.1: Source Ingestion Foundation** —
+  `src/app/research/` package (10 modules: constants, errors, hashing,
+  models, validate, extract, quality, fetch, repository, plus `__init__.py`);
+  `source_contents` table (SCHEMA_VERSION 7); append-only per-attempt rows;
+  v6→v7 migration path. URL fetch with SSRF protection (pre-resolution +
+  23 blocked IPv4/IPv6 ranges), HTTPS→HTTP redirect blocking (SecurityError),
+  MIME allowlist and 5 MB size enforcement. Local file ingest (.txt, .md,
+  .pdf); null-byte rejection, `Path.resolve()`, `S_ISREG` check, extension
+  allowlist, 10 MB size limit. HTML extraction (BeautifulSoup4 + html.parser;
+  title, author, publication date). PDF extraction (pypdf; page separators;
+  up to 200 pages; partial extraction on failure). Deterministic quality
+  scoring (7 factors, weights asserted to sum 1.0; linear recency decay;
+  `quality-v1` scorer version). SHA-256 `retrieval_hash` (raw bytes) and
+  `normalized_text_hash` (NFC-normalized extracted text). Idempotency via
+  `normalized_text_hash` comparison; `--force` to override. SAVEPOINT
+  atomicity throughout. CLI: `ace sources fetch`, `ace sources ingest-file`,
+  `ace sources quality`. New dependencies: `beautifulsoup4>=4.12,<5.0`,
+  `pypdf>=4.0,<6.0`. No LLM calls; no Phase 4.2 claim extraction; no live
+  network or live LLM in any test. 696 tests pass.
+
+- **Phase 4 Milestone 4.2: Evidence & Claim Extraction** —
+  Three new DB tables (`claim_extraction_runs`, `claim_extraction_run_calls`,
+  `claims`) at SCHEMA_VERSION 8; v7→v8 migration. Supersession model via
+  `superseded_at`/`superseded_by_run_id` columns (not a status value);
+  4-value status CHECK (`running`, `completed`, `partial`, `failed`).
+  Paragraph-aware chunker (`chunking.py`): greedy accumulation with sentence
+  splitting and hard-cut fallback; exact chunk offset invariant
+  `chunk.text == raw_text[start:end]` enforced. Quote support classifier
+  (`claim_support.py`): exact → normalized (NFC + CRLF + whitespace map) →
+  unsupported → no_quote; offsets NULL when NFC changes character count.
+  PDF page derivation from `--- Page N ---\n` separators. Deterministic
+  date-review risk flags (`claim_risk.py`): 4 rules, Rule 4 suppressed by
+  historical-year pattern. Repository layer additions: `create_claim_extraction_run`,
+  `create_claim_extraction_run_call`, `update_claim_extraction_run_call`,
+  `finalize_claim_extraction_run` (single SAVEPOINT for all claim INSERTs +
+  optional supersession + status update), `list_claims`, `get_latest_completed_run`,
+  `list_active_evidence_for_topic`. Active evidence: `status='completed' AND
+  superseded_at IS NULL AND quote_support_status IN ('exact','normalized')`.
+  Prompt TOML: `src/app/ai/prompts/claim-extraction/v1.toml`. Extractor
+  orchestrator (`extractor.py`): idempotent (returns existing run on same
+  input_hash unless `--replace`); per-chunk AI call recorded regardless of
+  outcome; atomic finalization with failure-injection recovery. CLI: `ace
+  sources extract-claims`, `ace sources list-claims`, `ace sources claim-runs`.
+  No new runtime dependencies. No live LLM or live HTTP in any test.
+  825 tests pass.
+
+- **Phase 5–6 M6.3C:** Script generation → production plan → narration TTS →
+  caption artifacts → ElevenLabs provider integration. 1889 tests. SCHEMA_VERSION 12.
+
+- **Phase 7 — Visual Intelligence & Scene Planning:** `src/app/scenes/` package
+  (8 modules); SCHEMA_VERSION 12 → 13 (4 new tables); deterministic scene
+  manifests with immutable input hash, evidence linkage, full licensing metadata,
+  approve/reject/supersession review workflow, operator CLI; `asset_strategy.py`
+  extracted as Phase 8 seam. 130 new tests. 2019 total. Ruff clean.
+
+- **Phase 8: Rendering Engine** — `src/app/media/` package with
+  `RenderBackend` Protocol, `FFmpegRenderBackend`, render manifests, render
+  jobs, `ApprovedRender` handoff, append-only review events, full state
+  machine (draft→approved/rejected), SHA-256 output hash, reproducibility
+  provenance; `ace render` CLI (compose/start/list/show/approve/reject/retry/
+  cancel/events/doctor); SCHEMA_VERSION 13→14; 204 new tests. 2154 total.
+  Ruff clean.
+
+- **Phase 9: Publishing & Orchestration Engine** — `src/app/publishing/`
+  package with `PublishingProvider` Protocol, `FakePublishingProvider`,
+  `YouTubePublishingProvider` (injectable `FakeYouTubeAPIClient` for tests);
+  three distinct lifecycles (plan/job/publication) with separate state
+  machines; supersession via `superseded_at`/`superseded_by_id` fields;
+  SHA-256 idempotency hash; `MAX_RETRY_ATTEMPTS=3` guard; dry-run safe
+  default; append-only review events; SCHEMA_VERSION 14→15 (4 new tables:
+  `publishing_plans`, `publishing_jobs`, `publications`,
+  `publishing_review_events`); `ace publish` CLI (11 subcommands); OAuth
+  credential file design: path-only env vars, never secrets in SQLite;
+  204 new tests. 2358 total. Ruff clean.
+
+- **Phase 10: Platform Analytics Engine** — `src/app/analytics/` package
+  with `AnalyticsProvider` Protocol, `FakeAnalyticsProvider`,
+  `YouTubeAnalyticsProvider` (fixture-tested boundary, no live calls);
+  AGG_SUM/AGG_LAST metric semantics; deterministic SHA-256 hashing;
+  7-check publication eligibility guard (no bypass); deduplication for
+  additive metrics; currency contract; source lineage via
+  `source_snapshot_ids_json`; `AnalyticsHandoff` Phase 11 bundle;
+  SCHEMA_VERSION 15→16 (4 new tables: `analytics_snapshots`,
+  `analytics_metrics`, `analytics_aggregates`, `analytics_review_events`);
+  `ace analytics` CLI (8 subcommands); 230 new tests. 2588 total. Ruff clean.
+
+- **Phase 12: Media Operations Control Plane** — `src/app/control_plane/` package;
+  22-table SCHEMA_VERSION 18 (`cp_organizations`, `cp_workspaces`, `cp_channels`,
+  `cp_platforms`, `cp_credential_profiles`, `cp_platform_accounts`,
+  `cp_publishing_profiles`, `cp_analytics_identities`, `cp_automation_policies`,
+  `cp_strategy_profiles`, `cp_events`, `cp_event_processing`, `cp_workflows`,
+  `cp_workflow_runs`, `cp_experiments`, `cp_experiment_variants`,
+  `cp_experiment_assignments`, `cp_operation_executions`, `cp_cost_records`,
+  `cp_budget_policies`, `cp_health_records`, `cp_provider_registry`);
+  permanent identity hierarchy (organization → workspace → channel → platform →
+  platform_account → credential_profile; publishing_profile and analytics_identity
+  are account-scoped); credentials store `external_ref` only (no plaintext secrets);
+  MANUAL / SUPERVISED / AUTONOMOUS automation levels (most restrictive wins);
+  durable append-only event bus with `UNIQUE(event_id, handler_key)` idempotency
+  and dead-letter after 3 attempts; structured workflow engine (8 operators, 6
+  action types; no eval/exec); experiment immutability (active/concluded/cancelled
+  cannot be mutated); three-tier budget enforcement (workspace/channel/account;
+  warn/pause/block); `concurrency.py` (`check_concurrency_limit()`,
+  `ConcurrencyLimitExceededError`); `workspace_control_center_status()` unified
+  dashboard projection; `workspace_audit_timeline()` chronological audit log;
+  actor-aware mutations throughout; cross-workspace isolation enforced at query
+  boundary; CP service layer (`services.py`) for frontend consumption without
+  direct SQLite access; `ace cp` CLI subcommand group; 255 new tests.
+  3101 total. Ruff clean.
+
+- **Phase 14: Frontend Studio & Dashboard** — `frontend/` React 19 + TypeScript + Vite 8
+  SPA; 12 production pages (Dashboard, Pipelines, Reviews, Channels, Analytics, Learning,
+  Exceptions, Operations, + Experiments/Workflows/Automation placeholders); centralized typed
+  API client (`src/api/client.ts`) as the sole fetch boundary; dev actor header (`X-Dev-Actor:
+  dev:studio-user`) centralized and labeled DEV-ONLY; Vitest 4 + RTL + MSW v2 test suite
+  (13 files, 111 tests); typecheck clean, oxlint clean, production build clean (326 kB JS);
+  backend ruff clean, 3368 backend tests pass; git diff --check clean.
+
+- **Phase 11: Learning & Optimization Engine** — `src/app/learning/` package;
+  deterministic, explainable recommendations from analytics history with no
+  ML, no embeddings, no network calls, no automatic application; six recommendation
+  generators (CTR, retention, engagement, watch-time, subscribers, shares) each with
+  named `GeneratorResult` tracking; three-factor confidence scoring (volume × effect
+  × consistency) — scores are deterministic heuristic signal strength, not statistical
+  confidence intervals; single observation period yields zero consistency contribution;
+  duplicate snapshot IDs across evidence items do not inflate volume; recommendations
+  classified as `exploratory` (insufficient evidence) or `actionable` (≥2 unique
+  snapshots AND confidence ≥ 0.4); all Phase 11 evidence is `observational` —
+  `experiment_id` alone does NOT qualify as `controlled_experiment`; append-only
+  `optimization_recommendations` with full evidence JSON and SHA-256 hashes;
+  hashes include `evidence_classification` and `recommendation_strength`; human-only
+  review lifecycle (pending → accepted/rejected); supersession is not rejection —
+  superseded recommendations remain inspectable; generator failures recorded in
+  `learning_run_generator_results` (visible and attributable); mixed generator
+  success/failure yields `partial` run status; attribution through AnalyticsHandoff
+  FK chain; Phase 11 consumes only `AnalyticsHandoff` — upstream human-review
+  signals (scripts, narration, scenes, rendering, publishing) are not ingested;
+  `ReviewedOptimizationHandoff` is the frozen Phase 12 input boundary;
+  SCHEMA_VERSION 16→17 (4 new tables: `learning_runs`,
+  `optimization_recommendations`, `recommendation_review_events`,
+  `learning_run_generator_results`); `ace learn` CLI (7 subcommands);
+  258 new tests. 2846 total. Ruff clean.
+
 ---
 
 ## Roadmap
@@ -20,141 +222,6 @@
 Each phase entry states: objective, business value, technical scope,
 dependencies, database changes, interfaces, tests, human approval gates,
 risks, definition of done, demonstrable capability, and what waits.
-
----
-
-### Phase 2 — AI Foundation
-
-**Objective:** Establish the LLM integration layer that all content-generation
-phases depend on.
-
-**Business value:** Enables script generation, critique, and metadata
-production in later phases. Getting the abstraction right here avoids
-rewiring every phase that touches an LLM.
-
-**Technical scope:**
-- `src/app/llm/` package
-- Provider protocol / abstract base: `LLMProvider`
-- `ClaudeProvider` using the Anthropic SDK (`anthropic` package)
-- Prompt registry: named, versioned prompt templates stored as files under
-  `src/app/llm/prompts/`; loaded at startup, not hardcoded in call sites
-- Structured output: call → validate against a Pydantic schema → return typed
-  result
-- Bounded retries with exponential back-off (configurable max attempts)
-- Token and cost tracking: input tokens, output tokens, estimated cost per
-  call stored in a new `llm_calls` table
-- Dry-run mode (`ACE_DRY_RUN=1`): returns fixture responses without hitting
-  the API
-- Mock provider for tests: no network calls, deterministic responses
-
-**Dependencies:** Phase 1 (database, config, logging).
-
-**Database changes:** New `llm_calls` table:
-`(id, provider, model, prompt_name, prompt_version, input_tokens,
-output_tokens, estimated_cost_usd, duration_ms, error, created_at)`
-
-**Interfaces:**
-- `LLMProvider.complete(prompt_name, version, variables) -> StructuredResult`
-- CLI: `ace llm estimate-cost --prompt <name>` (dry-run cost estimate)
-- Config: `ACE_ANTHROPIC_API_KEY`, `ACE_LLM_MODEL`, `ACE_DRY_RUN`
-
-**Tests:** Unit tests for retry logic, cost accumulation, dry-run bypass,
-schema validation failure handling, mock provider. No live API calls in CI.
-
-**Human approval gates:** None (infrastructure phase).
-
-**Risks:** Anthropic SDK changes; structured output reliability at low
-temperatures; prompt versioning discipline.
-
-**Definition of done:** Mock provider passes all tests; dry-run mode returns
-fixture outputs; `llm_calls` table records every call; real Claude call
-succeeds in manual smoke test; ruff clean.
-
-**Demonstrable capability:** `ace llm estimate-cost --prompt script-draft`
-prints token and cost estimate. `ACE_DRY_RUN=1 ace scripts generate 1`
-returns a fixture script without an API call.
-
-**What waits:** Opportunity intelligence, content generation, any live API
-calls in automated tests.
-
----
-
-### Phase 3 — YouTube Opportunity Intelligence
-
-**Objective:** Identify and score content opportunities so the system selects
-topics with genuine audience demand rather than guessing.
-
-**Business value:** This is the competitive foundation — choosing what to make
-determines ceiling revenue more than any production optimisation.
-
-**Technical scope:**
-- `src/app/intelligence/` package
-- Channel and niche configuration (stored in DB, editable via CLI):
-  channel name, primary niche, secondary niches, excluded topics, target
-  audience description
-- YouTube Data API v3 client (`google-api-python-client`): search, video
-  details, channel statistics
-- Google Trends integration (`pytrends` or official endpoint where available):
-  rising queries, interest over time; clearly marked as non-YouTube data
-- Manual signal ingestion: user-supplied keyword lists, competitor channels
-  to watch, trend notes
-- Competitor research: top videos in a niche by view count, recency, and
-  engagement; stored per discovery run
-- Topic scoring model (deterministic, not ML): composite score from
-  — trend velocity (Trends or manual)
-  — estimated search demand (manual or third-party; never scraped)
-  — competitor saturation (Data API video counts and view distribution)
-  — recency of existing coverage
-  — fit to channel niche config
-- Shorts vs. long-form recommendation: based on topic type, competitor
-  format distribution, and average video duration in niche
-- Duplicate-topic protection: cosine similarity or keyword overlap against
-  existing topics in DB; threshold configurable
-- Source provenance: every data point records its origin (API, Trends,
-  manual, provider name + date)
-
-**Data availability notes (must be respected in implementation):**
-- Keyword search volume: not available from YouTube or Google free APIs;
-  field stored but marked as `source=manual` or `source=provider:<name>`
-- Competitor revenue: never available; do not infer or display
-- Algorithm ranking signals: not available; do not model
-
-**Dependencies:** Phase 1 (DB, models), Phase 2 (LLM — for niche
-classification and duplicate detection if needed).
-
-**Database changes:**
-- `channels` table: channel config per managed channel
-- `discovery_runs` table: timestamp, config snapshot, signal sources used
-- `opportunity_scores` table: topic candidate, score components, recommended
-  format, data provenance JSON, run_id
-- Extend `topics` table: `channel_id`, `discovery_run_id`, `format`
-  (`shorts` | `long_form`), `opportunity_score`
-
-**Interfaces:**
-- `ace channels add/list/config`
-- `ace discover run` — run a discovery cycle, output ranked candidates
-- `ace discover list` — list candidates from most recent run
-- `ace topics promote <opportunity_id>` — move candidate to active topic
-
-**Tests:** Stub YouTube Data API responses; verify scoring formula; verify
-duplicate detection at configurable threshold; verify provenance fields
-populated; verify Shorts/long-form recommendation logic.
-
-**Human approval gates:** Topic selection — human explicitly promotes
-candidates to active topics.
-
-**Risks:** YouTube Data API quota (10,000 units/day default); Google Trends
-rate limiting; scoring model being gamed by outlier data; Trends data
-reflecting global not niche-specific demand.
-
-**Definition of done:** `ace discover run` produces a scored, ranked list of
-candidates with provenance; duplicate detection fires correctly; promoted
-topics appear in `ace topics list`; all tests pass; ruff clean.
-
-**Demonstrable capability:** Run discovery on a real niche, inspect scored
-candidates, promote a topic.
-
-**What waits:** Actual source ingestion, script generation, any publishing.
 
 ---
 
@@ -223,200 +290,348 @@ claims with source provenance.
 
 ---
 
-### Phase 5 — Content Generation
+### Phase 5 — Script Generation ✅ COMPLETE
 
-**Objective:** Generate original, source-grounded scripts, hooks, titles,
-descriptions, and YouTube metadata with LLM critique and human approval.
+**Objective:** Generate source-grounded short-form scripts with deterministic
+validation, citation tracking, and atomic approval.
 
-**Business value:** This is the primary content output. Quality here
-determines watch time, retention, and algorithmic distribution.
+**Business value:** This is the primary content output for Shorts. Quality
+here — grounding in evidence, citation accuracy, duration fit — determines
+watch time, retention, and algorithmic distribution.
 
-**Technical scope:**
-- `src/app/content/` package
-- Content brief: structured summary of topic, angle, target audience,
-  format (Shorts/long-form), available claims, key sources
-- Hook generation: 3–5 hook options per brief, scored against hook rubric
-  (clarity, curiosity, specificity, platform fit)
-- Script generation: structured output — hook, body sections, call to action;
-  target word count based on format (Shorts ≈ 60–90 words spoken)
-- Script critique: LLM evaluates against fixed rubric (accuracy, originality,
-  hook strength, pacing, claim support, platform fit); returns structured
-  critique with pass/fail per criterion
-- Revision loop: up to N attempts (configurable) if critique fails; each
-  attempt stored as a new script version
-- Human approval: CLI presents script + critique; human approves, rejects,
-  or requests manual revision
-- Title generation: 3–5 options; scored against YouTube title rubric (≤60
-  chars, front-loaded keyword, curiosity gap, no clickbait)
-- Description generation: structured description with hook sentence, key
-  points, call to action, source credits, hashtags
-- Tags: keyword list respecting YouTube tag guidelines
-- Originality check: compare script against recent published scripts in DB
-  using token overlap; flag if similarity exceeds threshold
-- Prompt versioning: all generation prompts tracked via Phase 2 registry
+**Technical scope (implemented):**
+- `src/app/content/` package: `constants`, `errors`, `schemas`, `hashing`,
+  `renderer`, `validator`, `models`, `repository`, `generator`
+- SCHEMA_VERSION 9: `scripts` extended with `body_json`, `format`,
+  `approved_at`, `superseded_at`; new `script_generation_runs` and
+  `script_citations` tables; v8→v9 migration
+- `sort_evidence()`: canonical 5-key ordering used for prompt context,
+  evidence hash, reproducibility (invariant 4)
+- `validate_script()`: 12-step pipeline; bidirectional marker/ID equivalence,
+  duration bounds (15–90 s), zero-evidence mode (invariant 11)
+- `finalize_generation_run()`: SAVEPOINT — INSERT script → INSERT citations →
+  UPDATE run → optional supersede prior run → RELEASE → commit once
+- `approve_script()`: SAVEPOINT — supersede prior active approved Scripts →
+  set `approved_at` → RELEASE; prior scripts retain `status='approved'` and
+  receive `superseded_at` (invariants 18–20)
+- Idempotency: `find_completed_run_by_input_hash()` returns existing completed
+  non-superseded run; `was_idempotent=True` in result
+- Phase 6 handoff: `get_active_approved_generated_script()` raises
+  `UnstructuredApprovedScriptError` for manual scripts (invariants 24–25)
+- Prompt: `src/app/ai/prompts/script-generation/v1.toml`
 
 **Dependencies:** Phase 1, Phase 2 (LLM), Phase 4 (claims and sources).
 
-**Database changes:**
-- Extend `scripts` table: `format`, `word_count`, `hook_id`,
-  `critique_passed`, `critique_json`, `originality_score`
-- New `hooks` table: `(id, topic_id, hook_text, score, selected, created_at)`
-- New `metadata_drafts` table: `(id, script_id, title, description, tags_json,
-  created_at, approved_at)`
-
 **Interfaces:**
-- `ace content brief <topic_id>` — generate and display content brief
-- `ace content generate <topic_id>` — run full generation pipeline
-- `ace content approve <script_id>` — human approval gate
-- `ace content metadata <script_id>` — generate title/description/tags
+- `ace scripts generate <topic_id>` — generate from active evidence
+- `ace scripts approve <script_id>` — atomic approval with supersession
+- `ace scripts show <script_id>` — display script body and metadata
+- `ace scripts runs <topic_id>` — list generation run history
+- `ace scripts citations <script_id>` — list evidence citations
 
-**Tests:** Mock LLM; test brief assembly; test critique pass/fail logic;
-test revision loop termination; test originality threshold; test metadata
-schema validation.
+**Tests:** 999 passing (17 generator tests, 22 content-repository tests,
+34 validator tests, 25 renderer tests, 31 hashing tests, 20 schema tests,
+6 constant tests, plus extended database and core repository tests).
 
-**Human approval gates:** Script approval (after critique); metadata review
-before proceeding to production.
+**Definition of done:** ✅ All 26 invariants enforced, Ruff clean, 999 tests
+passing, documentation updated.
 
-**Risks:** LLM producing non-grounded claims; revision loop not converging;
-originality check being too strict or too lenient; Shorts scripts being too
-long.
-
-**Definition of done:** Full pipeline runs from topic to approved script and
-metadata; critique failures trigger revision; originality flags fire at
-threshold; all tests pass; ruff clean.
-
-**Demonstrable capability:** `ace content generate <topic_id>` → human
-reviews critique → `ace content approve <script_id>` → metadata generated.
-
-**What waits:** Narration, video production, publishing.
+**What waits:** Phase 6 M6.1 Production Plan (complete), Phase 6 M6.2
+Narration (complete — see below).
 
 ---
 
-### Phase 6 — Narration and Captions
+### Phase 6 Milestone 6.1 — Production Plan ✅ COMPLETE
 
-**Objective:** Convert approved scripts to audio narration and generate
-accurate captions.
+**Objective:** Convert an approved script into a production plan: a structured,
+segment-by-segment breakdown with estimated durations, word counts, and citation
+mappings, ready for narration generation in M6.2.
 
-**Business value:** Narration quality directly affects watch time and
-retention. Accurate captions improve accessibility and on-screen text
-engagement (critical for Shorts).
+**Business value:** The production plan is the atomic unit for platform analytics
+(each segment is the granular retention attribution target), review governance
+(approval/rejection workflow with structured review events), and the M6.2
+narration handoff.
 
-**Technical scope:**
-- `src/app/media/narration.py`
-- TTS provider abstraction (same pattern as LLM provider): protocol,
-  concrete provider (ElevenLabs or equivalent), mock provider for tests
-- Voice configuration: voice ID, speed, stability settings stored per channel
-- Audio output: WAV or MP3, normalised to YouTube's preferred loudness
-  standard (−14 LUFS integrated)
-- Duration validation: generated audio duration consistent with script word
-  count; flag if materially outside expected range
-- Caption generation: word-level timestamps from TTS provider (if available)
-  or forced alignment; output as SRT and VTT
-- Caption schema validation: verify line length, reading speed, sync accuracy
-- Cost tracking: TTS characters billed, cost per narration stored in a new
-  `tts_calls` table
+**Technical scope (implemented):**
+- `src/app/production/` package: `constants`, `errors`, `hashing`, `models`,
+  `renderer`, `repository`
+- SCHEMA_VERSION 10: four new tables — `production_plans`, `production_segments`,
+  `production_segment_citations`, `production_plan_review_events`; v9→v10
+  migration applied to all existing migration branches
+- Two partial unique indexes for active-plan isolation (normal vs. experiment):
+  `idx_pp_one_active_normal` (WHERE experiment_id IS NULL),
+  `idx_pp_one_active_experiment` (WHERE experiment_id IS NOT NULL)
+- Three version constants bound to `input_hash`; any version change invalidates
+  old plans and forces a new plan row
+- `build_production_plan(approved_script) → ProductionPlanDraft` — pure
+  deterministic function; hard invariant: `segment.narration_text ==
+  strip_markers(section.text)`; unclamped segment duration (no [15,90] clamp)
+- `create_production_plan()` SAVEPOINT (plan → segments → citations);
+  `UNIQUE(script_id, input_hash)` enforces idempotency
+- `approve_production_plan()` SAVEPOINT (supersede prior active normal plan →
+  set approved → insert approved review event)
+- `reject_production_plan()` SAVEPOINT (set rejected → insert rejected review
+  event); prior approved plan is NOT touched
+- `experiment_id TEXT` nullable: all M6.1 plans NULL; enables A/B testing
+  without future migration
+- `production_plan_review_events`: denormalized training-label fields
+  (topic_id, script_id, evidence_hash, model, prompt_hash, experiment_id) for
+  platform-neutral analytics
+- `ApprovedProductionPlan` — frozen Pydantic handoff for M6.2 narration
+- `require_active_approved_production_plan()` raises `NoApprovedProductionPlanError`;
+  `get_active_approved_production_plan()` returns None
+- CLI: `ace production plan/show/list/approve/reject/feedback`
 
-**Dependencies:** Phase 1, Phase 5 (approved script).
+**Tests:** 1155 passing (+156 new: 7 constants, 18 hashing, 22 models, 46
+renderer, 36 repository, 15 CLI, plus extended database tests for v10 schema).
 
-**Database changes:**
-- New `narrations` table: `(id, script_id, provider, voice_id, audio_path,
-  duration_s, lufs, cost_usd, created_at)`
-- New `captions` table: `(id, narration_id, format, file_path, created_at)`
-- New `tts_calls` table: cost tracking parallel to `llm_calls`
+**Definition of done:** ✅ All 39 frozen invariants enforced, Ruff clean, 1155
+tests passing, documentation updated.
 
-**Interfaces:**
-- `ace narration generate <script_id>` — produce audio and captions
-- `ace narration play <narration_id>` — open audio file in system player
-
-**Tests:** Mock TTS provider; test loudness validation logic; test duration
-range check; test caption schema; no live TTS calls in CI.
-
-**Human approval gates:** Listen and approve narration before video assembly.
-
-**Risks:** TTS provider API changes; voice quality degrading between provider
-versions; loudness normalisation edge cases; caption sync quality.
-
-**Definition of done:** Mock TTS produces valid audio fixture; loudness
-check and duration check pass; captions written as SRT and VTT; cost stored;
-real provider smoke test succeeds; ruff clean.
-
-**Demonstrable capability:** `ace narration generate <script_id>` → audio
-file and SRT produced; duration and loudness validated.
-
-**What waits:** Scene manifests, video rendering.
+**What waits:** Phase 6 M6.2 — narration generation (complete — see below).
 
 ---
 
-### Phase 7 — Licensed Assets and Scene Manifests
+### Phase 6 Milestone 6.2 — Narration Generation ✅ COMPLETE
 
-**Objective:** Select or generate properly licensed visual assets and produce
-a scene manifest that drives video rendering.
+**Objective:** Synthesise audio narration for every segment in an approved
+production plan using an injectable TTS provider abstraction. No live TTS
+provider integrated; `FakeTTSProvider` used for all tests (M6.3 wires a real
+provider).
 
-**Business value:** Visual quality and licensing compliance protect revenue
-and channel standing. Asset reuse without attribution is a common channel-
-killing mistake.
+**Business value:** Narration is the audio backbone of the finished Short.
+The M6.2 pipeline establishes cost tracking, idempotency, exception-based
+review governance, and artifact management so M6.3 can simply swap in a live
+provider.
 
-**Technical scope:**
-- `src/app/media/assets.py`, `src/app/media/manifest.py`
-- Supported asset categories (all four are part of the finished product):
-  1. Owned assets (uploaded to local asset library)
-  2. Public-domain assets (US government works, expired copyright, etc.)
-  3. Licensed stock (CC0, Creative Commons, paid stock APIs — Pexels,
-     Pixabay, Storyblocks, Shutterstock)
-  4. AI-generated visuals — **deferred to a later sub-phase** until the
-     pipeline supports: provider/model tracking, commercial-use term
-     confirmation, prompt and output provenance, YouTube disclosure flags,
-     likeness/trademark risk checks, and quality validation
-  — Never use assets without a verified licence record
-- Phase 7 implements categories 1–3 only; category 4 is a named future
-  capability, not an exclusion
-- Asset library: local directory + DB records (licence, source URL,
-  attribution, asset_category, provider, provenance_json)
-- Asset rights enforcement: block scene manifest creation if any asset has
-  `commercial_ok=False` and channel is monetised
-- Asset selection criteria (implemented progressively): licence confidence,
-  visual quality score, originality signal, production cost, historical
-  performance correlation
-- Shorts scene manifest: sequence of scenes, each with:
-  `(scene_index, duration_s, narration_segment_id, asset_id, text_overlay,
-  transition)`
-- Manifest validation: total duration matches narration ± tolerance;
-  all assets resolved; licences verified
-- Shorts template: vertical 9:16, 1080×1920, max 60 seconds, text overlay
-  positions respecting safe zones
+**Technical scope (implemented):**
+- `src/app/narration/` package: `constants`, `errors`, `hashing`, `models`,
+  `protocol`, `fake`, `pricing`, `storage`, `repository`, `orchestrator`
+- SCHEMA_VERSION 11: five new tables — `voice_profiles`, `narration_runs`,
+  `narration_segment_assets`, `tts_calls`, `narration_review_events`;
+  v10→v11 migration applied to all existing migration branches
+- `TTSProvider` `@runtime_checkable` Protocol — same pattern as `AIProvider`;
+  `FakeTTSProvider` deterministic silence WAV via stdlib `wave`; no new deps
+- `TTSPricingRegistry`: character-based pricing; fake model = $0.00;
+  `get_default_registry()` singleton; `register()` for extension
+- Two input hashes: segment hash (19 fields), run hash (14 fields) — both
+  SHA-256 of compact sorted JSON; any field change forces re-synthesis
+- `NARRATION_SCHEMA_VERSION = "Narration-v1"`;
+  `NARRATION_ALGORITHM_VERSION = "narration-segment-v1"`
+- `ACE_ARTIFACTS_PATH` config; WAV files under
+  `{artifacts_path}/narration/{plan_id}/{run_id}/segment_{id}.wav`;
+  relative paths in DB; `/artifacts/` in `.gitignore`
+- Atomic audio write: `.tmp` → validate WAV (stdlib `wave`) → SHA-256 →
+  `os.replace()`; `AudioValidationError` on corrupt bytes
+- `narrate_plan()`: idempotent on completed/approved run; resumes running
+  run; TTS call OUTSIDE DB transaction; `record_tts_call()` auto-commits
+  outside SAVEPOINT; SAVEPOINTs: `create_vp`, `approve_nr`, `reject_nr`,
+  `finalize_nsa`, `reject_nsa`
+- Exception-based review: segments start `synthesized`; operator rejects
+  only; approval requires zero rejected segments and all plan segments covered;
+  severity validated 1–5 BEFORE SAVEPOINT (`InvalidNarrationSeverityError`)
+- Supersession contract: prior approved run keeps `status='approved'`;
+  `superseded_at` + `superseded_by_run_id` mark it historical; partial unique
+  index `WHERE status='approved' AND superseded_at IS NULL` enforces at-most-one
+- `regenerate_segment()`: rejected asset → pending asset (committed) → TTS
+  OUTSIDE SAVEPOINT → WAV write → `finalize_narration_segment_asset()` SAVEPOINT;
+  pending asset deleted + committed on TTS or finalization failure
+- `narration_review_events`: 21 cols; denormalized training context frozen at
+  insert (`plan_id`, `script_id`, `topic_id`, `voice_profile_id`, `provider`,
+  `model`, `voice_id`, `experiment_id`); `actor` field; `severity` 1–5 CHECK;
+  `expected_correction`; `replacement_asset_id` for `segment_regenerated`
+- `dry_run=True`: skips all synthesis; returns segment IDs as skipped
+- `experiment_id` threading from run to segment assets
+- Config: `ACE_TTS_PROVIDER` (default `fake`), `ACE_TTS_MODEL`
+  (default `fake/FAKE`)
+- CLI: `ace narration voices/add-voice/narrate/runs/approve/reject-run/
+  reject-segment/events/regenerate-segment`
 
-**Dependencies:** Phase 6 (narration, captions).
+**Tests:** 1326 passing (+171 new vs baseline: including 19 corrections-phase
+tests covering supersession contract, severity boundary, immutable event context,
+and regenerate-segment CLI).
 
-**Database changes:**
-- New `assets` table: `(id, channel_id, file_path, asset_type,
-  asset_category, source_url, licence_type, attribution_text, commercial_ok,
-  provider, provenance_json, quality_score, created_at)`
-- New `scene_manifests` table: `(id, script_id, narration_id, template,
-  scenes_json, validated, created_at)`
+**Definition of done:** ✅ Ruff clean, 1326 tests passing, documentation
+updated. FakeTTSProvider only; no paid-provider SDK added; no live TTS calls
+in any test.
 
-**Interfaces:**
-- `ace assets add <file_path> --licence <type>` — register owned asset
-- `ace assets search <query>` — search stock providers
-- `ace manifest create <script_id>` — assemble scene manifest
-- `ace manifest validate <manifest_id>` — check durations and licences
+**What waits:** Phase 6 M6.3A — Caption and Timing Artifacts (complete — see below).
 
-**Tests:** Mock stock API responses; test licence enforcement; test duration
-validation; test manifest schema; test safe-zone bounds in template.
+---
 
-**Human approval gates:** Review manifest before rendering; confirm all
-assets and licences are acceptable.
+### Phase 6 Milestone 6.3A — Caption and Timing Artifacts ✅ COMPLETE
 
-**Risks:** Stock API pricing or availability changes; licence verification
-being incomplete for edge cases; Shorts safe-zone requirements changing.
+**Objective:** Generate SRT, WebVTT, and JSON caption artifacts for every
+approved narration run using deterministic text segmentation and proportional
+timing estimation. No live TTS provider, no forced alignment, no network access.
 
-**Definition of done:** Manifest assembles correctly from narration and
-assets; licence enforcement blocks commercial-ok=False assets; duration
-validated; all tests pass; ruff clean.
+**Business value:** Captions are required for Shorts discoverability and
+accessibility. M6.3A delivers production-ready caption files (SRT/VTT/JSON)
+with a full review governance model, enabling human correction before M6.3B
+wires real TTS timestamps.
 
-**Demonstrable capability:** `ace manifest create <script_id>` produces a
-valid, licence-verified manifest ready for rendering.
+**Technical scope (implemented):**
+- `src/app/captions/` package: `constants`, `errors`, `hashing`, `models`,
+  `segmentation`, `timing`, `validation`, `exporters`, `storage`,
+  `repository`, `orchestrator`
+- SCHEMA_VERSION 12: three new tables — `caption_runs` (34 cols;
+  `UNIQUE(narration_run_id, input_hash)`; two partial unique indexes for
+  normal/experiment active-run isolation), `caption_cues` (17 cols; immutable
+  after insert; segment-relative timestamps in integer milliseconds;
+  `timing_source='estimated'`), `caption_review_events` (10 cols; append-only;
+  `event_type` CHECK: `run_approved/run_rejected/cue_rejected`)
+- Five version constants (`CAPTION_SCHEMA_VERSION`, `CAPTION_SEGMENTATION_VERSION`,
+  `CAPTION_TIMING_ALGORITHM_VERSION`, `CAPTION_STYLE_VERSION`,
+  `CAPTION_EXPORTER_VERSION`) bound to `input_hash`; any version change
+  forces a new caption run row
+- `segment_narration_text()`: sentence-aware segmentation; abbreviation
+  handling (Dr., Mr., U.S., etc.); decimal number protection; max 2 lines
+  per cue; 42 char/line limit; text integrity invariant enforced
+- `allocate_timing()`: cumulative proportional allocation by display-char
+  count; all timestamps integer milliseconds; first cue starts at 0,
+  last cue ends at `duration_ms`; no overlap
+- `validate_caption_cues()`: per-cue geometry, non-negative start,
+  start<end, duration bounds, overlap, index gaps, text integrity,
+  timing source, asset/hash consistency; `ValidationResult` dataclass
+- `render_srt()`: 1-based index, HH:MM:SS,mmm → HH:MM:SS,mmm
+- `render_vtt()`: WEBVTT header, HH:MM:SS.mmm → HH:MM:SS.mmm
+- `render_json()`: provenance document with all version constants, cue array
+- Atomic export write: `.tmp` → `os.replace()`; SHA-256 of UTF-8 content;
+  export paths stored in DB; SQLite is canonical, files are derived
+- `generate_captions()` orchestrator: 9-step pipeline; idempotent (returns
+  existing completed/approved run on matching input hash); failed-run rule
+  (no auto-restart; raise `FailedCaptionRunError`); marks run `failed` on
+  any exception; `conn.commit()` only on clean completion
+- `ApprovedNarrationRun` + `ApprovedNarrationSegment` frozen dataclasses
+  added to `src/app/narration/models.py` as handoff models
+- `get_approved_narration_run_full()` added to narration repository;
+  assembles full handoff with all segments ordered by `segment_index`
+- Exception-based review: `cue_rejected` events block approval
+  (`CueRejectionBlocksApprovalError`); supersession is not rejection
+  (prior approved runs keep `status='approved'`)
+- CLI: `ace captions generate/runs/approve/reject/reject-cue/events`
 
-**What waits:** Video rendering.
+**Tests:** 1563 passing (+81 new vs M6.2 baseline: 27 exporters, 23 storage,
+35 repository, 12 orchestrator, 11 CLI, plus extended database tests for v12
+schema; segmentation/timing/validation tests from earlier stages).
+
+**Definition of done:** ✅ Ruff clean, 1563 tests passing, documentation
+updated. No live TTS provider added; no network access in any test; no
+forced alignment.
+
+---
+
+### Phase 6 M6.3C — Live ElevenLabs Provider Integration ✅ Complete
+
+**Objective:** Integrate ElevenLabs as the first live TTS provider; wire it into
+the provider infrastructure built in M6.3B; deliver credential-safe, test-isolated
+synthesis with character-level alignment, loudness measurement, and bounded retry.
+
+**Technical scope (implemented):**
+- `src/app/narration/providers/elevenlabs.py` — ElevenLabsTTSProvider satisfying
+  TTSProvider + ProviderLifecycle; uses `/with-timestamps` endpoint; lazy SDK import;
+  3-retry bounded backoff; no audio normalisation; RMS dBFS measurement; credential guard
+- 4 new capability flags: `supports_alignment`, `supports_seed`, `supports_voice_cloning`,
+  `supports_pronunciation_dictionary`
+- 2 new error types: `ProviderCredentialError`, `ProviderRateLimitError`
+- Pricing registered: `eleven_multilingual_v2=$0.10/1K`, `eleven_flash_v2_5=$0.05/1K`
+- Factory/loader updated to handle `"elevenlabs"`; default registry unchanged
+- CLI: `ace narration smoke-test` (manually opt-in; skipped in CI)
+- New dependency: `elevenlabs>=2.61.0,<3.0` (floor matches verified SDK 2.61.0)
+
+**Tests:** 1889 passing, 1 skipped (79 new unit tests in `test_narration_elevenlabs.py`;
+always-skipped live smoke test in `test_narration_elevenlabs_smoke.py`; factory test updated).
+
+**Definition of done:** ✅ Ruff clean, 1889 passing, git diff --check clean,
+no live network calls in CI, credentials never appear in logs or DB.
+
+---
+
+### Phase 6 M6.3B — Narration Provider Infrastructure ✅ Complete
+
+**Objective:** Implement the complete provider infrastructure for narration —
+every abstraction required for future live providers while intentionally
+leaving FakeTTSProvider as the only concrete implementation.
+
+**Technical scope (20 abstractions delivered):**
+- **provider registry** — `ProviderRegistry`; `get_default_provider_registry()`
+- **capability model** — `ProviderCapabilities`; `accepts_*` helpers
+- **provider metadata** — `ProviderMetadata.to_reproducibility_dict()`; captures
+  every field needed to reproduce or verify any generated artifact
+- **provider configuration objects** — `ProviderConfig`, `ProviderConfigRegistry`
+- **provider discovery** — `ProviderRegistry.discover()` (sorted provider names)
+- **provider selection** — `ProviderSelector` Protocol; `DefaultProviderSelector`
+- **provider validation** — `ProviderValidator` Protocol; `DefaultProviderValidator`;
+  `ProviderCompatibilityResult`
+- **provider factory** — `ProviderFactory` Protocol; `DefaultProviderFactory`
+- **provider loading** — `ProviderLoader` Protocol; `DefaultProviderLoader`;
+  `RegisteringProviderLoader`
+- **provider lifecycle** — `ProviderLifecycle` Protocol; `ProviderLifecycleState`
+  enum; FakeTTSProvider implements lifecycle without gating synthesis
+- **provider routing abstraction** — `ProviderRouter` Protocol; `DefaultProviderRouter`
+- **provider pricing abstraction** — `ProviderPricingPolicy` Protocol (satisfied by
+  existing `TTSPricingRegistry`)
+- **provider usage accounting abstraction** — `UsageRecord`, `UsageAccumulator`
+- **provider benchmark abstraction** — `ProviderBenchmark` Protocol;
+  `InMemoryProviderBenchmark`; `BenchmarkSample`, `BenchmarkResult`
+- **provider health abstraction** — `ProviderHealthCheck` Protocol;
+  `InMemoryProviderHealthCheck`; `ProviderHealthStatus`, `ProviderHealthReport`
+- **provider failover abstraction** — `FailoverPolicy` Protocol; `NoFailoverPolicy`;
+  `ProviderFailoverChain`
+- **provider caching abstraction** — `ProviderResponseCache` Protocol; `CacheKey`,
+  `CacheEntry`; `NoOpResponseCache` (default); `InMemoryResponseCache`
+- **provider versioning** — `ProviderVersion`, `ProviderVersionRegistry`;
+  schema/algorithm compatibility checking
+- **provider feature flags** — `ProviderFeatureFlags`; string constants in
+  `PROVIDER_FEATURE_*`; `has_feature()` string-keyed lookup
+- **provider compatibility checking** — `DefaultProviderValidator` validates
+  language, format, sample rate, speaking rate, and character count
+
+**FakeTTSProvider changes:** Implements `ProviderLifecycle`; exposes
+`FAKE_CAPABILITIES`, `FAKE_FEATURE_FLAGS`, `FAKE_METADATA`, `FAKE_PROVIDER_VERSION`,
+`FAKE_PROVIDER_CONFIG` module-level constants. Synthesis behaviour unchanged.
+
+**Narration orchestration:** unchanged — no modifications to `orchestrator.py`,
+`protocol.py`, `hashing.py`, `repository.py`, `storage.py`, or any DB schema.
+
+**New errors:** 7 new error types under `ProviderInfrastructureError`.
+
+**New constants:** `PROVIDER_FEATURE_*` names (10), `PROVIDER_LANGUAGE_WILDCARD`,
+`PROVIDER_INFRASTRUCTURE_VERSION`.
+
+**Tests:** 1810 passing (+247 new: 15 new test files covering all 20 abstractions).
+
+**Definition of done:** ✅ Ruff clean, 1810 tests passing, git diff --check clean.
+No live provider SDK added. No external API calls. No network tests.
+No DB schema changes. FakeTTSProvider synthesis behaviour unchanged.
+
+**What waits:** Phase 6 M6.3C — Live TTS Provider Integration (requires
+operator approval of provider selection).
+
+---
+
+### Phase 7 — Visual Intelligence & Scene Planning ✅ COMPLETE
+
+**Objective:** Build the Visual Intelligence Engine foundation: deterministic
+scene manifests that describe every second of future video, with licensing
+metadata, evidence linkage, immutable review history, and natural extension
+points for Phase 8 asset providers.
+
+**Status:** Complete. 2019 tests pass. SCHEMA_VERSION = 13. Ruff clean.
+
+**What was built:**
+- `src/app/scenes/` — Visual Intelligence Engine root package
+- `scenes/constants.py` — shot types, camera grammar, transitions, 14 asset categories, license statuses, priorities
+- `scenes/models.py` — `PlannedAssetDraft`, `PlannedSceneDraft`, `SceneManifestDraft` (mutable); frozen Pydantic DB projections; handoff objects
+- `scenes/hashing.py` — SHA-256 immutable input hash (order-sensitive, segment-level)
+- `scenes/asset_strategy.py` — deterministic 1–3 asset recommendations per scene (Phase 8 seam)
+- `scenes/planner.py` — orchestrates shot type, camera grammar, transitions, timing, visual objectives, confidence
+- `scenes/repository.py` — full CRUD + approve (with supersession) + reject + scene-level rejection + review events + full handoff
+- `scenes/cli.py` — `ace scenes plan/list/show/approve/reject/reject-scene/events/manifest`
+- 4 new DB tables: `scene_manifests`, `scene_manifest_scenes`, `scene_manifest_assets`, `scene_manifest_review_events`
+- 130 Phase 7-specific tests
+
+**What waits:** Phase 8 — Asset Provider Integration.
 
 ---
 
@@ -673,209 +888,185 @@ shows real cost vs. revenue data for at least one video.
 
 ---
 
-### Phase 12 — Experimentation and Optimisation
+### Phase 12 — Media Operations Control Plane ✅ COMPLETE
 
-**Objective:** Propose and track controlled experiments to improve content
-performance, with safeguards against premature or spurious conclusions.
+**Objective:** Transform the collection of specialized engines into a coherent
+Media Operating System by introducing a central Control Plane that owns identity,
+orchestration, multi-account management, policies, workflows, events, experiments,
+resource governance, review queues, and cross-engine visibility.
 
-**Business value:** Systematic experimentation compounds gains over time.
-Without it, optimisation is based on anecdote.
+**Business value:** No single engine can coordinate the full production lifecycle
+across multiple brands, platform accounts, or automation tiers. The Control Plane
+provides the coherent operational layer that a future frontend and production
+infrastructure can build on.
 
 **Technical scope:**
-- `src/app/experiments/` package
-- Experiment types: hook variant, title variant, posting-time variant,
-  video-length variant, format variant (Shorts vs. long-form eventually)
-- Experiment design: hypothesis, treatment vs. control definition,
-  primary metric, minimum sample size (using a simple power calculation),
-  maximum duration
-- Sample-size enforcement: system refuses to declare a winner until minimum
-  sample is reached
-- Statistical note: store p-value and effect size for reference; display
-  with a disclaimer that these are observational signals, not RCTs; avoid
-  treating correlation as causation
-- Result actions: promote winning variant cautiously (update channel
-  defaults); retire consistently unprofitable formats (flag for human
-  confirmation, do not auto-retire)
-- Experiment log: every experiment and its outcome recorded permanently
+- `src/app/control_plane/` package (20+ modules)
+- First-class identity model: workspace → channel → platform → platform_account →
+  credential_profile (these are permanently distinct; see DECISIONS.md)
+- Multi-account/multi-platform: many workspaces, many channels per workspace,
+  many accounts on the same platform, many platforms per channel
+- Credential profiles: safe metadata only — never OAuth tokens, refresh tokens,
+  or API secrets; external_ref points to future secret store
+- Universal provider registry: indexes provider capabilities across all domains
+  (AI, TTS, publishing, analytics, asset, storage, notifications)
+- Durable internal event bus: append-only domain events (ResearchCompleted,
+  ScriptApproved, PublicationCompleted, LearningRunCompleted, etc.); idempotent
+  dispatch; correlation/causation IDs; replay-safe; dead-letter state
+- Strategy profiles: versioned, channel-assigned operational intent
+- Automation policies: MANUAL / SUPERVISED / AUTONOMOUS with explicit allowed
+  actions, cost limits, publishing limits, risk limits, emergency-stop
+- Structured workflow engine: trigger → conditions (equals/not_equals/
+  greater_than/less_than/in/not_in/exists/boolean) → actions; no eval, no
+  arbitrary code; auditable and reproducible
+- Experimentation infrastructure: experiments, variants, assignments; immutable
+  once activated; attribution links to Phase 11 evidence classification
+- Resource/cost management: normalized cost records attributable to workspace/
+  channel/account/engine/job/provider; budget policies with hard limits
+- Health/monitoring: centralized health records for engines, providers, platform
+  accounts, credential profiles, jobs, workflows; stuck-job detection
+- Review queue, exception queue: centralized queryable views over existing engine
+  review work and Control Plane exceptions
+- Pause/resume/emergency-stop: workspace, channel, platform-account, workflow scope
+- Job registry: provider-neutral reference index over existing engine jobs
+- Control Plane service/API boundary: application-service interfaces for future
+  frontend (list workspaces/channels, get pipeline status, get account health, etc.)
+- Actor-aware mutation contracts: all writes carry actor identity for future RBAC
+- Cross-engine idempotency: every Control Plane operation carries correlation_id,
+  idempotency_key, source_event_id; duplicate delivery → no duplicate work
+- Unified audit timeline: reconstruction of who/what/where/why for any action
 
-**Dependencies:** Phase 11 (analytics data required before any experiment
-can be evaluated).
+**Schema:** SCHEMA_VERSION 16→17→18; 19 new `cp_` prefixed tables
 
-**Database changes:**
-- New `experiments` table: `(id, channel_id, experiment_type, hypothesis,
-  primary_metric, min_sample_size, max_duration_days, status, winner_id,
-  created_at, concluded_at)`
-- New `experiment_arms` table: `(id, experiment_id, arm_name, video_ids_json,
-  result_json)`
+**CLI:** `ace control workspace|channel|accounts|providers|health|jobs|reviews|
+exceptions|events|pause|resume|policies|strategies|workflows|experiments|costs|
+doctor`
 
-**Interfaces:**
-- `ace experiments create` — define a new experiment
-- `ace experiments status <id>` — check progress and sample size
-- `ace experiments conclude <id>` — record outcome (human-confirmed)
+**Dependencies:** Phases 1–11 complete; all existing engine public interfaces
+remain unchanged.
 
-**Tests:** Test sample-size enforcement; test premature-conclusion block;
-test result storage.
+**Internal milestones:**
+- M12.1 Identity & Multi-Account Foundation
+- M12.2 Universal Provider Registry & Credential References
+- M12.3 Durable Event Bus
+- M12.4 Strategy, Policy & Automation Levels
+- M12.5 Workflow Automation Engine
+- M12.6 Experimentation Infrastructure
+- M12.7 Resource / Cost / Budget Management
+- M12.8 Monitoring / Health / Reliability
+- M12.9 Jobs, Review Queue, Exception Queue, Pause/Resume
+- M12.10 Control Plane Service/API Boundary
+- M12.11 Integration, Isolation & Cross-Engine Idempotency
+- M12.12 Documentation / Final Validation
 
-**Human approval gates:** Concluding an experiment and promoting a winner
-both require human confirmation.
+**Testing:** Subsystem-based test organization; 12+ test files; covers identity
+separation, workspace/channel/account isolation, credential references, provider
+registry, event idempotency/replay, workflow evaluation, policy resolution,
+experiment immutability/assignment, cost/budget, health, queues, pause/resume,
+job registry, concurrency, cross-engine idempotency, audit timeline, CLI,
+migrations.
 
-**Risks:** YouTube not being an RCT environment; confounders (seasonality,
-algorithm changes, trending topics); small channels not reaching sample
-sizes quickly; over-optimising on noise.
-
-**Definition of done:** Experiment lifecycle works end to end; sample-size
-gate enforced; all tests pass; ruff clean.
-
-**Demonstrable capability:** Create a hook-variant experiment, collect data,
-attempt to conclude before sample size reached (blocked), reach sample size,
-conclude with human confirmation.
-
-**What waits:** Reduced-oversight operation.
+**Constraints:** No network. No live providers. No frontend. No production
+infrastructure (Phase 14). No Phase 13 scope.
 
 ---
 
-### Phase 13 — Reduced-Oversight Operation and Publishing Mode Graduation
+### Phase 13 — Backend Integration & System Architecture ✅ COMPLETE
 
-**Objective:** Allow the system to run scheduled production cycles with
-minimal human intervention; implement the publishing-mode graduation path
-from manual approval through to qualified autonomous publishing.
+**Objective:** Application coordination layer above all Phase 12 engines —
+typed command bus, pipeline controller, scheduler, recovery, health
+projection, review queue, extension registry, real stage executor protocol,
+and bounded ApplicationService facade for Phase 14.
 
-**Business value:** Reduces operating cost per video. Human time becomes the
-bottleneck only at high-risk decisions, not at routine coordination. Channels
-that demonstrate consistent quality, compliance, and cost control can
-graduate to autonomous publishing, enabling the commercial scale the product
-requires.
+**Delivered:**
+- `src/app/application/` — 19 modules: errors, contracts, commands, queries,
+  versioning, registry, configuration, observability, state, pipeline,
+  scheduler, recovery, health, review, exception_queue, dispatcher, services,
+  composition, authorization, executor, diagnostics (expanded)
+- SCHEMA_VERSION 18 → 19; 3 new `app_` tables: `app_pipeline_executions`,
+  `app_pipeline_stage_log` (with `attempt_number`, `artifact_id`,
+  `artifact_type`), `app_schedule_definitions`
+- APPLICATION_CONTRACT_VERSION "13.0.0"; EXECUTOR_CONTRACT_VERSION "13.0.0"
+- `StageExecutorRegistry` + `PipelineStageExecutor` protocol — guarded
+  registration (duplicate raises; same class+version is idempotent no-op)
+- **Stage execution classification (all 10 canonical stages):**
+  - `production_plan` — Class A: executes `content.repository.get_active_approved_generated_script`
+    + `production.renderer.build_production_plan` + `production.repository.get_or_create_production_plan`;
+    returns `waiting_for_review`
+  - `learning` — Class A: executes `learning.orchestrator.analyze_publication`;
+    returns `waiting_for_review`; recommendations never applied automatically
+  - `research`, `publishing`, `analytics` — Class C: `ExternalProviderRequiredExecutor`;
+    returns `blocked` (live HTTP/platform provider — Phase 15)
+  - `script_generation`, `narration`, `captions`, `visual_intelligence`, `rendering` — Class B:
+    `ProviderRequiredExecutor`; returns `blocked` (AI/TTS provider — Phase 14 studio layer)
+- **Authorization contract:** `default_auth_hook` fails closed for non-system actors;
+  system actors (prefix `system:`) always permitted; `allow_all_auth_hook` explicit
+  opt-in for dev/test; auth checked **before** budget/concurrency/executor — no JWT/RBAC yet
+- `ExecutePipelineStageCommand` — 18-step execution flow; workspace-pause gate
+  enforced for all mutating pipeline commands including stage execution
+- Canonical artifact references persisted (`artifact_id`, `artifact_type`) on
+  every completed stage row; `executor_key`/`executor_version` carried in
+  `StageExecutionResult` (not yet in schema — deferred to Phase 14)
+- `explain_executor_status()` diagnostics — typed findings for executor_unavailable,
+  executor_disabled, external_provider_required, provider_required, executor_ok
+- Cross-workspace isolation enforced on every command and query
+- 3368 tests (262 new); ruff clean
 
-**Technical scope:**
-- `src/app/scheduler/` package
-- Approval queues: pending gate items delivered via CLI notification and
-  optional email/webhook (provider TBD at implementation time)
-- Scheduling: APScheduler or cron-compatible; configurable production
-  cadence per channel
-- Circuit breakers: automatic pause if any of these thresholds are exceeded:
-  — daily API spend above limit
-  — LLM error rate above threshold
-  — TTS error rate above threshold
-  — YouTube upload rejection rate above threshold
-  — consecutive critique failures above threshold
-  — consecutive performance anomalies (view rate drop, retention drop)
-- Spending limits: per-day and per-video caps; hard block, not a soft warning
-- Failure recovery: failed pipeline stages auto-retry up to N times, then
-  pause and notify
-- Audit log: every autonomous action recorded with timestamp, actor
-  (system or user), decision, and cost
-- Content-quality thresholds: configurable minimum critique score;
-  auto-pauses if recent videos fall below threshold
-- Publishing mode graduation engine:
-  — Evaluates a channel against qualification thresholds using Phase 11
-    analytics data and Phase 12 experiment outcomes
-  — Produces a qualification report the operator reviews before promoting
-  — Records the promotion decision, thresholds met, and qualifying window
-  — Monitors for threshold breach and demotes automatically; notifies
-    operator
-  — High-risk content category list maintained here; overrides channel mode
-- Kill switch: `ace publish pause <channel_id>` halts all autonomous
-  publishing immediately, regardless of mode
+**Authorization:**
+- No JWT/RBAC implemented — Phase 14 responsibility
+- Non-system actor without injected hook → `AuthorizationRequiredError` (fail-closed)
+- User mutations require explicit `auth_hook` injection at `build_application_service()`
+- Trusted internal actors: `system:pipeline`, `system:control-plane`, `system:scheduler`,
+  `system:recovery`, `system:test`
 
-**Dependencies:** Phase 12 (analytics data and experiment outcomes required
-to evaluate qualification thresholds).
+**Scheduling:**
+- Named schedule shortcuts only: `@daily`, `@hourly`, `@weekly`
+- No five-field cron expression support
+- No background daemon — caller must check `is_scheduled_time_due()`
 
-**Database changes:**
-- New `audit_log` table: `(id, action, actor, entity_type, entity_id,
-  detail_json, cost_usd, created_at)`
-- New `circuit_breaker_events` table: trigger, threshold, value, resolved_at
-- New `schedules` table: channel_id, cadence, next_run_at, paused, config_json
-- New `mode_transitions` table: channel_id, from_mode, to_mode, reason,
-  qualification_report_json, operator, created_at
+**Known deferred:**
+- `executor_key`/`executor_version` not persisted to stage schema rows (SCHEMA_VERSION stays 19)
+- N+1 query in `list_pipelines` — Phase 15 optimization
+- Provider executors (B/C) blocked until Phase 14/15 supply providers
 
-**Interfaces:**
-- `ace schedule set <channel_id> --cadence <cron>`
-- `ace schedule pause <channel_id>`
-- `ace channel qualify <channel_id>` — run qualification check, print report
-- `ace channel promote <channel_id>` — promote to next publishing mode
-  (operator-confirmed; shows qualification report first)
-- `ace channel demote <channel_id>` — manually demote publishing mode
-- `ace publish pause <channel_id>` — kill switch
-- `ace audit log` — display recent audit log entries
-- `ace status` — overall system health, active circuit breakers, queue depth,
-  channels by publishing mode
+**Dependencies:** Phase 12 complete
 
-**Tests:** Test circuit-breaker triggers; test spending-limit hard block;
-test audit log completeness; test schedule cadence; test qualification check
-correctly evaluates all thresholds; test automatic demotion on breach; test
-kill switch; test high-risk category override.
-
-**Human approval gates:** Creative gates (script, narration, manifest)
-remain in all modes. Publishing gates depend on channel mode per Phase 10.
-Mode promotion always requires operator confirmation. Circuit breakers
-trigger human intervention.
-
-**Risks:** Qualification thresholds set too low, graduating channels
-prematurely; threshold breach detection delay if analytics polling is
-infrequent; circuit breakers not covering all edge cases; notification
-delivery failure leaving queues unattended.
-
-**Definition of done:** Scheduled run produces a video through all stages;
-circuit breakers fire correctly; audit log complete; spending limit blocks
-overage; qualification report correctly evaluates thresholds; mode promotion
-and automatic demotion both work; kill switch halts autonomous publishing;
-all tests pass; ruff clean.
-
-**Demonstrable capability:** Schedule a channel, let it run a full cycle
-autonomously through all automated stages, pause at human gates, resume
-after approval.
-
-**What waits:** Multi-channel scaling, additional platforms.
+**What waits:** Phase 14 (Frontend Studio & Dashboard)
 
 ---
 
-### Phase 14 — Multi-Channel Scaling
+### Phase 14 — Frontend Studio & Dashboard ✅ COMPLETE
 
-**Objective:** Operate multiple YouTube channels independently, with channel-
-specific configuration, niche separation, and account-level budget controls.
+**Objective:** React SPA with typed API client, full dashboard, pipeline studio, review queue, multi-account channel view, analytics, learning, and exception/operations centers.
 
-**Business value:** Revenue scales with channel count once a single channel
-is proven. Niche separation prevents cannibalisation.
+**Delivered:**
+- `frontend/` — React 19 + TypeScript + Vite 8 SPA
+- 12 production pages: Dashboard, Pipelines, Reviews, Channels, Analytics, Learning, Exceptions, Operations, Experiments, Workflows, Automation (placeholders), AppShell with workspace selector
+- Centralized typed API client (`src/api/client.ts`) — single fetch() point; dev actor header labeled DEV-ONLY; all components import only from this module
+- Vitest 4 + React Testing Library + MSW v2 test suite: 13 test files, 111 tests passing
+- Quality gates all green: typecheck, oxlint, production build (326 kB JS), backend ruff + pytest (3368+1), git diff --check
+- No backend imports, no secrets, no mock data in production views
+- Frontend boundary preserved: React → typed client → FastAPI → ApplicationService → Control Plane / engines
 
-**Technical scope:**
-- Channel-specific configs already in DB from Phase 3; this phase activates
-  independent scheduling and budget tracking per channel
-- Account-level budget: aggregate daily spend cap across all channels
-- Cross-channel duplicate prevention: content originality check spans all
-  channels in the same account
-- Niche isolation: channels in the same niche flagged; content similarity
-  above threshold blocks production
-- Role-based permissions: optional, if multiple human operators manage
-  different channels (simple password or API-key-based; no OAuth user
-  management needed initially)
-- Reporting: cross-channel profitability comparison
+**What waits:** Phase 16 (TBD — operator-scoped roadmap item)
 
-**Dependencies:** Phase 13 (single-channel reduced-oversight operation).
+---
 
-**Database changes:**
-- `accounts` table: account-level config and budget
-- Extend existing tables to enforce account-level foreign keys
+### Phase 15 — Deployment & Production Infrastructure ✅ Complete
 
-**Interfaces:**
-- `ace accounts add/list`
-- `ace channels list --account <id>`
-- `ace report cross-channel`
+**Completed:** 2026-08-08. SCHEMA_VERSION 20. 3558 backend tests pass.
 
-**Tests:** Test budget enforcement across channels; test cross-channel
-duplicate detection; test niche isolation flag.
+**Delivered:**
+- Auth: JWT (HS256, 15-min TTL), Argon2id passwords, SHA-256-hashed refresh tokens, RBAC (5 roles, deny-by-default)
+- Provider stage-class system: A (local) / B (live AI/TTS) / C (live publishing); fail-closed for unknowns
+- RQ worker layer with JSONSerializer enforced; no pickle; JSON-safe payloads
+- Observability: structlog JSON + 27-key redaction, isolated Prometheus registry, liveness/readiness endpoints, security headers
+- Docker: multi-stage Dockerfile (non-root user `ace`), Docker Compose (6 services)
+- CI: GitHub Actions (backend + frontend + docker build + migrations); manual CD boundary
+- Backup: `scripts/backup.sh` (`pg_dump | gzip`, 14-backup retention)
+- N+1 fix in `list_pipelines`; 13 integration tests
 
-**Human approval gates:** Adding a new channel requires human confirmation.
-
-**Risks:** Complexity growing faster than value; YouTube per-account API
-quotas; niche isolation being overly conservative.
-
-**Definition of done:** Two channels run independently; account-level budget
-enforced; cross-channel duplicate detection fires; all tests pass; ruff clean.
-
-**Demonstrable capability:** Two independent channels producing content,
-with a cross-channel profitability report.
-
-**What waits:** Additional platform adapters.
+**What waits:** Phase 16 (TBD)
 
 ---
 

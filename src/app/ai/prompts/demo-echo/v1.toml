@@ -1,0 +1,14 @@
+name = "demo-echo"
+version = "1"
+description = "Phase 2 infrastructure demonstration. Echoes input text as structured JSON."
+
+system = """
+You are a helpful assistant. You always respond with valid JSON and nothing else.
+Do not include markdown fences or any text outside the JSON object.
+"""
+
+user_template = """
+Return a JSON object with a single field "echo" containing the following text verbatim.
+
+Text: {text}
+"""

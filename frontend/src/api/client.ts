@@ -1,0 +1,414 @@
+/* Centralized typed API client.
+   ALL backend interaction goes through this module.
+   Do not scatter fetch() calls through page components.
+
+   Auth flow (production):
+     - Attaches Authorization: Bearer <access_token> on every request.
+     - On 401: attempts one silent token refresh, then retries the original request.
+     - On failed refresh: calls the registered onAuthLost callback so the app
+       can clear session state and redirect to login.
+     - On 403: throws a ForbiddenError (typed, not generic).
+     - Tokens are never logged or stored here — the AuthContext owns storage.
+
+   Dev mode (Vite DEV build only, when no access token is present):
+     - Sends X-Dev-Actor header as a convenience for local iteration without JWT.
+     - This header is silently ignored by the backend in production mode.
+*/
+
+import type {
+  AccountView,
+  AuditView,
+  ChannelView,
+  CostView,
+  CPAccount,
+  CPChannel,
+  CPWorkspace,
+  ControlEvent,
+  DiagnosticReport,
+  Experiment,
+  ExceptionView,
+  HealthView,
+  OperationView,
+  PipelineView,
+  ReviewItemView,
+  ScheduleView,
+  StrategyProfile,
+  WorkspaceView,
+} from './types'
+
+const BASE_URL = '/api/v1'
+
+// ── Typed errors ────────────────────────────────────────────────────────────
+
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+export class ForbiddenError extends ApiError {
+  constructor(message = 'Forbidden') {
+    super(403, message)
+    this.name = 'ForbiddenError'
+  }
+}
+
+export class UnauthorizedError extends ApiError {
+  constructor(message = 'Unauthorized') {
+    super(401, message)
+    this.name = 'UnauthorizedError'
+  }
+}
+
+// ── Auth callback interface ─────────────────────────────────────────────────
+
+interface AuthCallbacks {
+  getToken: () => string | null
+  onRefreshNeeded: () => Promise<string | null>
+  onAuthLost: () => void
+}
+
+// ── Client ───────────────────────────────────────────────────────────────────
+
+class ApiClient {
+  private _auth: AuthCallbacks | null = null
+
+  /**
+   * Wire in auth callbacks from the AuthProvider.
+   * Must be called before any authenticated requests are made.
+   */
+  setAuthCallbacks(callbacks: AuthCallbacks): void {
+    this._auth = callbacks
+  }
+
+  clearAuthCallbacks(): void {
+    this._auth = null
+  }
+
+  private _buildHeaders(token: string | null): HeadersInit {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    } else if (import.meta.env.DEV) {
+      // Dev convenience: when no token is present in a local Vite dev build,
+      // send X-Dev-Actor so the backend's dev-auth fallback activates.
+      // This header is ignored by the backend in production mode.
+      headers['X-Dev-Actor'] = 'dev:studio-user'
+    }
+
+    return headers
+  }
+
+  private async _doRequest<T>(
+    method: string,
+    path: string,
+    token: string | null,
+    body?: unknown,
+    params?: Record<string, string | number | boolean | null | undefined>,
+  ): Promise<T> {
+    const url = new URL(BASE_URL + path, window.location.origin)
+    if (params) {
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== null && v !== undefined) {
+          url.searchParams.set(k, String(v))
+        }
+      }
+    }
+
+    const res = await fetch(url.toString(), {
+      method,
+      headers: this._buildHeaders(token),
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    })
+
+    if (res.status === 403) {
+      let detail = 'Forbidden'
+      try {
+        const err = await res.json()
+        detail = err.detail ?? detail
+      } catch { /* ignore */ }
+      throw new ForbiddenError(detail)
+    }
+
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const err = await res.json()
+        detail = err.detail ?? detail
+      } catch { /* ignore */ }
+      throw new ApiError(res.status, detail)
+    }
+
+    return res.json() as Promise<T>
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    params?: Record<string, string | number | boolean | null | undefined>,
+  ): Promise<T> {
+    const token = this._auth?.getToken() ?? null
+
+    try {
+      return await this._doRequest<T>(method, path, token, body, params)
+    } catch (err) {
+      // On 401: attempt one silent refresh, then retry once.
+      if (
+        err instanceof ApiError &&
+        err.status === 401 &&
+        this._auth
+      ) {
+        const newToken = await this._auth.onRefreshNeeded()
+        if (newToken) {
+          // Retry with the fresh token.
+          return await this._doRequest<T>(method, path, newToken, body, params)
+        }
+        // Refresh failed — session is lost.
+        this._auth.onAuthLost()
+        throw new UnauthorizedError('Session expired. Please log in again.')
+      }
+      throw err
+    }
+  }
+
+  // ── Workspaces ──────────────────────────────────────────────────────────
+
+  listWorkspaces(status?: string) {
+    return this.request<CPWorkspace[]>('GET', '/workspaces', undefined, { status })
+  }
+
+  getWorkspaceSummary(workspaceId: string) {
+    return this.request<WorkspaceView>('GET', `/workspaces/${workspaceId}`)
+  }
+
+  getControlCenter(workspaceId: string) {
+    return this.request<Record<string, unknown>>('GET', `/workspaces/${workspaceId}/control-center`)
+  }
+
+  getHealth(workspaceId: string) {
+    return this.request<HealthView>('GET', `/workspaces/${workspaceId}/health`)
+  }
+
+  getReviewQueue(workspaceId: string) {
+    return this.request<ReviewItemView[]>('GET', `/workspaces/${workspaceId}/review-queue`)
+  }
+
+  getExceptionQueue(workspaceId: string) {
+    return this.request<ExceptionView[]>('GET', `/workspaces/${workspaceId}/exceptions`)
+  }
+
+  getCosts(workspaceId: string, period?: string) {
+    return this.request<CostView>('GET', `/workspaces/${workspaceId}/costs`, undefined, { period })
+  }
+
+  getAuditTimeline(workspaceId: string, limit?: number) {
+    return this.request<AuditView[]>('GET', `/workspaces/${workspaceId}/audit`, undefined, { limit })
+  }
+
+  getEffectiveConfig(workspaceId: string, channelId?: string, accountId?: string) {
+    return this.request<Record<string, unknown>>(
+      'GET',
+      `/workspaces/${workspaceId}/config`,
+      undefined,
+      { channel_id: channelId, platform_account_id: accountId },
+    )
+  }
+
+  listExperiments(workspaceId: string) {
+    return this.request<Experiment[]>('GET', `/workspaces/${workspaceId}/experiments`)
+  }
+
+  listEvents(workspaceId: string, eventType?: string, limit?: number) {
+    return this.request<ControlEvent[]>(
+      'GET',
+      `/workspaces/${workspaceId}/events`,
+      undefined,
+      { event_type: eventType, limit },
+    )
+  }
+
+  // ── Channels ─────────────────────────────────────────────────────────────
+
+  listChannels(workspaceId: string) {
+    return this.request<CPChannel[]>('GET', `/workspaces/${workspaceId}/channels`)
+  }
+
+  getChannelSummary(workspaceId: string, channelId: string) {
+    return this.request<ChannelView>('GET', `/workspaces/${workspaceId}/channels/${channelId}`)
+  }
+
+  listChannelAccounts(workspaceId: string, channelId: string) {
+    return this.request<CPAccount[]>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/accounts`,
+    )
+  }
+
+  getChannelStrategy(workspaceId: string, channelId: string) {
+    return this.request<StrategyProfile | { status: string; message: string }>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/strategy`,
+    )
+  }
+
+  getChannelPolicy(workspaceId: string, channelId: string) {
+    return this.request<{ effective_automation_level: string }>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/policy`,
+    )
+  }
+
+  // ── Accounts ─────────────────────────────────────────────────────────────
+
+  getAccountSummary(workspaceId: string, accountId: string) {
+    return this.request<AccountView>('GET', `/workspaces/${workspaceId}/accounts/${accountId}`)
+  }
+
+  // ── Pipelines ────────────────────────────────────────────────────────────
+
+  listPipelines(
+    workspaceId: string,
+    opts?: { status?: string; channelId?: string; limit?: number },
+  ) {
+    return this.request<PipelineView[]>('GET', `/workspaces/${workspaceId}/pipelines`, undefined, {
+      status: opts?.status,
+      channel_id: opts?.channelId,
+      limit: opts?.limit,
+    })
+  }
+
+  getPipeline(workspaceId: string, pipelineId: string) {
+    return this.request<PipelineView>(
+      'GET',
+      `/workspaces/${workspaceId}/pipelines/${pipelineId}`,
+    )
+  }
+
+  pausePipeline(workspaceId: string, pipelineId: string) {
+    return this.request<PipelineView>(
+      'POST',
+      `/workspaces/${workspaceId}/pipelines/${pipelineId}/pause`,
+    )
+  }
+
+  resumePipeline(workspaceId: string, pipelineId: string) {
+    return this.request<PipelineView>(
+      'POST',
+      `/workspaces/${workspaceId}/pipelines/${pipelineId}/resume`,
+    )
+  }
+
+  cancelPipeline(workspaceId: string, pipelineId: string) {
+    return this.request<PipelineView>(
+      'POST',
+      `/workspaces/${workspaceId}/pipelines/${pipelineId}/cancel`,
+    )
+  }
+
+  recoverPipeline(workspaceId: string, pipelineId: string) {
+    return this.request<PipelineView>(
+      'POST',
+      `/workspaces/${workspaceId}/pipelines/${pipelineId}/recover`,
+    )
+  }
+
+  executePipelineStage(workspaceId: string, pipelineId: string, stage: string) {
+    return this.request<PipelineView>(
+      'POST',
+      `/workspaces/${workspaceId}/pipelines/${pipelineId}/execute-stage`,
+      { stage },
+    )
+  }
+
+  // ── Reviews ──────────────────────────────────────────────────────────────
+
+  approveReviewItem(
+    workspaceId: string,
+    itemType: string,
+    itemId: string,
+    notes?: string,
+  ) {
+    return this.request<Record<string, unknown>>(
+      'POST',
+      `/workspaces/${workspaceId}/reviews/${itemType}/${itemId}/approve`,
+      { notes: notes ?? '' },
+    )
+  }
+
+  rejectReviewItem(
+    workspaceId: string,
+    itemType: string,
+    itemId: string,
+    reason: string,
+    notes?: string,
+  ) {
+    return this.request<Record<string, unknown>>(
+      'POST',
+      `/workspaces/${workspaceId}/reviews/${itemType}/${itemId}/reject`,
+      { reason, notes },
+    )
+  }
+
+  // ── Operations ───────────────────────────────────────────────────────────
+
+  listOperations(
+    workspaceId: string,
+    opts?: { status?: string; channelId?: string; limit?: number },
+  ) {
+    return this.request<OperationView[]>(
+      'GET',
+      `/workspaces/${workspaceId}/operations`,
+      undefined,
+      {
+        status: opts?.status,
+        channel_id: opts?.channelId,
+        limit: opts?.limit,
+      },
+    )
+  }
+
+  retryOperation(workspaceId: string, operationId: string) {
+    return this.request<Record<string, unknown>>(
+      'POST',
+      `/workspaces/${workspaceId}/operations/${operationId}/retry`,
+    )
+  }
+
+  cancelOperation(workspaceId: string, operationId: string) {
+    return this.request<Record<string, unknown>>(
+      'POST',
+      `/workspaces/${workspaceId}/operations/${operationId}/cancel`,
+    )
+  }
+
+  // ── Schedules ────────────────────────────────────────────────────────────
+
+  listSchedules(workspaceId: string, isActive?: boolean) {
+    return this.request<ScheduleView[]>(
+      'GET',
+      `/workspaces/${workspaceId}/schedules`,
+      undefined,
+      { is_active: isActive },
+    )
+  }
+
+  // ── Diagnostics ──────────────────────────────────────────────────────────
+
+  getDiagnostics(workspaceId: string, subject: string, subjectId: string) {
+    return this.request<DiagnosticReport>(
+      'GET',
+      `/workspaces/${workspaceId}/diagnostics/${subject}/${subjectId}`,
+    )
+  }
+}
+
+export const api = new ApiClient()

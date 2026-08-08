@@ -17,12 +17,14 @@ from app.core.models import (
     TopicStatus,
 )
 from app.core.repository import (
+    approve_script,
     create_run,
     create_script,
     create_source,
     create_topic,
     delete_source,
     delete_topic,
+    get_active_approved_script,
     get_source,
     get_topic,
     list_runs,
@@ -236,3 +238,111 @@ def test_update_run_status_missing_returns_none(db: sqlite3.Connection) -> None:
 def test_run_foreign_key_violation(db: sqlite3.Connection) -> None:
     with pytest.raises(sqlite3.IntegrityError):
         create_run(db, Run(topic_id=9999))
+
+
+# ---------------------------------------------------------------------------
+# Stage 7: approve_script and get_active_approved_script
+# ---------------------------------------------------------------------------
+
+
+def _make_script(db: sqlite3.Connection, topic_id: int, version: int, body: str = "body") -> Script:
+    return create_script(db, Script(topic_id=topic_id, version=version, body=body))  # type: ignore[arg-type]
+
+
+class TestApproveScript:
+    def test_approve_sets_status(self, db: sqlite3.Connection) -> None:
+        t = create_topic(db, Topic(title="T"))
+        s = _make_script(db, t.id, 1)  # type: ignore[arg-type]
+        result = approve_script(db, s.id)  # type: ignore[arg-type]
+        assert result is not None
+        assert result.status == ScriptStatus.approved
+        assert result.approved_at is not None
+
+    def test_approve_missing_returns_none(self, db: sqlite3.Connection) -> None:
+        assert approve_script(db, 99999) is None
+
+    def test_approve_supersedes_prior(self, db: sqlite3.Connection) -> None:
+        t = create_topic(db, Topic(title="T"))
+        s1 = _make_script(db, t.id, 1)  # type: ignore[arg-type]
+        s2 = _make_script(db, t.id, 2)  # type: ignore[arg-type]
+        approve_script(db, s1.id)  # type: ignore[arg-type]
+        approve_script(db, s2.id)  # type: ignore[arg-type]
+        refreshed_s1 = db.execute(
+            "SELECT superseded_at FROM scripts WHERE id=?", (s1.id,)
+        ).fetchone()
+        assert refreshed_s1["superseded_at"] is not None
+
+    def test_prior_script_retains_approved_status_after_supersession(
+        self, db: sqlite3.Connection
+    ) -> None:
+        t = create_topic(db, Topic(title="T"))
+        s1 = _make_script(db, t.id, 1)  # type: ignore[arg-type]
+        s2 = _make_script(db, t.id, 2)  # type: ignore[arg-type]
+        approve_script(db, s1.id)  # type: ignore[arg-type]
+        approve_script(db, s2.id)  # type: ignore[arg-type]
+        row = db.execute("SELECT status FROM scripts WHERE id=?", (s1.id,)).fetchone()
+        assert row["status"] == "approved"
+
+    def test_only_prior_approved_scripts_superseded(self, db: sqlite3.Connection) -> None:
+        t = create_topic(db, Topic(title="T"))
+        s1 = _make_script(db, t.id, 1)  # type: ignore[arg-type]
+        s2 = _make_script(db, t.id, 2)  # type: ignore[arg-type]
+        s3 = _make_script(db, t.id, 3)  # type: ignore[arg-type]
+        approve_script(db, s1.id)  # type: ignore[arg-type]
+        approve_script(db, s3.id)  # type: ignore[arg-type]
+        # s2 is draft, should not have superseded_at set
+        row = db.execute("SELECT superseded_at FROM scripts WHERE id=?", (s2.id,)).fetchone()
+        assert row["superseded_at"] is None
+
+    def test_backward_compatible_update_script_status_still_works(
+        self, db: sqlite3.Connection
+    ) -> None:
+        t = create_topic(db, Topic(title="T"))
+        s = _make_script(db, t.id, 1)  # type: ignore[arg-type]
+        updated = update_script_status(db, s.id, ScriptStatus.approved)  # type: ignore[arg-type]
+        assert updated is not None
+        assert updated.status == ScriptStatus.approved
+
+
+class TestGetActiveApprovedScript:
+    def test_returns_none_when_no_approved(self, db: sqlite3.Connection) -> None:
+        t = create_topic(db, Topic(title="T"))
+        assert get_active_approved_script(db, t.id) is None  # type: ignore[arg-type]
+
+    def test_returns_approved_script(self, db: sqlite3.Connection) -> None:
+        t = create_topic(db, Topic(title="T"))
+        s = _make_script(db, t.id, 1)  # type: ignore[arg-type]
+        approve_script(db, s.id)  # type: ignore[arg-type]
+        result = get_active_approved_script(db, t.id)  # type: ignore[arg-type]
+        assert result is not None
+        assert result.id == s.id
+
+    def test_returns_latest_after_multi_approvals(self, db: sqlite3.Connection) -> None:
+        t = create_topic(db, Topic(title="T"))
+        s1 = _make_script(db, t.id, 1)  # type: ignore[arg-type]
+        s2 = _make_script(db, t.id, 2)  # type: ignore[arg-type]
+        approve_script(db, s1.id)  # type: ignore[arg-type]
+        approve_script(db, s2.id)  # type: ignore[arg-type]
+        result = get_active_approved_script(db, t.id)  # type: ignore[arg-type]
+        assert result is not None
+        assert result.id == s2.id
+
+    def test_superseded_script_not_returned(self, db: sqlite3.Connection) -> None:
+        t = create_topic(db, Topic(title="T"))
+        s1 = _make_script(db, t.id, 1)  # type: ignore[arg-type]
+        s2 = _make_script(db, t.id, 2)  # type: ignore[arg-type]
+        approve_script(db, s1.id)  # type: ignore[arg-type]
+        approve_script(db, s2.id)  # type: ignore[arg-type]
+        result = get_active_approved_script(db, t.id)  # type: ignore[arg-type]
+        assert result is not None
+        assert result.id != s1.id
+
+    def test_different_topics_independent(self, db: sqlite3.Connection) -> None:
+        t1 = create_topic(db, Topic(title="T1"))
+        t2 = create_topic(db, Topic(title="T2"))
+        s1 = _make_script(db, t1.id, 1)  # type: ignore[arg-type]
+        s2 = _make_script(db, t2.id, 1)  # type: ignore[arg-type]
+        approve_script(db, s1.id)  # type: ignore[arg-type]
+        approve_script(db, s2.id)  # type: ignore[arg-type]
+        assert get_active_approved_script(db, t1.id).id == s1.id  # type: ignore[union-attr]
+        assert get_active_approved_script(db, t2.id).id == s2.id  # type: ignore[union-attr]

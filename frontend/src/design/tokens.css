@@ -1,0 +1,196 @@
+/* Design system — color tokens, spacing, typography, shadows.
+   All component styles reference these variables.
+   Light/dark toggled by prefers-color-scheme and data-theme attribute. */
+
+:root,
+[data-theme="light"] {
+  /* -- Surface hierarchy -- */
+  --surface-bg:        #f4f5f7;
+  --surface-card:      #ffffff;
+  --surface-elevated:  #ffffff;
+  --surface-sidebar:   #1a1d23;
+  --surface-header:    #1a1d23;
+  --surface-overlay:   rgba(0, 0, 0, 0.45);
+
+  /* -- Text -- */
+  --text-primary:      #111318;
+  --text-secondary:    #5c6370;
+  --text-muted:        #9ba1ad;
+  --text-inverse:      #f0f1f3;
+  --text-link:         #2563eb;
+  --text-on-sidebar:   #c9cdd5;
+  --text-on-sidebar-active: #ffffff;
+
+  /* -- Brand / Accent -- */
+  --accent:            #2563eb;
+  --accent-hover:      #1d4ed8;
+  --accent-subtle:     #dbeafe;
+
+  /* -- Semantic status -- */
+  --status-healthy:    #16a34a;
+  --status-healthy-bg: #dcfce7;
+  --status-warn:       #ca8a04;
+  --status-warn-bg:    #fef9c3;
+  --status-error:      #dc2626;
+  --status-error-bg:   #fee2e2;
+  --status-info:       #2563eb;
+  --status-info-bg:    #dbeafe;
+  --status-neutral:    #6b7280;
+  --status-neutral-bg: #f3f4f6;
+  --status-paused:     #7c3aed;
+  --status-paused-bg:  #ede9fe;
+
+  /* -- Pipeline stage status -- */
+  --stage-pending:     #6b7280;
+  --stage-running:     #2563eb;
+  --stage-done:        #16a34a;
+  --stage-blocked:     #ca8a04;
+  --stage-failed:      #dc2626;
+  --stage-review:      #7c3aed;
+
+  /* -- Border -- */
+  --border:            #e2e5ea;
+  --border-strong:     #c8cdd6;
+  --border-focus:      #2563eb;
+
+  /* -- Shadow -- */
+  --shadow-sm:   0 1px 2px rgba(0,0,0,.06);
+  --shadow-md:   0 4px 12px rgba(0,0,0,.10);
+  --shadow-lg:   0 8px 24px rgba(0,0,0,.12);
+
+  /* -- Spacing scale -- */
+  --sp-1:  4px;
+  --sp-2:  8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* -- Typography -- */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --font-size-xs:   11px;
+  --font-size-sm:   12px;
+  --font-size-base: 14px;
+  --font-size-md:   15px;
+  --font-size-lg:   17px;
+  --font-size-xl:   20px;
+  --font-size-2xl:  24px;
+  --font-size-3xl:  30px;
+  --line-height:    1.5;
+
+  /* -- Border radius -- */
+  --radius-sm:  4px;
+  --radius-md:  6px;
+  --radius-lg:  10px;
+  --radius-xl:  16px;
+  --radius-full: 9999px;
+
+  /* -- Layout -- */
+  --sidebar-width:     220px;
+  --header-height:     52px;
+  --content-max-width: 1400px;
+
+  /* -- Transition -- */
+  --transition-fast: 100ms ease;
+  --transition-base: 160ms ease;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-bg:        #12141a;
+    --surface-card:      #1c1f27;
+    --surface-elevated:  #242833;
+    --surface-sidebar:   #0f1116;
+    --surface-header:    #0f1116;
+
+    --text-primary:      #e8eaf0;
+    --text-secondary:    #9ba1ad;
+    --text-muted:        #5c6370;
+    --text-inverse:      #111318;
+    --text-on-sidebar:   #8b919e;
+    --text-on-sidebar-active: #e8eaf0;
+
+    --accent:            #3b82f6;
+    --accent-hover:      #60a5fa;
+    --accent-subtle:     #1e3a5f;
+
+    --status-healthy:    #4ade80;
+    --status-healthy-bg: #14532d;
+    --status-warn:       #facc15;
+    --status-warn-bg:    #422006;
+    --status-error:      #f87171;
+    --status-error-bg:   #450a0a;
+    --status-info:       #60a5fa;
+    --status-info-bg:    #1e3a5f;
+    --status-neutral:    #6b7280;
+    --status-neutral-bg: #1f2937;
+    --status-paused:     #a78bfa;
+    --status-paused-bg:  #2e1065;
+
+    --stage-pending:     #6b7280;
+    --stage-running:     #60a5fa;
+    --stage-done:        #4ade80;
+    --stage-blocked:     #facc15;
+    --stage-failed:      #f87171;
+    --stage-review:      #a78bfa;
+
+    --border:            #2c3040;
+    --border-strong:     #3d4356;
+    --border-focus:      #3b82f6;
+
+    --shadow-sm:   0 1px 2px rgba(0,0,0,.30);
+    --shadow-md:   0 4px 12px rgba(0,0,0,.40);
+    --shadow-lg:   0 8px 24px rgba(0,0,0,.50);
+  }
+}
+
+[data-theme="dark"] {
+  --surface-bg:        #12141a;
+  --surface-card:      #1c1f27;
+  --surface-elevated:  #242833;
+  --surface-sidebar:   #0f1116;
+  --surface-header:    #0f1116;
+
+  --text-primary:      #e8eaf0;
+  --text-secondary:    #9ba1ad;
+  --text-muted:        #5c6370;
+  --text-inverse:      #111318;
+  --text-on-sidebar:   #8b919e;
+  --text-on-sidebar-active: #e8eaf0;
+
+  --accent:            #3b82f6;
+  --accent-hover:      #60a5fa;
+  --accent-subtle:     #1e3a5f;
+
+  --status-healthy:    #4ade80;
+  --status-healthy-bg: #14532d;
+  --status-warn:       #facc15;
+  --status-warn-bg:    #422006;
+  --status-error:      #f87171;
+  --status-error-bg:   #450a0a;
+  --status-info:       #60a5fa;
+  --status-info-bg:    #1e3a5f;
+  --status-neutral:    #6b7280;
+  --status-neutral-bg: #1f2937;
+  --status-paused:     #a78bfa;
+  --status-paused-bg:  #2e1065;
+
+  --stage-pending:     #6b7280;
+  --stage-running:     #60a5fa;
+  --stage-done:        #4ade80;
+  --stage-blocked:     #facc15;
+  --stage-failed:      #f87171;
+  --stage-review:      #a78bfa;
+
+  --border:            #2c3040;
+  --border-strong:     #3d4356;
+  --border-focus:      #3b82f6;
+
+  --shadow-sm:   0 1px 2px rgba(0,0,0,.30);
+  --shadow-md:   0 4px 12px rgba(0,0,0,.40);
+  --shadow-lg:   0 8px 24px rgba(0,0,0,.50);
+}
