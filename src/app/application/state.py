@@ -265,7 +265,7 @@ def _build_stages(stage_rows: list) -> list[PipelineStageView]:
             seen.add(r["stage"])
             latest.append(r)
     latest.sort(
-        key=lambda r: (PIPELINE_STAGES.index(r["stage"]) if r["stage"] in PIPELINE_STAGES else 999)
+        key=lambda r: PIPELINE_STAGES.index(r["stage"]) if r["stage"] in PIPELINE_STAGES else 999
     )
     return [_row_to_stage_view(r) for r in latest]
 
