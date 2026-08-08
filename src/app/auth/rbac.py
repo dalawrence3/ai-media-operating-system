@@ -9,10 +9,10 @@ Workspace membership check is always required; no cross-workspace access.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class Role(str, Enum):
+class Role(StrEnum):
     OWNER = "owner"
     ADMIN = "admin"
     OPERATOR = "operator"

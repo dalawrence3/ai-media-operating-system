@@ -18,11 +18,11 @@ Production must never degrade to a permissive default.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class StageClass(str, Enum):
+class StageClass(StrEnum):
     A = "A"  # Local — always allowed
     B = "B"  # Provider API required
     C = "C"  # Live publishing required
