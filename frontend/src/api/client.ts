@@ -1,6 +1,19 @@
 /* Centralized typed API client.
    ALL backend interaction goes through this module.
-   Do not scatter fetch() calls throughout components. */
+   Do not scatter fetch() calls through page components.
+
+   Auth flow (production):
+     - Attaches Authorization: Bearer <access_token> on every request.
+     - On 401: attempts one silent token refresh, then retries the original request.
+     - On failed refresh: calls the registered onAuthLost callback so the app
+       can clear session state and redirect to login.
+     - On 403: throws a ForbiddenError (typed, not generic).
+     - Tokens are never logged or stored here — the AuthContext owns storage.
+
+   Dev mode (Vite DEV build only, when no access token is present):
+     - Sends X-Dev-Actor header as a convenience for local iteration without JWT.
+     - This header is silently ignored by the backend in production mode.
+*/
 
 import type {
   AccountView,
@@ -25,13 +38,78 @@ import type {
 
 const BASE_URL = '/api/v1'
 
-// DEV-ONLY actor header — replaced by JWT in Phase 15
-const DEV_ACTOR = 'dev:studio-user'
+// ── Typed errors ────────────────────────────────────────────────────────────
+
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+export class ForbiddenError extends ApiError {
+  constructor(message = 'Forbidden') {
+    super(403, message)
+    this.name = 'ForbiddenError'
+  }
+}
+
+export class UnauthorizedError extends ApiError {
+  constructor(message = 'Unauthorized') {
+    super(401, message)
+    this.name = 'UnauthorizedError'
+  }
+}
+
+// ── Auth callback interface ─────────────────────────────────────────────────
+
+interface AuthCallbacks {
+  getToken: () => string | null
+  onRefreshNeeded: () => Promise<string | null>
+  onAuthLost: () => void
+}
+
+// ── Client ───────────────────────────────────────────────────────────────────
 
 class ApiClient {
-  private async request<T>(
+  private _auth: AuthCallbacks | null = null
+
+  /**
+   * Wire in auth callbacks from the AuthProvider.
+   * Must be called before any authenticated requests are made.
+   */
+  setAuthCallbacks(callbacks: AuthCallbacks): void {
+    this._auth = callbacks
+  }
+
+  clearAuthCallbacks(): void {
+    this._auth = null
+  }
+
+  private _buildHeaders(token: string | null): HeadersInit {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    } else if (import.meta.env.DEV) {
+      // Dev convenience: when no token is present in a local Vite dev build,
+      // send X-Dev-Actor so the backend's dev-auth fallback activates.
+      // This header is ignored by the backend in production mode.
+      headers['X-Dev-Actor'] = 'dev:studio-user'
+    }
+
+    return headers
+  }
+
+  private async _doRequest<T>(
     method: string,
     path: string,
+    token: string | null,
     body?: unknown,
     params?: Record<string, string | number | boolean | null | undefined>,
   ): Promise<T> {
@@ -46,30 +124,63 @@ class ApiClient {
 
     const res = await fetch(url.toString(), {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        // DEV-ONLY — Phase 15 replaces with Authorization: Bearer <token>
-        'X-Dev-Actor': DEV_ACTOR,
-      },
+      headers: this._buildHeaders(token),
       body: body !== undefined ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(30_000),
     })
+
+    if (res.status === 403) {
+      let detail = 'Forbidden'
+      try {
+        const err = await res.json()
+        detail = err.detail ?? detail
+      } catch { /* ignore */ }
+      throw new ForbiddenError(detail)
+    }
 
     if (!res.ok) {
       let detail = `HTTP ${res.status}`
       try {
         const err = await res.json()
         detail = err.detail ?? detail
-      } catch {
-        // ignore parse failure
-      }
-      throw Object.assign(new Error(detail), { status: res.status })
+      } catch { /* ignore */ }
+      throw new ApiError(res.status, detail)
     }
 
     return res.json() as Promise<T>
   }
 
-  // ── Workspaces ──
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    params?: Record<string, string | number | boolean | null | undefined>,
+  ): Promise<T> {
+    const token = this._auth?.getToken() ?? null
+
+    try {
+      return await this._doRequest<T>(method, path, token, body, params)
+    } catch (err) {
+      // On 401: attempt one silent refresh, then retry once.
+      if (
+        err instanceof ApiError &&
+        err.status === 401 &&
+        this._auth
+      ) {
+        const newToken = await this._auth.onRefreshNeeded()
+        if (newToken) {
+          // Retry with the fresh token.
+          return await this._doRequest<T>(method, path, newToken, body, params)
+        }
+        // Refresh failed — session is lost.
+        this._auth.onAuthLost()
+        throw new UnauthorizedError('Session expired. Please log in again.')
+      }
+      throw err
+    }
+  }
+
+  // ── Workspaces ──────────────────────────────────────────────────────────
 
   listWorkspaces(status?: string) {
     return this.request<CPWorkspace[]>('GET', '/workspaces', undefined, { status })
@@ -125,7 +236,7 @@ class ApiClient {
     )
   }
 
-  // ── Channels ──
+  // ── Channels ─────────────────────────────────────────────────────────────
 
   listChannels(workspaceId: string) {
     return this.request<CPChannel[]>('GET', `/workspaces/${workspaceId}/channels`)
@@ -156,13 +267,13 @@ class ApiClient {
     )
   }
 
-  // ── Accounts ──
+  // ── Accounts ─────────────────────────────────────────────────────────────
 
   getAccountSummary(workspaceId: string, accountId: string) {
     return this.request<AccountView>('GET', `/workspaces/${workspaceId}/accounts/${accountId}`)
   }
 
-  // ── Pipelines ──
+  // ── Pipelines ────────────────────────────────────────────────────────────
 
   listPipelines(
     workspaceId: string,
@@ -218,7 +329,7 @@ class ApiClient {
     )
   }
 
-  // ── Reviews ──
+  // ── Reviews ──────────────────────────────────────────────────────────────
 
   approveReviewItem(
     workspaceId: string,
@@ -247,7 +358,7 @@ class ApiClient {
     )
   }
 
-  // ── Operations ──
+  // ── Operations ───────────────────────────────────────────────────────────
 
   listOperations(
     workspaceId: string,
@@ -279,7 +390,7 @@ class ApiClient {
     )
   }
 
-  // ── Schedules ──
+  // ── Schedules ────────────────────────────────────────────────────────────
 
   listSchedules(workspaceId: string, isActive?: boolean) {
     return this.request<ScheduleView[]>(
@@ -290,7 +401,7 @@ class ApiClient {
     )
   }
 
-  // ── Diagnostics ──
+  // ── Diagnostics ──────────────────────────────────────────────────────────
 
   getDiagnostics(workspaceId: string, subject: string, subjectId: string) {
     return this.request<DiagnosticReport>(

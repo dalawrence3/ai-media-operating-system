@@ -82,7 +82,7 @@ jobs:
 
       - name: Test
         working-directory: frontend
-        run: npm test -- --run --reporter=verbose 2>/dev/null || true
+        run: npm test -- --run --reporter=verbose
 
   # ── Docker build (no push) ─────────────────────────────────────────────────
   docker:

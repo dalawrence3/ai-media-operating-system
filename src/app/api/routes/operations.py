@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_app_service, get_dev_actor
+from app.api.deps import get_actor, get_app_service
 from app.application.commands import CancelOperationCommand, RetryOperationCommand
 from app.application.queries import ListOperationsQuery
 from app.application.services import ApplicationService
@@ -37,7 +37,7 @@ def list_operations(
 def retry_operation(
     workspace_id: str,
     operation_id: str,
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -46,6 +46,8 @@ def retry_operation(
                 workspace_id=workspace_id, operation_id=operation_id, actor=actor
             )
         )
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -54,7 +56,7 @@ def retry_operation(
 def cancel_operation(
     workspace_id: str,
     operation_id: str,
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -63,5 +65,7 @@ def cancel_operation(
                 workspace_id=workspace_id, operation_id=operation_id, actor=actor
             )
         )
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -18,6 +18,17 @@ class Config:
         self.db_path: Path = Path(raw) if raw else _default_db_path()
         self.log_level: str = os.environ.get("ACE_LOG_LEVEL", "WARNING").upper()
 
+        # Runtime environment: "development", "staging", or "production".
+        # Controls dev-auth availability, CORS localhost origins, and startup strictness.
+        # Default is "production" — never silently fall back to a permissive mode.
+        self.ace_env: str = os.environ.get("ACE_ENV", "production").lower()
+
+        # Dev auth gate (only honoured when ace_env == "development").
+        self.dev_auth_enabled: bool = (
+            os.environ.get("ACE_DEV_AUTH", "enabled") == "enabled"
+            and self.ace_env == "development"
+        )
+
         # Phase 15 — PostgreSQL production database URL.
         # When set, overrides ACE_DB_PATH and uses PostgreSQL instead of SQLite.
         # Format: postgresql://user:password@host:5432/dbname

@@ -5,8 +5,10 @@ import '@/design/tokens.css'
 import '@/design/base.css'
 import '@/design/components.css'
 
+import { AuthProvider, useAuth } from '@/auth/AuthContext'
 import { AppShell } from '@/components/layout/AppShell'
 import { WorkspaceSelect } from '@/pages/WorkspaceSelect'
+import { LoginPage } from '@/pages/LoginPage'
 import { Dashboard } from '@/pages/Dashboard'
 import { Channels } from '@/pages/Channels'
 import { Pipelines } from '@/pages/Pipelines'
@@ -30,6 +32,37 @@ const queryClient = new QueryClient({
     },
   },
 })
+
+// ── Protected route guard ────────────────────────────────────────────────────
+
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth()
+
+  if (isLoading) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: 'var(--text-secondary, #9ca3af)',
+          fontSize: '0.875rem',
+        }}
+      >
+        Loading…
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />
+  }
+
+  return <>{children}</>
+}
+
+// ── Workspace routes ─────────────────────────────────────────────────────────
 
 function WorkspaceRoutes() {
   return (
@@ -55,15 +88,34 @@ function WorkspaceRoutes() {
   )
 }
 
+// ── App ──────────────────────────────────────────────────────────────────────
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<WorkspaceSelect />} />
-          <Route path="/workspaces/:workspaceId/*" element={<WorkspaceRoutes />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route
+              path="/"
+              element={
+                <RequireAuth>
+                  <WorkspaceSelect />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/workspaces/:workspaceId/*"
+              element={
+                <RequireAuth>
+                  <WorkspaceRoutes />
+                </RequireAuth>
+              }
+            />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
   )

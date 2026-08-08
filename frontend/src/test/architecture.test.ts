@@ -25,7 +25,8 @@ function collectFiles(dir: string, ext: string[]): string[] {
 const SRC = FRONTEND_SRC
 const EXCLUDED = [
   '/api/client.ts',   // the centralized client is allowed to use fetch()
-  '/test/',           // test infrastructure
+  '/auth/',           // AuthContext bootstraps the API client, so uses fetch() directly
+  '/test/',           // test infrastructure and test helper files
 ]
 
 function isExcluded(path: string): boolean {

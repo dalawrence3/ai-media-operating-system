@@ -14,7 +14,61 @@ import {
 const O = 'http://localhost:5173'
 const B = `${O}/api/v1`
 
+export const VALID_EMAIL = 'alice@example.com'
+export const VALID_PASSWORD = 'hunter2-long-enough'
+export const MOCK_ACCESS_TOKEN = 'mock-access-token-abcdef'
+export const MOCK_REFRESH_TOKEN = 'mock-refresh-token-xyz'
+export const MOCK_NEW_ACCESS_TOKEN = 'mock-refreshed-access-token-new'
+
 export const handlers = [
+  // ── Auth endpoints ──────────────────────────────────────────────────────
+  http.post(`${O}/api/v1/auth/login`, async ({ request }) => {
+    const body = await request.json() as { email?: string; password?: string }
+    if (body.email === VALID_EMAIL && body.password === VALID_PASSWORD) {
+      return HttpResponse.json({
+        access_token: MOCK_ACCESS_TOKEN,
+        refresh_token: MOCK_REFRESH_TOKEN,
+        token_type: 'bearer',
+      })
+    }
+    return HttpResponse.json(
+      { detail: 'Invalid email or password' },
+      { status: 401 },
+    )
+  }),
+
+  http.post(`${O}/api/v1/auth/refresh`, async ({ request }) => {
+    const body = await request.json() as { refresh_token?: string }
+    if (body.refresh_token === MOCK_REFRESH_TOKEN) {
+      return HttpResponse.json({
+        access_token: MOCK_NEW_ACCESS_TOKEN,
+        token_type: 'bearer',
+      })
+    }
+    return HttpResponse.json(
+      { detail: 'Refresh token not found' },
+      { status: 401 },
+    )
+  }),
+
+  http.post(`${O}/api/v1/auth/logout`, () =>
+    HttpResponse.json({ revoked: true }),
+  ),
+
+  http.get(`${O}/api/v1/auth/me`, ({ request }) => {
+    const auth = request.headers.get('Authorization')
+    if (auth === `Bearer ${MOCK_ACCESS_TOKEN}` || auth === `Bearer ${MOCK_NEW_ACCESS_TOKEN}`) {
+      return HttpResponse.json({
+        user_id: 1,
+        email: VALID_EMAIL,
+        actor: 'user:1',
+        workspace_roles: { [WS_ID]: 'operator' },
+      })
+    }
+    return HttpResponse.json({ detail: 'Authentication required' }, { status: 401 })
+  }),
+
+
   // Workspaces
   http.get(`${B}/workspaces`, () =>
     HttpResponse.json([cpWorkspace]),

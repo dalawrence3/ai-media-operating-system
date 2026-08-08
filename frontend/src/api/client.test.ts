@@ -77,7 +77,7 @@ describe('ApiClient', () => {
   })
 
   describe('DEV actor header', () => {
-    it('sends X-Dev-Actor header on every request', async () => {
+    it('sends X-Dev-Actor in Vite DEV mode when no Bearer token is set', async () => {
       let capturedHeader: string | null = null
       server.use(
         http.get(`${B}/workspaces`, ({ request }) => {

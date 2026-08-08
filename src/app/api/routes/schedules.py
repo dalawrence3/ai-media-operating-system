@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from app.api.deps import get_app_service, get_dev_actor
+from app.api.deps import get_actor, get_app_service
 from app.application.commands import (
     CreateScheduleCommand,
     DeleteScheduleCommand,
@@ -33,7 +33,7 @@ def list_schedules(
 def create_schedule(
     workspace_id: str,
     body: dict[str, Any] = Body(...),
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -50,6 +50,8 @@ def create_schedule(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -58,7 +60,7 @@ def create_schedule(
 def pause_schedule(
     workspace_id: str,
     schedule_id: str,
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -68,6 +70,8 @@ def pause_schedule(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -76,7 +80,7 @@ def pause_schedule(
 def resume_schedule(
     workspace_id: str,
     schedule_id: str,
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -86,6 +90,8 @@ def resume_schedule(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -94,7 +100,7 @@ def resume_schedule(
 def delete_schedule(
     workspace_id: str,
     schedule_id: str,
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -104,5 +110,7 @@ def delete_schedule(
             )
         )
         return {"deleted": True}
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

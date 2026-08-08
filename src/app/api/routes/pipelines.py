@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from app.api.deps import get_app_service, get_dev_actor
+from app.api.deps import get_actor, get_app_service
 from app.application.commands import (
     AdvancePipelineStageCommand,
     CancelPipelineCommand,
@@ -57,6 +57,8 @@ def get_pipeline(
             GetPipelineStatusQuery(workspace_id=workspace_id, pipeline_id=pipeline_id)
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -65,7 +67,7 @@ def get_pipeline(
 def start_pipeline(
     workspace_id: str,
     body: dict[str, Any] = Body(...),
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -83,6 +85,8 @@ def start_pipeline(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -91,7 +95,7 @@ def start_pipeline(
 def pause_pipeline(
     workspace_id: str,
     pipeline_id: str,
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -101,6 +105,8 @@ def pause_pipeline(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -109,7 +115,7 @@ def pause_pipeline(
 def resume_pipeline(
     workspace_id: str,
     pipeline_id: str,
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -119,6 +125,8 @@ def resume_pipeline(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -127,7 +135,7 @@ def resume_pipeline(
 def cancel_pipeline(
     workspace_id: str,
     pipeline_id: str,
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -137,6 +145,8 @@ def cancel_pipeline(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -146,7 +156,7 @@ def advance_stage(
     workspace_id: str,
     pipeline_id: str,
     body: dict[str, Any] = Body(...),
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -161,6 +171,8 @@ def advance_stage(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -170,7 +182,7 @@ def execute_stage(
     workspace_id: str,
     pipeline_id: str,
     body: dict[str, Any] = Body(...),
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -185,6 +197,8 @@ def execute_stage(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -194,7 +208,7 @@ def fail_stage(
     workspace_id: str,
     pipeline_id: str,
     body: dict[str, Any] = Body(...),
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -208,6 +222,8 @@ def fail_stage(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -216,7 +232,7 @@ def fail_stage(
 def recover_pipeline(
     workspace_id: str,
     pipeline_id: str,
-    actor: str = Depends(get_dev_actor),
+    actor: str = Depends(get_actor),
     svc: ApplicationService = Depends(get_app_service),
 ) -> dict[str, Any]:
     try:
@@ -226,6 +242,8 @@ def recover_pipeline(
             )
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -255,5 +273,7 @@ def get_pipeline_diagnostics(
             )
         )
         return report.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

@@ -27,6 +27,8 @@ def get_diagnostics(
             )
         )
         return report.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

@@ -1497,3 +1497,61 @@ Operationally: review event tables are insert-only; no application `UPDATE` or `
 **Decision:** PostgreSQL is backed up every 6 hours via `pg_dump | gzip`. The script keeps the 14 most recent backups (3.5 days of coverage). Redis is not backed up.
 
 **Reasoning:** Redis is used only as a job-queue transport. Any jobs in-flight during a Redis failure can be re-enqueued from the schedule definitions in PostgreSQL. Redis state is ephemeral by design. PostgreSQL holds all canonical state; 6-hour RPO is acceptable for the current operational scale. 14-backup retention is overridable via `BACKUP_RETAIN_COUNT`.
+
+---
+
+## Final Acceptance Remediation (post-Phase 15)
+
+**D-FAR-1 — Real JWT auth wired into all FastAPI routes; dev-mode X-Dev-Actor retained as development convenience**
+
+**Decision:** All API routes now depend on `get_current_user` (JWT Bearer in production, X-Dev-Actor fallback in development). The dev-auth path is gated behind `ACE_ENV=development` AND `ACE_DEV_AUTH=enabled`. In production, X-Dev-Actor is silently ignored.
+
+**Reasoning:** The Phase 15 audit found that auth was fully implemented in `src/app/auth/` but not wired into the FastAPI layer — routes accepted unauthenticated requests. The existing dev-auth helper (`dev_auth.py`) was preserved for local iteration without requiring a full JWT flow during development. Dual-path is standard practice: authenticated in CI/production, convenient in local dev.
+
+---
+
+**D-FAR-2 — PermissionError re-raised before generic Exception handler in every route**
+
+**Decision:** Every route handler with an `except Exception as exc:` block now has `except PermissionError: raise` immediately before it.
+
+**Reasoning:** FastAPI's exception handlers (including the global `@app.exception_handler(PermissionError)`) only fire if the exception propagates out of the route function. A broad `except Exception` silently caught `PermissionError` and returned HTTP 400 instead of 403. The `raise` guard ensures the global handler fires correctly.
+
+---
+
+**D-FAR-3 — Readiness probe uses failure-stub objects instead of None guards**
+
+**Decision:** `_validate_production_config()` (inside `lifespan`) passes `_FailedConn` and `_FailedRedis` stubs when the real connections cannot be opened. The stubs' `execute()` raises `ConnectionError`, causing `readiness()` to report `ready=False`.
+
+**Reasoning:** The prior implementation passed `None` when the DB connection failed. `readiness()` treated `None` as "unconfigured" (returning a passing status) rather than "error" (returning 503). Stubs make the failure mode explicit and allow `readiness()` to report errors without special-casing `None` inputs.
+
+---
+
+**D-FAR-4 — CORS origins are environment-aware; localhost only in development**
+
+**Decision:** `http://localhost:5173` and `http://localhost:4173` are only added to `allow_origins` when `ACE_ENV == "development"`. Additional origins are configurable via `ACE_CORS_ORIGINS` (comma-separated).
+
+**Reasoning:** Hardcoding localhost as an allowed origin in production allows browser-based cross-origin attacks from any page the user has open on localhost. Environment-awareness ensures the production API rejects such requests.
+
+---
+
+**D-FAR-5 — Startup config validation runs inside `lifespan`, not at module import**
+
+**Decision:** `_validate_production_config()` is called inside the `lifespan` async context manager, not at module level.
+
+**Reasoning:** Module-level `sys.exit()` calls fire during test collection when `main.py` is imported. Moving validation to `lifespan` means it runs only when the ASGI server actually starts — tests that import `app` from `main.py` are unaffected.
+
+---
+
+**D-FAR-6 — Frontend auth uses Bearer JWT; X-Dev-Actor only in Vite DEV builds with no token**
+
+**Decision:** `ApiClient._buildHeaders()` attaches `Authorization: Bearer` when a token is set. In the absence of a token, `X-Dev-Actor` is sent only when `import.meta.env.DEV` is true (Vite dev builds and Vitest). Production builds (`import.meta.env.DEV = false`) never send `X-Dev-Actor`.
+
+**Reasoning:** Keeps local development frictionless (no JWT required to browse the studio) while ensuring production builds only communicate via authenticated Bearer tokens. The boundary is enforced at build time by the Vite/Vitest DEV flag, not runtime configuration.
+
+---
+
+**D-FAR-7 — AuthContext uses raw `fetch()` to bootstrap the API client (architecture exception)**
+
+**Decision:** `AuthContext.tsx` calls `fetch()` directly for login, refresh, and logout. The architecture test's `EXCLUDED` list includes `/auth/`.
+
+**Reasoning:** The API client depends on auth callbacks from `AuthContext` (via `setAuthCallbacks`). If `AuthContext` used the API client for login/refresh/logout, there would be a circular initialization dependency: the client needs the auth context to be initialized, and the context needs the client to perform auth. The raw `fetch()` calls in `AuthContext` are the correct boundary break for this bootstrapping problem.

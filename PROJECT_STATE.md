@@ -1,7 +1,7 @@
 # Project State Snapshot
 
-**Date:** 2026-08-07
-**Latest implemented milestone:** Phase 15 — Deployment, Infrastructure & Production Operations
+**Date:** 2026-08-08
+**Latest implemented milestone:** Final Acceptance Remediation (post-Phase 15)
 **Next milestone:** Phase 16 (TBD — operator-scoped roadmap item)
 
 ---
@@ -34,6 +34,7 @@
 | Phase 13 — Backend Integration & System Architecture | ✅ Complete | 3368 | 19 |
 | Phase 14 — Frontend Studio & Dashboard | ✅ Complete | 3368 + 111 frontend | 19 |
 | Phase 15 — Deployment, Infrastructure & Production Operations | ✅ Complete | 3558 backend + 111 frontend | 20 |
+| Final Acceptance Remediation | ✅ Complete | 3611 backend + 132 frontend | 20 |
 
 ---
 
@@ -43,8 +44,8 @@
 `SCHEMA_VERSION = 20`
 
 ### Test count
-**Backend:** 3558 passed, 1 skipped (ruff lint clean; skipped test is the always-skipped live smoke test)
-**Frontend:** 111 passed (13 test files; Vitest + RTL + MSW; typecheck clean; lint clean; build clean)
+**Backend:** 3611 passed, 1 skipped (ruff lint clean; skipped test is the always-skipped live smoke test)
+**Frontend:** 132 passed (14 test files; Vitest + RTL + MSW; typecheck clean; lint clean; build clean)
 
 ### Packages implemented
 
@@ -109,6 +110,10 @@ ace doctor          — environment diagnostics
 | `YOUTUBE_CLIENT_SECRETS_PATH` | *(unset)* | Path to YouTube OAuth client secrets JSON (never stored in DB) |
 | `YOUTUBE_CREDENTIALS_PATH` | *(unset)* | Path to YouTube OAuth token file (never stored in DB) |
 | `ACE_LOG_LEVEL` | `WARNING` | Structured logging level |
+| `ACE_ENV` | `production` | Runtime environment (`development` or `production`) |
+| `ACE_SECRET_KEY` | *(required in production)* | HS256 JWT signing secret (≥32 bytes) |
+| `ACE_DEV_AUTH` | `enabled` | Dev-mode X-Dev-Actor auth (only active when `ACE_ENV=development`) |
+| `ACE_CORS_ORIGINS` | *(unset)* | Extra CORS origins beyond the dev localhost set (comma-separated) |
 
 ---
 

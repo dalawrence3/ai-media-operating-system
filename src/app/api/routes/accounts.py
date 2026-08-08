@@ -25,6 +25,8 @@ def get_account_summary(
             GetAccountSummaryQuery(workspace_id=workspace_id, account_id=account_id)
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

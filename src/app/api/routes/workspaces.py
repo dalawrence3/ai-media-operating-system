@@ -39,6 +39,8 @@ def get_workspace_summary(
     try:
         view = svc.get_workspace_summary(GetWorkspaceSummaryQuery(workspace_id=workspace_id))
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -50,6 +52,8 @@ def get_control_center(
 ) -> dict[str, Any]:
     try:
         return cp.workspace_control_center_status(db, workspace_id)
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -62,6 +66,8 @@ def get_health(
     try:
         view = svc.get_system_health(GetSystemHealthQuery(workspace_id=workspace_id))
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -93,6 +99,8 @@ def get_costs(
     try:
         view = svc.get_cost_summary(GetCostSummaryQuery(workspace_id=workspace_id, period=period))
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

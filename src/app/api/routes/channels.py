@@ -34,6 +34,8 @@ def get_channel_summary(
             GetChannelSummaryQuery(workspace_id=workspace_id, channel_id=channel_id)
         )
         return view.model_dump()
+    except PermissionError:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
