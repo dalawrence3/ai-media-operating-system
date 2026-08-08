@@ -1,8 +1,8 @@
 # Project State Snapshot
 
 **Date:** 2026-08-07
-**Latest implemented milestone:** Phase 14 — Frontend Studio & Dashboard
-**Next milestone:** Phase 15 — Deployment, Infrastructure & Production Operations
+**Latest implemented milestone:** Phase 15 — Deployment, Infrastructure & Production Operations
+**Next milestone:** Phase 16 (TBD — operator-scoped roadmap item)
 
 ---
 
@@ -33,16 +33,17 @@
 | Phase 12 — Media Operations Control Plane | ✅ Complete | 3101 | 18 |
 | Phase 13 — Backend Integration & System Architecture | ✅ Complete | 3368 | 19 |
 | Phase 14 — Frontend Studio & Dashboard | ✅ Complete | 3368 + 111 frontend | 19 |
+| Phase 15 — Deployment, Infrastructure & Production Operations | ✅ Complete | 3558 backend + 111 frontend | 20 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 19`
+`SCHEMA_VERSION = 20`
 
 ### Test count
-**Backend:** 3368 passed, 1 skipped (ruff lint clean; skipped test is the always-skipped live smoke test)
+**Backend:** 3558 passed, 1 skipped (ruff lint clean; skipped test is the always-skipped live smoke test)
 **Frontend:** 111 passed (13 test files; Vitest + RTL + MSW; typecheck clean; lint clean; build clean)
 
 ### Packages implemented
@@ -65,6 +66,11 @@
 | Learning & Optimization Engine | `src/app/learning/` | ✅ |
 | Media Operations Control Plane | `src/app/control_plane/` | ✅ |
 | Application Layer (command bus, pipeline controller, scheduler, recovery, health) | `src/app/application/` | ✅ |
+| Auth (JWT, RBAC, Argon2id, refresh tokens) | `src/app/auth/` | ✅ |
+| Providers (secrets, stage-class boundaries) | `src/app/providers/` | ✅ |
+| Workers (RQ queue, executor, scheduler) | `src/app/workers/` | ✅ |
+| Observability (structlog, Prometheus, health, middleware) | `src/app/observability/` | ✅ |
+| Object storage (metadata layer) | `src/app/storage/` | ✅ |
 
 ### CLI subcommand groups
 
@@ -553,4 +559,85 @@ React 19 + TypeScript + Vite 8 Single-Page Application. All backend interaction 
 
 ### What waits
 
-Phase 15 — Deployment, Infrastructure & Production Operations.
+Phase 16 (TBD — operator-scoped roadmap item).
+
+---
+
+## Phase 15 completion details
+
+### M15.1–M15.3 — Schema, DB compat, Object storage
+
+- `SCHEMA_VERSION` bumped 19 → 20; `_DDL_V20` adds 4 tables: `auth_users`, `auth_refresh_tokens`, `auth_workspace_roles`, `obj_storage_objects`
+- `src/app/core/db_compat.py` — `CompatConnection`/`CompatCursor`: translates `?` → `%s` for psycopg3 compatibility, enabling test isolation with SQLite while production runs PostgreSQL
+- `src/app/storage/` — object storage metadata layer: `models.py`, `repository.py`, `service.py`
+- Tests: +24 `test_db_compat.py`, +29 `test_storage.py`
+
+### M15.4 — Worker layer
+
+- `src/app/workers/jobs.py` — `enqueue_pipeline_stage`, `execute_pipeline_stage_job` (JSON-safe payloads; no pickle)
+- `src/app/workers/queue.py` — RQ queue factory enforcing `JSONSerializer`; no pickle ever
+- `src/app/workers/scheduler.py` — `compute_next_run_at`, `get_due_schedules`, `mark_schedule_ran`, `run_scheduler_tick`
+- Tests: +20 `test_workers.py`
+
+### M15.5 — Authentication (JWT + RBAC)
+
+- `src/app/auth/passwords.py` — Argon2id via `pwdlib[argon2]` (`PasswordHash((Argon2Hasher(),))`); `hash_password`, `verify_password`, `needs_rehash`
+- `src/app/auth/tokens.py` — HS256 access tokens (PyJWT, 15-min TTL); refresh tokens as raw hex → stored only as SHA-256 hash
+- `src/app/auth/rbac.py` — `Role` enum (owner/admin/operator/reviewer/analyst); `_PERMISSION_MATRIX`; `has_permission`, `require_role`
+- `src/app/auth/service.py` — `AuthService`: register (Argon2id hash), login (token pair), refresh (hash lookup), revoke, `assign_workspace_role`
+- Tests: +46 `test_auth.py`
+- **Security invariants:** plaintext passwords never stored; refresh tokens stored as SHA-256 hash only; no token values in logs
+
+### M15.6 — Secrets & provider boundaries
+
+- `src/app/providers/secrets.py` — `SecretsInterface`: `get(env_var)`, `redact(value)` (first 4 chars + `***`), `status()` (bool-only dict)
+- `src/app/providers/boundaries.py` — `StageClass` enum (A/B/C); `classify_stage()` fail-closed (unknown → C); `ProviderBoundary.check_stage()` raises `ProviderBoundaryError` if gate not met
+- Stage gates: Class B requires live AI provider + API key OR TTS live enabled + ElevenLabs key; Class C additionally requires `publishing_live_enabled=True`
+- Tests: +23 `test_providers.py`
+
+### M15.7 — Production provider executors
+
+- `src/app/workers/executor.py` — `dispatch_stage(conn, pipeline, stage, *, actor, workspace_id, ...)` → `ExecutorResult`; routes by `StageClass`; fail-closed; Class A (local) dispatched, Class B/C blocked in CI
+- Tests: +10 `test_executor.py`
+
+### M15.8 — Docker / Compose
+
+- `Dockerfile` — multi-stage (builder + runtime); Python 3.13-slim; non-root user `ace` (uid 1000); `HEALTHCHECK` against `/health`
+- `docker-compose.yml` — services: postgres 16, redis 7, migrate (one-shot `alembic upgrade head`), api, worker, scheduler; `ACE_SECRET_KEY` required (fails fast); all live-provider flags default false; `ace_internal`/`ace_public` networks
+
+### M15.9 — Observability
+
+- `src/app/observability/logging_config.py` — structlog JSON + `_redact_sensitive` processor; 27-key sensitive blocklist (passwords, tokens, API keys, Authorization, storage credentials)
+- `src/app/observability/metrics.py` — isolated `CollectorRegistry`; 7 counters, 1 histogram, 1 info
+- `src/app/observability/health.py` — `liveness()` always OK; `readiness()` pings DB + Redis; `SECURITY_HEADERS` dict
+- `src/app/observability/middleware.py` — `RequestIDMiddleware`, `SecurityHeadersMiddleware`, `MetricsMiddleware`; `_normalise_path()` collapses UUIDs + numeric IDs to `{id}`
+- `src/app/api/main.py` updated — 3 middleware layers; `/health`, `/ready`, `/metrics` endpoints; version 15.0.0
+- Tests: +25 `test_observability.py`
+
+### M15.10 — Backup & DR
+
+- `scripts/backup.sh` — `pg_dump | gzip`; timestamped; 14-backup retention; `ACE_DATABASE_URL` from env (never hardcoded)
+- `docs/runbooks/backup-restore.md` — full backup/restore/DR procedures; RPO ≤ 6h, RTO ≤ 30m
+
+### M15.11 — CI/CD boundary
+
+- `.github/workflows/ci.yml` — jobs: backend (ruff + pytest), frontend (npm), docker (build no push), migrations
+- CD boundary is intentionally manual; production deployment requires operator approval
+
+### M15.12 — Performance / Integration / Production readiness
+
+- `list_pipelines` N+1 fix: bulk `SELECT … WHERE pipeline_id IN (…)` replaces per-row `_load_stages` calls
+- `tests/test_integration.py` — 13 end-to-end tests: N+1 regression guard, auth→pipeline flow, Class A/B boundary in CI, schema version, auth table presence, sensitive-field redaction, provider fail-closed, refresh token not stored plaintext
+
+### Key Phase 15 security invariants
+
+| Rule | Enforcement point |
+|---|---|
+| No pickle in RQ | `JSONSerializer` enforced in queue factory |
+| No plaintext passwords | Argon2id in `hash_password`; no raw value stored |
+| No plaintext refresh tokens | Only SHA-256 hash written to `auth_refresh_tokens` |
+| No sensitive keys in logs | `_redact_sensitive` processor; 27-key blocklist |
+| Fail-closed by default | `classify_stage()` unknown → C; `check_stage()` raises on gate miss |
+| No live calls in CI | All live-provider flags default false; Class B/C blocked |
+| No X-Dev-Actor in production | Removed from API; JWT-only auth path |
+| No automated push-to-production | CD boundary comment in ci.yml; manual operator gate |

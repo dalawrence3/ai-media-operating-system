@@ -1,69 +1,66 @@
-"""Database connection management and schema initialization.
+"""Baseline PostgreSQL schema — SCHEMA_VERSION 19.
 
-SQLite is the default backend for local development and unit tests.
-PostgreSQL is the production backend, selected when ACE_DATABASE_URL is set.
+All tables from Phases 1-14 expressed in PostgreSQL DDL.
+SQLite schema management continues to use database.py for dev/test.
 
-The public entry point is open_db():
-  - SQLite path: open_db(path)  — unchanged from Phases 1–14
-  - PostgreSQL path: open_db_postgres(url) — returns a CompatConnection
-  - Auto-dispatch: get_db_connection() reads ACE_DATABASE_URL and dispatches
+Revision: 0001
 """
 
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-from typing import TYPE_CHECKING
+from alembic import op
 
-from app.core.logging import get_logger
+revision = "0001"
+down_revision = None
+branch_labels = None
+depends_on = None
 
-if TYPE_CHECKING:
-    from app.core.db_compat import CompatConnection
 
-logger = get_logger(__name__)
-
-# Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 20
-
-# Phase 1 DDL — topics, sources, scripts, runs.
-_DDL_V1 = """
+def upgrade() -> None:
+    """Create all baseline tables."""
+    statements = [
+        """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS topics (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    id         BIGSERIAL PRIMARY KEY,
     title      TEXT    NOT NULL,
     angle      TEXT    NOT NULL DEFAULT '',
     status     TEXT    NOT NULL DEFAULT 'active'
                        CHECK (status IN ('active', 'archived')),
-    created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at TEXT    NOT NULL DEFAULT '',
+    updated_at TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS sources (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    id         BIGSERIAL PRIMARY KEY,
     topic_id   INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
     kind       TEXT    NOT NULL CHECK (kind IN ('url', 'file', 'note')),
     reference  TEXT    NOT NULL,
     notes      TEXT    NOT NULL DEFAULT '',
-    created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS scripts (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    id         BIGSERIAL PRIMARY KEY,
     topic_id   INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
     version    INTEGER NOT NULL DEFAULT 1,
     body       TEXT    NOT NULL,
     status     TEXT    NOT NULL DEFAULT 'draft'
                        CHECK (status IN ('draft', 'approved', 'rejected')),
-    created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at TEXT    NOT NULL DEFAULT '',
+    updated_at TEXT    NOT NULL DEFAULT '',
     UNIQUE (topic_id, version)
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS runs (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          BIGSERIAL PRIMARY KEY,
     topic_id    INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
     script_id   INTEGER REFERENCES scripts(id) ON DELETE SET NULL,
     status      TEXT    NOT NULL DEFAULT 'pending'
@@ -71,14 +68,12 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at  TEXT,
     finished_at TEXT,
     error       TEXT,
-    created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-"""
-
-# Phase 2 DDL — ai_calls.
-_DDL_V2 = """
+    created_at  TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS ai_calls (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                  BIGSERIAL PRIMARY KEY,
     provider            TEXT    NOT NULL,
     model               TEXT    NOT NULL,
     prompt_name         TEXT    NOT NULL DEFAULT '',
@@ -92,21 +87,13 @@ CREATE TABLE IF NOT EXISTS ai_calls (
     error_category      TEXT,
     error_message       TEXT,
     run_id              INTEGER REFERENCES runs(id) ON DELETE SET NULL,
-    created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at          TEXT    NOT NULL DEFAULT '',
     completed_at        TEXT
-);
-"""
-
-
-# Phase 3 DDL — channel strategy foundation.
-# Creation order matters for FK satisfaction at INSERT time:
-#   channels → channel_monetization_strategies → channel_profile_versions
-#   → channel_capacity_policies → channel_operating_mode_events
-# channels.current_profile_version_id and current_strategy_id start NULL
-# and are set after the dependent rows are created (see repository.create_channel_full).
-_DDL_V3 = """
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS channels (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     platform                    TEXT    NOT NULL DEFAULT 'youtube'
                                         CHECK (platform IN ('youtube', 'instagram', 'tiktok')),
     channel_name                TEXT    NOT NULL,
@@ -120,19 +107,20 @@ CREATE TABLE IF NOT EXISTS channels (
                                         CHECK (current_maturity_stage IN (
                                             'validation', 'growth', 'monetization',
                                             'optimization', 'scaling')),
-    created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at  TEXT    NOT NULL DEFAULT '',
+    updated_at  TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS channel_monetization_strategies (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     channel_id              INTEGER NOT NULL REFERENCES channels(id),
     version                 INTEGER NOT NULL,
     monetization_status     TEXT    NOT NULL DEFAULT 'pre'
                                     CHECK (monetization_status IN ('pre', 'active')),
     objective_weights_json  TEXT    NOT NULL,
     description             TEXT    NOT NULL DEFAULT '',
-    active_from             TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    active_from             TEXT    NOT NULL DEFAULT '',
     superseded_at           TEXT,
     created_by              TEXT    NOT NULL DEFAULT '',
     status                  TEXT    NOT NULL DEFAULT 'draft'
@@ -141,10 +129,11 @@ CREATE TABLE IF NOT EXISTS channel_monetization_strategies (
     activated_by            TEXT    NOT NULL DEFAULT '',
     activation_reason       TEXT    NOT NULL DEFAULT '',
     UNIQUE (channel_id, version)
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS channel_profile_versions (
-    id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                              BIGSERIAL PRIMARY KEY,
     channel_id                      INTEGER NOT NULL REFERENCES channels(id),
     version                         INTEGER NOT NULL,
     strategy_id                     INTEGER REFERENCES channel_monetization_strategies(id),
@@ -182,7 +171,7 @@ CREATE TABLE IF NOT EXISTS channel_profile_versions (
     duplicate_similarity_threshold  REAL    NOT NULL DEFAULT 0.70,
     signal_staleness_days           INTEGER NOT NULL DEFAULT 7,
     scoring_policy_version          TEXT    NOT NULL DEFAULT '1.0.0',
-    active_from                     TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    active_from                     TEXT    NOT NULL DEFAULT '',
     superseded_at                   TEXT,
     created_by                      TEXT    NOT NULL DEFAULT '',
     status                          TEXT    NOT NULL DEFAULT 'draft'
@@ -191,10 +180,11 @@ CREATE TABLE IF NOT EXISTS channel_profile_versions (
     activated_by                    TEXT    NOT NULL DEFAULT '',
     activation_reason               TEXT    NOT NULL DEFAULT '',
     UNIQUE (channel_id, version)
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS channel_capacity_policies (
-    id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                              BIGSERIAL PRIMARY KEY,
     channel_id                      INTEGER NOT NULL UNIQUE REFERENCES channels(id),
     long_form_slots_per_week        INTEGER NOT NULL DEFAULT 2,
     short_slots_per_week            INTEGER NOT NULL DEFAULT 4,
@@ -208,28 +198,24 @@ CREATE TABLE IF NOT EXISTS channel_capacity_policies (
     review_hours_per_long_form      REAL    NOT NULL DEFAULT 1.5,
     review_hours_per_package        REAL    NOT NULL DEFAULT 2.5,
     trend_reservation_slots         INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at  TEXT    NOT NULL DEFAULT '',
+    updated_at  TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS channel_operating_mode_events (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id          BIGSERIAL PRIMARY KEY,
     channel_id  INTEGER NOT NULL REFERENCES channels(id),
     from_mode   TEXT    CHECK (from_mode IN ('manual', 'supervised', 'autonomous')),
     to_mode     TEXT    NOT NULL CHECK (to_mode IN ('manual', 'supervised', 'autonomous')),
     operator    TEXT    NOT NULL DEFAULT '',
     reason      TEXT    NOT NULL DEFAULT '',
-    created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-"""
-
-
-# Phase 4 DDL — opportunity discovery foundation.
-# Creation order: discovery_runs → opportunities → opportunity_observations
-#   → opportunity_source_evidence → opportunity_state_events
-_DDL_V4_NEW_TABLES = """
+    created_at  TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS discovery_runs (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     channel_id              INTEGER NOT NULL REFERENCES channels(id),
     profile_version_id      INTEGER NOT NULL REFERENCES channel_profile_versions(id),
     adapter_name            TEXT    NOT NULL
@@ -246,10 +232,11 @@ CREATE TABLE IF NOT EXISTS discovery_runs (
     error_message           TEXT,
     started_at              TEXT    NOT NULL,
     completed_at            TEXT
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS opportunities (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     channel_id              INTEGER NOT NULL REFERENCES channels(id),
     discovery_run_id        INTEGER NOT NULL REFERENCES discovery_runs(id),
     normalized_topic        TEXT    NOT NULL,
@@ -271,10 +258,11 @@ CREATE TABLE IF NOT EXISTS opportunities (
     created_at              TEXT    NOT NULL,
     updated_at              TEXT    NOT NULL,
     UNIQUE (channel_id, normalized_topic)
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS opportunity_observations (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     opportunity_id          INTEGER NOT NULL REFERENCES opportunities(id),
     discovery_run_id        INTEGER NOT NULL REFERENCES discovery_runs(id),
     adapter_name            TEXT    NOT NULL,
@@ -288,10 +276,11 @@ CREATE TABLE IF NOT EXISTS opportunity_observations (
     was_deduplicated        INTEGER NOT NULL DEFAULT 0 CHECK (was_deduplicated IN (0, 1)),
     candidate_topic         TEXT,
     dedup_similarity_score  REAL
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS opportunity_source_evidence (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              BIGSERIAL PRIMARY KEY,
     observation_id  INTEGER NOT NULL REFERENCES opportunity_observations(id),
     opportunity_id  INTEGER NOT NULL REFERENCES opportunities(id),
     evidence_type   TEXT    NOT NULL,
@@ -300,25 +289,22 @@ CREATE TABLE IF NOT EXISTS opportunity_source_evidence (
     evidence_unit   TEXT    NOT NULL DEFAULT '',
     source_label    TEXT    NOT NULL,
     collected_at    TEXT    NOT NULL
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS opportunity_state_events (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              BIGSERIAL PRIMARY KEY,
     opportunity_id  INTEGER NOT NULL REFERENCES opportunities(id),
     from_state      TEXT,
     to_state        TEXT    NOT NULL,
     actor           TEXT    NOT NULL DEFAULT 'system',
     reason          TEXT    NOT NULL DEFAULT '',
     created_at      TEXT    NOT NULL
-);
-"""
-
-
-# Phase 5 DDL — versioned scoring policies and opportunity scores.
-# Creation order: scoring_policies → opportunity_scores
-_DDL_V5_SCORING = """
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS scoring_policies (
-    id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                              BIGSERIAL PRIMARY KEY,
     channel_id                      INTEGER NOT NULL REFERENCES channels(id),
     version                         INTEGER NOT NULL,
     label                           TEXT    NOT NULL,
@@ -346,13 +332,15 @@ CREATE TABLE IF NOT EXISTS scoring_policies (
     created_at                      TEXT    NOT NULL,
     created_by                      TEXT,
     UNIQUE(channel_id, version)
-);
-
+)
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS scoring_policies_one_default_per_channel
-    ON scoring_policies(channel_id) WHERE is_default = 1;
-
+    ON scoring_policies(channel_id) WHERE is_default = 1
+""",
+        """
 CREATE TABLE IF NOT EXISTS opportunity_scores (
-    id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                              BIGSERIAL PRIMARY KEY,
     opportunity_id                  INTEGER NOT NULL REFERENCES opportunities(id),
     scoring_policy_id               INTEGER NOT NULL REFERENCES scoring_policies(id),
     channel_profile_version_id      INTEGER NOT NULL REFERENCES channel_profile_versions(id),
@@ -383,29 +371,23 @@ CREATE TABLE IF NOT EXISTS opportunity_scores (
     requires_research               INTEGER NOT NULL DEFAULT 0,
     scored_at                       TEXT    NOT NULL,
     scorer_version                  TEXT    NOT NULL DEFAULT '1.0'
-);
-
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS opportunity_scores_opp_policy
-    ON opportunity_scores(opportunity_id, scoring_policy_id, scored_at DESC, id DESC);
-"""
-
-
-# Phase 6 DDL — promote opportunities to topics.
-# ALTER TABLE cannot add a UNIQUE column reliably in all SQLite versions,
-# so uniqueness is enforced via a partial index (NULL values excluded).
-_DDL_V6_PROMOTE = """
-ALTER TABLE topics ADD COLUMN promoted_opportunity_id INTEGER REFERENCES opportunities(id);
-
+    ON opportunity_scores(opportunity_id, scoring_policy_id, scored_at DESC, id DESC)
+""",
+        """
+ALTER TABLE topics ADD COLUMN promoted_opportunity_id INTEGER REFERENCES opportunities(id)
+""",
+        """
 CREATE UNIQUE INDEX uq_topics_promoted_opportunity
     ON topics(promoted_opportunity_id)
-    WHERE promoted_opportunity_id IS NOT NULL;
-"""
-
-
-# Phase 7 DDL — source_contents for acquired and extracted content.
-_DDL_V7_RESEARCH = """
+    WHERE promoted_opportunity_id IS NOT NULL
+""",
+        """
 CREATE TABLE IF NOT EXISTS source_contents (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     source_id               INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
     fetch_status            TEXT    NOT NULL CHECK (fetch_status IN ('ok', 'failed')),
     extraction_status       TEXT    NOT NULL
@@ -431,21 +413,21 @@ CREATE TABLE IF NOT EXISTS source_contents (
     quality_score           REAL,
     quality_factors_json    TEXT,
     quality_scorer_version  TEXT,
-    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at              TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS sc_source_id
-    ON source_contents(source_id, fetched_at DESC, id DESC);
-
+    ON source_contents(source_id, fetched_at DESC, id DESC)
+""",
+        """
 CREATE INDEX IF NOT EXISTS sc_normalized_text_hash
     ON source_contents(normalized_text_hash)
-    WHERE normalized_text_hash IS NOT NULL;
-"""
-
-
-_DDL_V8_CLAIMS = """
+    WHERE normalized_text_hash IS NOT NULL
+""",
+        """
 CREATE TABLE IF NOT EXISTS claim_extraction_runs (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     source_content_id       INTEGER NOT NULL
                                 REFERENCES source_contents(id) ON DELETE CASCADE,
     status                  TEXT    NOT NULL
@@ -468,11 +450,12 @@ CREATE TABLE IF NOT EXISTS claim_extraction_runs (
     started_at              TEXT    NOT NULL,
     completed_at            TEXT,
     created_at              TEXT    NOT NULL
-                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+                                DEFAULT ''
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS claim_extraction_run_calls (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     claim_extraction_run_id INTEGER NOT NULL
                                 REFERENCES claim_extraction_runs(id) ON DELETE CASCADE,
     ai_call_id              INTEGER
@@ -489,12 +472,13 @@ CREATE TABLE IF NOT EXISTS claim_extraction_run_calls (
     started_at              TEXT    NOT NULL,
     completed_at            TEXT,
     created_at              TEXT    NOT NULL
-                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                                DEFAULT '',
     UNIQUE (claim_extraction_run_id, chunk_index)
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS claims (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     extraction_run_id       INTEGER NOT NULL
                                 REFERENCES claim_extraction_runs(id) ON DELETE CASCADE,
     chunk_index             INTEGER NOT NULL,
@@ -511,40 +495,45 @@ CREATE TABLE IF NOT EXISTS claims (
     page_number             INTEGER,
     requires_date_review    INTEGER NOT NULL DEFAULT 0,
     created_at              TEXT    NOT NULL
-                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+                                DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cer_source_content
-    ON claim_extraction_runs(source_content_id);
-
+    ON claim_extraction_runs(source_content_id)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cer_input_hash
-    ON claim_extraction_runs(input_hash);
-
+    ON claim_extraction_runs(input_hash)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cerc_run
-    ON claim_extraction_run_calls(claim_extraction_run_id);
-
+    ON claim_extraction_run_calls(claim_extraction_run_id)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cerc_ai_call
-    ON claim_extraction_run_calls(ai_call_id);
-
+    ON claim_extraction_run_calls(ai_call_id)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_claims_run
-    ON claims(extraction_run_id);
-"""
-
-
-# Phase 9 DDL — script generation runs and citations; new Script columns.
-# Migration order: ALTER scripts columns first (scripts table already exists from v1),
-# then script_generation_runs (references scripts(id)), then script_citations.
-# No partial unique index on scripts(topic_id) WHERE status='approved' — historical
-# v8 data may contain multiple approved scripts per topic.
-_DDL_V9_SCRIPTS = """
-ALTER TABLE scripts ADD COLUMN body_json TEXT;
+    ON claims(extraction_run_id)
+""",
+        """
+ALTER TABLE scripts ADD COLUMN body_json TEXT
+""",
+        """
 ALTER TABLE scripts ADD COLUMN format TEXT NOT NULL DEFAULT 'short'
-    CHECK(format IN ('short', 'long_form'));
-ALTER TABLE scripts ADD COLUMN approved_at TEXT;
-ALTER TABLE scripts ADD COLUMN superseded_at TEXT;
-
+    CHECK(format IN ('short', 'long_form'))
+""",
+        """
+ALTER TABLE scripts ADD COLUMN approved_at TEXT
+""",
+        """
+ALTER TABLE scripts ADD COLUMN superseded_at TEXT
+""",
+        """
 CREATE TABLE IF NOT EXISTS script_generation_runs (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     topic_id                    INTEGER NOT NULL REFERENCES topics(id) ON DELETE CASCADE,
     script_id                   INTEGER REFERENCES scripts(id) ON DELETE SET NULL,
     status                      TEXT    NOT NULL
@@ -571,41 +560,38 @@ CREATE TABLE IF NOT EXISTS script_generation_runs (
     started_at                  TEXT    NOT NULL,
     completed_at                TEXT,
     created_at                  TEXT    NOT NULL
-                                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+                                    DEFAULT ''
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS script_citations (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              BIGSERIAL PRIMARY KEY,
     script_id       INTEGER NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
     claim_id        INTEGER NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
     section_index   INTEGER NOT NULL,
     citation_order  INTEGER NOT NULL,
-    created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at      TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sgr_topic
-    ON script_generation_runs(topic_id, created_at DESC, id DESC);
-
+    ON script_generation_runs(topic_id, created_at DESC, id DESC)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sgr_input_hash
-    ON script_generation_runs(input_hash);
-
+    ON script_generation_runs(input_hash)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sgr_script
-    ON script_generation_runs(script_id);
-
+    ON script_generation_runs(script_id)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sc_script
-    ON script_citations(script_id, section_index, citation_order);
-"""
-
-
-# Phase 10 DDL — production plans, segments, citations, and review events.
-# Creation order: production_plans → production_segments → production_segment_citations
-#   → production_plan_review_events
-# production_plans.script_id uses ON DELETE RESTRICT: a Script with plans cannot be deleted.
-# production_plan_review_events.topic_id/script_id use ON DELETE RESTRICT: review events
-#   are training labels and must not be destroyed by parent-row deletion.
-_DDL_V10_PRODUCTION = """
+    ON script_citations(script_id, section_index, citation_order)
+""",
+        """
 CREATE TABLE IF NOT EXISTS production_plans (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     topic_id                    INTEGER NOT NULL
                                     REFERENCES topics(id) ON DELETE CASCADE,
     script_id                   INTEGER NOT NULL
@@ -633,27 +619,32 @@ CREATE TABLE IF NOT EXISTS production_plans (
     approved_at                 TEXT,
     superseded_at               TEXT,
     rejected_at                 TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT '',
     UNIQUE (script_id, input_hash)
-);
-
+)
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pp_one_active_normal
     ON production_plans(topic_id)
-    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NULL;
-
+    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NULL
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pp_one_active_experiment
     ON production_plans(topic_id, experiment_id)
-    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NOT NULL;
-
+    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NOT NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_pp_topic_created
-    ON production_plans(topic_id, created_at DESC, id DESC);
-
+    ON production_plans(topic_id, created_at DESC, id DESC)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_pp_script
-    ON production_plans(script_id, script_version);
-
+    ON production_plans(script_id, script_version)
+""",
+        """
 CREATE TABLE IF NOT EXISTS production_segments (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     plan_id                 INTEGER NOT NULL
                                 REFERENCES production_plans(id) ON DELETE CASCADE,
     segment_index           INTEGER NOT NULL,
@@ -662,33 +653,38 @@ CREATE TABLE IF NOT EXISTS production_segments (
     narration_text          TEXT    NOT NULL,
     estimated_duration_s    INTEGER NOT NULL DEFAULT 0,
     estimated_word_count    INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at  TEXT NOT NULL DEFAULT '',
     UNIQUE (plan_id, segment_index)
-);
-
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_ps_plan
-    ON production_segments(plan_id, segment_index);
-
+    ON production_segments(plan_id, segment_index)
+""",
+        """
 CREATE TABLE IF NOT EXISTS production_segment_citations (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    id              BIGSERIAL PRIMARY KEY,
     segment_id      INTEGER NOT NULL
                         REFERENCES production_segments(id) ON DELETE CASCADE,
     claim_id        INTEGER NOT NULL
                         REFERENCES claims(id) ON DELETE RESTRICT,
     citation_order  INTEGER NOT NULL,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at  TEXT NOT NULL DEFAULT '',
     UNIQUE (segment_id, claim_id),
     UNIQUE (segment_id, citation_order)
-);
-
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_psc_segment
-    ON production_segment_citations(segment_id, citation_order);
-
+    ON production_segment_citations(segment_id, citation_order)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_psc_claim
-    ON production_segment_citations(claim_id);
-
+    ON production_segment_citations(claim_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS production_plan_review_events (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            BIGSERIAL PRIMARY KEY,
     plan_id       INTEGER NOT NULL
                       REFERENCES production_plans(id) ON DELETE CASCADE,
     topic_id      INTEGER NOT NULL
@@ -710,25 +706,26 @@ CREATE TABLE IF NOT EXISTS production_plan_review_events (
     notes         TEXT,
     actor         TEXT,
     created_at    TEXT NOT NULL
-                      DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+                      DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_ppre_plan
-    ON production_plan_review_events(plan_id, created_at DESC);
-
+    ON production_plan_review_events(plan_id, created_at DESC)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_ppre_model_prompt
     ON production_plan_review_events(model, prompt_hash)
-    WHERE model IS NOT NULL;
-
+    WHERE model IS NOT NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_ppre_experiment
     ON production_plan_review_events(experiment_id)
-    WHERE experiment_id IS NOT NULL;
-"""
-
-
-_DDL_V11_NARRATION = """
+    WHERE experiment_id IS NOT NULL
+""",
+        """
 CREATE TABLE IF NOT EXISTS voice_profiles (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                  BIGSERIAL PRIMARY KEY,
     channel_id          INTEGER REFERENCES channels(id) ON DELETE SET NULL,
     provider            TEXT    NOT NULL,
     model               TEXT    NOT NULL,
@@ -743,16 +740,18 @@ CREATE TABLE IF NOT EXISTS voice_profiles (
     version             INTEGER NOT NULL DEFAULT 1,
     is_default          INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
     superseded_by_id    INTEGER REFERENCES voice_profiles(id),
-    created_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at          TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at          TEXT    NOT NULL DEFAULT '',
+    updated_at          TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_vp_channel
     ON voice_profiles (channel_id)
-    WHERE channel_id IS NOT NULL;
-
+    WHERE channel_id IS NOT NULL
+""",
+        """
 CREATE TABLE IF NOT EXISTS narration_runs (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     plan_id                 INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE RESTRICT,
     plan_input_hash         TEXT    NOT NULL,
     voice_profile_id        INTEGER NOT NULL REFERENCES voice_profiles(id) ON DELETE RESTRICT,
@@ -776,28 +775,32 @@ CREATE TABLE IF NOT EXISTS narration_runs (
     rejected_at             TEXT,
     superseded_at           TEXT,
     superseded_by_run_id    INTEGER REFERENCES narration_runs(id),
-    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at              TEXT    NOT NULL DEFAULT '',
+    updated_at              TEXT    NOT NULL DEFAULT '',
     UNIQUE (plan_id, input_hash)
-);
-
+)
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_one_active_normal
     ON narration_runs (plan_id)
     WHERE status = 'approved'
       AND superseded_at IS NULL
-      AND experiment_id IS NULL;
-
+      AND experiment_id IS NULL
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_one_active_experiment
     ON narration_runs (plan_id, experiment_id)
     WHERE status = 'approved'
       AND superseded_at IS NULL
-      AND experiment_id IS NOT NULL;
-
+      AND experiment_id IS NOT NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_nr_plan
-    ON narration_runs (plan_id);
-
+    ON narration_runs (plan_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS narration_segment_assets (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     run_id                  INTEGER NOT NULL REFERENCES narration_runs(id) ON DELETE RESTRICT,
     segment_id              INTEGER NOT NULL REFERENCES production_segments(id) ON DELETE RESTRICT,
     narration_text_hash     TEXT    NOT NULL,
@@ -823,22 +826,26 @@ CREATE TABLE IF NOT EXISTS narration_segment_assets (
     characters_billed       INTEGER,
     cost_usd                REAL,
     superseded_at           TEXT,
-    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at              TEXT    NOT NULL DEFAULT '',
+    updated_at              TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_nsa_active_per_run_segment
     ON narration_segment_assets (run_id, segment_id)
-    WHERE status != 'rejected' AND superseded_at IS NULL;
-
+    WHERE status != 'rejected' AND superseded_at IS NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_nsa_run
-    ON narration_segment_assets (run_id);
-
+    ON narration_segment_assets (run_id)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_nsa_segment
-    ON narration_segment_assets (segment_id);
-
+    ON narration_segment_assets (segment_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS tts_calls (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     run_id                      INTEGER NOT NULL REFERENCES narration_runs(id) ON DELETE RESTRICT,
     segment_id                  INTEGER REFERENCES production_segments(id) ON DELETE RESTRICT,
     provider                    TEXT    NOT NULL,
@@ -857,14 +864,16 @@ CREATE TABLE IF NOT EXISTS tts_calls (
     provider_metadata_json      TEXT,
     narration_schema_version    TEXT    NOT NULL,
     narration_algorithm_version TEXT    NOT NULL,
-    called_at                   TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    called_at                   TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_tts_run
-    ON tts_calls (run_id);
-
+    ON tts_calls (run_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS narration_review_events (
-    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                   BIGSERIAL PRIMARY KEY,
     run_id               INTEGER NOT NULL REFERENCES narration_runs(id) ON DELETE RESTRICT,
     plan_id              INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE RESTRICT,
     script_id            INTEGER NOT NULL REFERENCES scripts(id) ON DELETE RESTRICT,
@@ -886,32 +895,35 @@ CREATE TABLE IF NOT EXISTS narration_review_events (
     expected_correction  TEXT,
     notes                TEXT,
     actor                TEXT,
-    created_at           TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at           TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_nre_run
-    ON narration_review_events (run_id, created_at);
-
+    ON narration_review_events (run_id, created_at)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_nre_asset
     ON narration_review_events (asset_id, created_at)
-    WHERE asset_id IS NOT NULL;
-
+    WHERE asset_id IS NOT NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_nre_reason_code
     ON narration_review_events (reason_code)
-    WHERE reason_code IS NOT NULL;
-
+    WHERE reason_code IS NOT NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_nre_voice_provider
-    ON narration_review_events (voice_profile_id, provider, model);
-
+    ON narration_review_events (voice_profile_id, provider, model)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_nre_experiment
     ON narration_review_events (experiment_id)
-    WHERE experiment_id IS NOT NULL;
-"""
-
-
-_DDL_V12_CAPTIONS = """
+    WHERE experiment_id IS NOT NULL
+""",
+        """
 CREATE TABLE IF NOT EXISTS caption_runs (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     narration_run_id            INTEGER NOT NULL
                                     REFERENCES narration_runs(id) ON DELETE RESTRICT,
     plan_id                     INTEGER NOT NULL
@@ -945,31 +957,36 @@ CREATE TABLE IF NOT EXISTS caption_runs (
     rejected_at                 TEXT,
     superseded_at               TEXT,
     superseded_by_run_id        INTEGER REFERENCES caption_runs(id),
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT '',
     UNIQUE (narration_run_id, input_hash)
-);
-
+)
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cr_one_active_normal
     ON caption_runs (narration_run_id)
     WHERE status = 'approved'
       AND superseded_at IS NULL
-      AND experiment_id IS NULL;
-
+      AND experiment_id IS NULL
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cr_one_active_experiment
     ON caption_runs (narration_run_id, experiment_id)
     WHERE status = 'approved'
       AND superseded_at IS NULL
-      AND experiment_id IS NOT NULL;
-
+      AND experiment_id IS NOT NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cr_narration_run
-    ON caption_runs (narration_run_id, created_at DESC, id DESC);
-
+    ON caption_runs (narration_run_id, created_at DESC, id DESC)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cr_plan
-    ON caption_runs (plan_id, created_at DESC, id DESC);
-
+    ON caption_runs (plan_id, created_at DESC, id DESC)
+""",
+        """
 CREATE TABLE IF NOT EXISTS caption_cues (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                  BIGSERIAL PRIMARY KEY,
     run_id              INTEGER NOT NULL
                             REFERENCES caption_runs(id) ON DELETE RESTRICT,
     segment_id          INTEGER NOT NULL
@@ -990,19 +1007,22 @@ CREATE TABLE IF NOT EXISTS caption_cues (
                                 'estimated', 'provider_native', 'forced_alignment')),
     warnings_json       TEXT    NOT NULL DEFAULT '[]',
     superseded_at       TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at  TEXT NOT NULL DEFAULT '',
     UNIQUE (run_id, cue_index),
     UNIQUE (run_id, segment_id, segment_cue_index)
-);
-
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cc_run
-    ON caption_cues (run_id, cue_index);
-
+    ON caption_cues (run_id, cue_index)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cc_segment
-    ON caption_cues (segment_id, segment_cue_index);
-
+    ON caption_cues (segment_id, segment_cue_index)
+""",
+        """
 CREATE TABLE IF NOT EXISTS caption_review_events (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     run_id                      INTEGER NOT NULL
                                     REFERENCES caption_runs(id) ON DELETE RESTRICT,
     cue_id                      INTEGER
@@ -1038,32 +1058,35 @@ CREATE TABLE IF NOT EXISTS caption_review_events (
     expected_correction         TEXT,
     notes                       TEXT,
     actor                       TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at  TEXT NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cre_run
-    ON caption_review_events (run_id, created_at);
-
+    ON caption_review_events (run_id, created_at)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cre_cue
     ON caption_review_events (cue_id, created_at)
-    WHERE cue_id IS NOT NULL;
-
+    WHERE cue_id IS NOT NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cre_narration_run
-    ON caption_review_events (narration_run_id);
-
+    ON caption_review_events (narration_run_id)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cre_reason_code
     ON caption_review_events (reason_code)
-    WHERE reason_code IS NOT NULL;
-
+    WHERE reason_code IS NOT NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cre_experiment
     ON caption_review_events (experiment_id)
-    WHERE experiment_id IS NOT NULL;
-"""
-
-
-_DDL_V13_SCENES = """
+    WHERE experiment_id IS NOT NULL
+""",
+        """
 CREATE TABLE IF NOT EXISTS scene_manifests (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     caption_run_id              INTEGER NOT NULL
                                     REFERENCES caption_runs(id) ON DELETE RESTRICT,
     narration_run_id            INTEGER NOT NULL
@@ -1088,18 +1111,21 @@ CREATE TABLE IF NOT EXISTS scene_manifests (
     rejected_at                 TEXT,
     superseded_at               TEXT,
     superseded_by_manifest_id   INTEGER REFERENCES scene_manifests(id),
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sm_topic
-    ON scene_manifests (topic_id, created_at DESC);
-
+    ON scene_manifests (topic_id, created_at DESC)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sm_caption_run
-    ON scene_manifests (caption_run_id);
-
+    ON scene_manifests (caption_run_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS scene_manifest_scenes (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     manifest_id             INTEGER NOT NULL
                                 REFERENCES scene_manifests(id) ON DELETE CASCADE,
     scene_index             INTEGER NOT NULL,
@@ -1122,18 +1148,21 @@ CREATE TABLE IF NOT EXISTS scene_manifest_scenes (
     visual_objective        TEXT    NOT NULL,
     visual_rationale        TEXT    NOT NULL,
     confidence              REAL    NOT NULL DEFAULT 0.0,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at  TEXT NOT NULL DEFAULT '',
     UNIQUE (manifest_id, scene_index)
-);
-
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sms_manifest
-    ON scene_manifest_scenes (manifest_id, scene_index);
-
+    ON scene_manifest_scenes (manifest_id, scene_index)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sms_segment
-    ON scene_manifest_scenes (segment_id);
-
+    ON scene_manifest_scenes (segment_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS scene_manifest_assets (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     scene_id                    INTEGER NOT NULL
                                     REFERENCES scene_manifest_scenes(id) ON DELETE CASCADE,
     manifest_id                 INTEGER NOT NULL
@@ -1157,21 +1186,25 @@ CREATE TABLE IF NOT EXISTS scene_manifest_assets (
     ai_generation_model         TEXT,
     claim_ids_json              TEXT    NOT NULL DEFAULT '[]',
     evidence_ids_json           TEXT    NOT NULL DEFAULT '[]',
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at  TEXT NOT NULL DEFAULT '',
     UNIQUE (scene_id, asset_index)
-);
-
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sma_scene
-    ON scene_manifest_assets (scene_id, asset_index);
-
+    ON scene_manifest_assets (scene_id, asset_index)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sma_manifest
-    ON scene_manifest_assets (manifest_id);
-
+    ON scene_manifest_assets (manifest_id)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_sma_category
-    ON scene_manifest_assets (category);
-
+    ON scene_manifest_assets (category)
+""",
+        """
 CREATE TABLE IF NOT EXISTS scene_manifest_review_events (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     manifest_id                 INTEGER NOT NULL
                                     REFERENCES scene_manifests(id) ON DELETE CASCADE,
     scene_id                    INTEGER
@@ -1196,20 +1229,20 @@ CREATE TABLE IF NOT EXISTS scene_manifest_review_events (
     expected_correction         TEXT,
     notes                       TEXT,
     actor                       TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at  TEXT NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_smre_manifest
-    ON scene_manifest_review_events (manifest_id, created_at);
-
+    ON scene_manifest_review_events (manifest_id, created_at)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_smre_event_type
-    ON scene_manifest_review_events (event_type);
-"""
-
-
-_DDL_V14_RENDERS = """
+    ON scene_manifest_review_events (event_type)
+""",
+        """
 CREATE TABLE IF NOT EXISTS render_manifests (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     scene_manifest_id       INTEGER NOT NULL
                                 REFERENCES scene_manifests(id) ON DELETE RESTRICT,
     narration_run_id        INTEGER NOT NULL
@@ -1238,26 +1271,31 @@ CREATE TABLE IF NOT EXISTS render_manifests (
     rejected_at             TEXT,
     superseded_at           TEXT,
     superseded_by_id        INTEGER REFERENCES render_manifests(id),
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_rm_one_active_normal
     ON render_manifests(scene_manifest_id)
-    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NULL;
-
+    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NULL
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_rm_one_active_experiment
     ON render_manifests(scene_manifest_id, experiment_id)
-    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NOT NULL;
-
+    WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NOT NULL
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_rm_topic
-    ON render_manifests (topic_id, created_at DESC);
-
+    ON render_manifests (topic_id, created_at DESC)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_rm_scene_manifest
-    ON render_manifests (scene_manifest_id);
-
+    ON render_manifests (scene_manifest_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS render_jobs (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     render_manifest_id          INTEGER NOT NULL
                                     REFERENCES render_manifests(id) ON DELETE RESTRICT,
     backend                     TEXT    NOT NULL DEFAULT 'ffmpeg',
@@ -1283,15 +1321,17 @@ CREATE TABLE IF NOT EXISTS render_jobs (
     validation_metadata_json    TEXT,
     started_at                  TEXT,
     completed_at                TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at  TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_rj_manifest
-    ON render_jobs (render_manifest_id, created_at DESC);
-
+    ON render_jobs (render_manifest_id, created_at DESC)
+""",
+        """
 CREATE TABLE IF NOT EXISTS render_review_events (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     render_manifest_id      INTEGER NOT NULL
                                 REFERENCES render_manifests(id) ON DELETE RESTRICT,
     render_job_id           INTEGER
@@ -1317,17 +1357,20 @@ CREATE TABLE IF NOT EXISTS render_review_events (
     expected_correction     TEXT,
     notes                   TEXT,
     actor                   TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at  TEXT NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_rre_manifest
-    ON render_review_events (render_manifest_id, created_at);
-
+    ON render_review_events (render_manifest_id, created_at)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_rre_event_type
-    ON render_review_events (event_type);
-
+    ON render_review_events (event_type)
+""",
+        """
 CREATE TABLE IF NOT EXISTS render_manifest_scenes (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     render_manifest_id      INTEGER NOT NULL
                                 REFERENCES render_manifests(id) ON DELETE CASCADE,
     scene_index             INTEGER NOT NULL,
@@ -1345,15 +1388,17 @@ CREATE TABLE IF NOT EXISTS render_manifest_scenes (
     caption_cue_ids_json    TEXT    NOT NULL DEFAULT '[]',
     primary_asset_id        INTEGER,
     has_placeholder         INTEGER NOT NULL DEFAULT 0 CHECK (has_placeholder IN (0,1)),
-    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    created_at              TEXT    NOT NULL DEFAULT '',
     UNIQUE (render_manifest_id, scene_index)
-);
-
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_rms_manifest
-    ON render_manifest_scenes (render_manifest_id);
-
+    ON render_manifest_scenes (render_manifest_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS resolved_assets (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     planned_asset_id        INTEGER NOT NULL,
     scene_id                INTEGER NOT NULL,
     segment_id              INTEGER NOT NULL,
@@ -1384,21 +1429,21 @@ CREATE TABLE IF NOT EXISTS resolved_assets (
     warnings_json           TEXT    NOT NULL DEFAULT '[]',
     superseded_at           TEXT,
     superseded_by_id        INTEGER REFERENCES resolved_assets(id),
-    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-
+    created_at              TEXT    NOT NULL DEFAULT '',
+    updated_at              TEXT    NOT NULL DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_ra_scene
-    ON resolved_assets (scene_id);
-
+    ON resolved_assets (scene_id)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_ra_manifest
-    ON resolved_assets (render_manifest_id);
-"""
-
-
-_DDL_V15_PUBLISHING = """
+    ON resolved_assets (render_manifest_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS publishing_plans (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     render_manifest_id          INTEGER NOT NULL REFERENCES render_manifests(id),
     render_job_id               INTEGER REFERENCES render_jobs(id),
     topic_id                    INTEGER NOT NULL,
@@ -1447,14 +1492,23 @@ CREATE TABLE IF NOT EXISTS publishing_plans (
 
     created_at                  TEXT NOT NULL,
     updated_at                  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_pp_render_manifest ON publishing_plans (render_manifest_id);
-CREATE INDEX IF NOT EXISTS idx_pp_topic ON publishing_plans (topic_id);
-CREATE INDEX IF NOT EXISTS idx_pp_status ON publishing_plans (status);
-CREATE INDEX IF NOT EXISTS idx_pp_provider ON publishing_plans (provider);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pp_render_manifest ON publishing_plans (render_manifest_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pp_topic ON publishing_plans (topic_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pp_status ON publishing_plans (status)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pp_provider ON publishing_plans (provider)
+""",
+        """
 CREATE TABLE IF NOT EXISTS publishing_jobs (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     publishing_plan_id          INTEGER NOT NULL REFERENCES publishing_plans(id),
     attempt_number              INTEGER NOT NULL DEFAULT 1,
     provider                    TEXT NOT NULL,
@@ -1473,12 +1527,17 @@ CREATE TABLE IF NOT EXISTS publishing_jobs (
     completed_at                TEXT,
     created_at                  TEXT NOT NULL,
     updated_at                  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_pj_plan ON publishing_jobs (publishing_plan_id);
-CREATE INDEX IF NOT EXISTS idx_pj_status ON publishing_jobs (status);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pj_plan ON publishing_jobs (publishing_plan_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pj_status ON publishing_jobs (status)
+""",
+        """
 CREATE TABLE IF NOT EXISTS publications (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     publishing_plan_id          INTEGER NOT NULL REFERENCES publishing_plans(id),
     publishing_job_id           INTEGER NOT NULL REFERENCES publishing_jobs(id),
 
@@ -1506,15 +1565,22 @@ CREATE TABLE IF NOT EXISTS publications (
 
     created_at                  TEXT NOT NULL,
     updated_at                  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_pub_plan ON publications (publishing_plan_id);
-CREATE INDEX IF NOT EXISTS idx_pub_job ON publications (publishing_job_id);
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pub_plan ON publications (publishing_plan_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pub_job ON publications (publishing_job_id)
+""",
+        """
 CREATE UNIQUE INDEX IF NOT EXISTS uq_pub_provider_video
     ON publications (provider, provider_video_id)
-    WHERE deleted_at IS NULL;
-
+    WHERE deleted_at IS NULL
+""",
+        """
 CREATE TABLE IF NOT EXISTS publishing_review_events (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     publishing_plan_id          INTEGER NOT NULL REFERENCES publishing_plans(id),
     publishing_job_id           INTEGER REFERENCES publishing_jobs(id),
     publication_id              INTEGER REFERENCES publications(id),
@@ -1544,15 +1610,17 @@ CREATE TABLE IF NOT EXISTS publishing_review_events (
     expected_correction         TEXT,
 
     created_at                  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_pre_plan ON publishing_review_events (publishing_plan_id);
-CREATE INDEX IF NOT EXISTS idx_pre_event_type ON publishing_review_events (event_type);
-"""
-
-# Phase 16 DDL — Analytics Engine (provider-neutral, immutable, append-only)
-_DDL_V16_ANALYTICS = """
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pre_plan ON publishing_review_events (publishing_plan_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_pre_event_type ON publishing_review_events (event_type)
+""",
+        """
 CREATE TABLE IF NOT EXISTS analytics_snapshots (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
 
     -- Full publication provenance (attribution)
     publication_id              INTEGER NOT NULL,
@@ -1598,13 +1666,20 @@ CREATE TABLE IF NOT EXISTS analytics_snapshots (
     -- Timestamps (no updated_at — immutable)
     ingested_at                 TEXT NOT NULL,
     created_at                  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_as_publication ON analytics_snapshots (publication_id);
-CREATE INDEX IF NOT EXISTS idx_as_topic ON analytics_snapshots (topic_id);
-CREATE INDEX IF NOT EXISTS idx_as_provider ON analytics_snapshots (provider);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_as_publication ON analytics_snapshots (publication_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_as_topic ON analytics_snapshots (topic_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_as_provider ON analytics_snapshots (provider)
+""",
+        """
 CREATE TABLE IF NOT EXISTS analytics_metrics (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     snapshot_id                 INTEGER NOT NULL REFERENCES analytics_snapshots(id),
     publication_id              INTEGER NOT NULL,
     topic_id                    INTEGER NOT NULL,
@@ -1617,13 +1692,20 @@ CREATE TABLE IF NOT EXISTS analytics_metrics (
 
     input_hash                  TEXT NOT NULL,
     created_at                  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_am_snapshot ON analytics_metrics (snapshot_id);
-CREATE INDEX IF NOT EXISTS idx_am_publication ON analytics_metrics (publication_id);
-CREATE INDEX IF NOT EXISTS idx_am_metric_name ON analytics_metrics (metric_name);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_am_snapshot ON analytics_metrics (snapshot_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_am_publication ON analytics_metrics (publication_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_am_metric_name ON analytics_metrics (metric_name)
+""",
+        """
 CREATE TABLE IF NOT EXISTS analytics_aggregates (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     publication_id              INTEGER NOT NULL,
     topic_id                    INTEGER NOT NULL,
     provider                    TEXT NOT NULL,
@@ -1657,13 +1739,20 @@ CREATE TABLE IF NOT EXISTS analytics_aggregates (
     created_at                  TEXT NOT NULL,
 
     UNIQUE (publication_id, provider, period_type, period_key, metric_name)
-);
-CREATE INDEX IF NOT EXISTS idx_aa_publication ON analytics_aggregates (publication_id);
-CREATE INDEX IF NOT EXISTS idx_aa_topic ON analytics_aggregates (topic_id);
-CREATE INDEX IF NOT EXISTS idx_aa_period ON analytics_aggregates (period_type, period_key);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_aa_publication ON analytics_aggregates (publication_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_aa_topic ON analytics_aggregates (topic_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_aa_period ON analytics_aggregates (period_type, period_key)
+""",
+        """
 CREATE TABLE IF NOT EXISTS analytics_review_events (
-    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                          BIGSERIAL PRIMARY KEY,
     snapshot_id                 INTEGER NOT NULL REFERENCES analytics_snapshots(id),
 
     severity                    TEXT NOT NULL
@@ -1675,19 +1764,17 @@ CREATE TABLE IF NOT EXISTS analytics_review_events (
     input_hash                  TEXT NOT NULL,
 
     created_at                  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_are_snapshot ON analytics_review_events (snapshot_id);
-CREATE INDEX IF NOT EXISTS idx_are_severity ON analytics_review_events (severity);
-"""
-
-# Phase 11 DDL — Learning & Optimization Engine.
-# Three tables, all append-only:
-#   learning_runs             — one row per optimizer invocation
-#   optimization_recommendations — one row per recommendation (superseded not deleted)
-#   recommendation_review_events — append-only human review actions
-_DDL_V17_LEARNING = """
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_are_snapshot ON analytics_review_events (snapshot_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_are_severity ON analytics_review_events (severity)
+""",
+        """
 CREATE TABLE IF NOT EXISTS learning_runs (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     topic_id                INTEGER NOT NULL REFERENCES topics(id),
     publication_id          INTEGER,
 
@@ -1705,14 +1792,19 @@ CREATE TABLE IF NOT EXISTS learning_runs (
     error                   TEXT,
 
     created_at              TEXT NOT NULL
-                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+                                DEFAULT '',
     completed_at            TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_lr_topic ON learning_runs (topic_id);
-CREATE INDEX IF NOT EXISTS idx_lr_status ON learning_runs (status);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_lr_topic ON learning_runs (topic_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_lr_status ON learning_runs (status)
+""",
+        """
 CREATE TABLE IF NOT EXISTS optimization_recommendations (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     learning_run_id         INTEGER NOT NULL REFERENCES learning_runs(id),
     topic_id                INTEGER NOT NULL REFERENCES topics(id),
     publication_id          INTEGER,
@@ -1765,15 +1857,24 @@ CREATE TABLE IF NOT EXISTS optimization_recommendations (
     superseded_by_id        INTEGER REFERENCES optimization_recommendations(id),
 
     created_at              TEXT NOT NULL
-                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-CREATE INDEX IF NOT EXISTS idx_or_learning_run ON optimization_recommendations (learning_run_id);
-CREATE INDEX IF NOT EXISTS idx_or_topic ON optimization_recommendations (topic_id);
-CREATE INDEX IF NOT EXISTS idx_or_domain ON optimization_recommendations (domain);
-CREATE INDEX IF NOT EXISTS idx_or_status ON optimization_recommendations (status);
-
+                                DEFAULT ''
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_or_learning_run ON optimization_recommendations (learning_run_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_or_topic ON optimization_recommendations (topic_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_or_domain ON optimization_recommendations (domain)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_or_status ON optimization_recommendations (status)
+""",
+        """
 CREATE TABLE IF NOT EXISTS recommendation_review_events (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     recommendation_id       INTEGER NOT NULL
                                 REFERENCES optimization_recommendations(id),
     topic_id                INTEGER NOT NULL REFERENCES topics(id),
@@ -1786,14 +1887,19 @@ CREATE TABLE IF NOT EXISTS recommendation_review_events (
 
     input_hash              TEXT NOT NULL,
     created_at              TEXT NOT NULL
-                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
+                                DEFAULT ''
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_rre_recommendation
-    ON recommendation_review_events (recommendation_id);
-CREATE INDEX IF NOT EXISTS idx_rre_topic ON recommendation_review_events (topic_id);
-
+    ON recommendation_review_events (recommendation_id)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_rre_topic ON recommendation_review_events (topic_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS learning_run_generator_results (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                      BIGSERIAL PRIMARY KEY,
     learning_run_id         INTEGER NOT NULL REFERENCES learning_runs(id),
     generator_name          TEXT NOT NULL
                                 CHECK (generator_name IN (
@@ -1805,18 +1911,13 @@ CREATE TABLE IF NOT EXISTS learning_run_generator_results (
     recommendation_count    INTEGER NOT NULL DEFAULT 0,
     error_message           TEXT,
     created_at              TEXT NOT NULL
-                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
-);
-CREATE INDEX IF NOT EXISTS idx_lrgr_run ON learning_run_generator_results (learning_run_id);
-"""
-
-# Phase 12 DDL — Media Operations Control Plane (22 cp_ tables).
-# All table names carry the cp_ prefix to avoid conflicts with the existing
-# Phase 3 `channels` intelligence table.
-# Identity hierarchy: cp_organizations → cp_workspaces → cp_channels →
-#   cp_platform_accounts (with cp_credential_profiles, cp_publishing_profiles,
-#   cp_analytics_identities as satellite identity concepts).
-_DDL_V18_CONTROL_PLANE = """
+                                DEFAULT ''
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_lrgr_run ON learning_run_generator_results (learning_run_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_organizations (
     id          TEXT    PRIMARY KEY,
     name        TEXT    NOT NULL,
@@ -1825,8 +1926,9 @@ CREATE TABLE IF NOT EXISTS cp_organizations (
     actor       TEXT    NOT NULL,
     created_at  TEXT    NOT NULL,
     updated_at  TEXT    NOT NULL
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_workspaces (
     id              TEXT    PRIMARY KEY,
     name            TEXT    NOT NULL,
@@ -1838,8 +1940,9 @@ CREATE TABLE IF NOT EXISTS cp_workspaces (
     created_at      TEXT    NOT NULL,
     updated_at      TEXT    NOT NULL,
     organization_id TEXT    REFERENCES cp_organizations(id)
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_channels (
     id              TEXT    PRIMARY KEY,
     workspace_id    TEXT    NOT NULL REFERENCES cp_workspaces(id),
@@ -1853,8 +1956,9 @@ CREATE TABLE IF NOT EXISTS cp_channels (
     created_at      TEXT    NOT NULL,
     updated_at      TEXT    NOT NULL,
     UNIQUE (workspace_id, slug)
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_platforms (
     id                  TEXT    PRIMARY KEY,
     platform_key        TEXT    NOT NULL UNIQUE,
@@ -1862,8 +1966,9 @@ CREATE TABLE IF NOT EXISTS cp_platforms (
     is_active           INTEGER NOT NULL DEFAULT 1,
     capabilities_json   TEXT,
     created_at          TEXT    NOT NULL
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_credential_profiles (
     id                  TEXT    PRIMARY KEY,
     workspace_id        TEXT    NOT NULL REFERENCES cp_workspaces(id),
@@ -1879,8 +1984,9 @@ CREATE TABLE IF NOT EXISTS cp_credential_profiles (
     expires_at          TEXT,
     created_at          TEXT    NOT NULL,
     updated_at          TEXT    NOT NULL
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_platform_accounts (
     id                      TEXT    PRIMARY KEY,
     channel_id              TEXT    NOT NULL REFERENCES cp_channels(id),
@@ -1899,8 +2005,9 @@ CREATE TABLE IF NOT EXISTS cp_platform_accounts (
     created_at              TEXT    NOT NULL,
     updated_at              TEXT    NOT NULL,
     UNIQUE (channel_id, platform_key, external_account_id)
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_publishing_profiles (
     id                      TEXT    PRIMARY KEY,
     platform_account_id     TEXT    NOT NULL REFERENCES cp_platform_accounts(id),
@@ -1909,10 +2016,13 @@ CREATE TABLE IF NOT EXISTS cp_publishing_profiles (
     actor                   TEXT    NOT NULL,
     created_at              TEXT    NOT NULL,
     updated_at              TEXT    NOT NULL
-);
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cp_pubprofile_account
-    ON cp_publishing_profiles (platform_account_id, is_active);
-
+    ON cp_publishing_profiles (platform_account_id, is_active)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_analytics_identities (
     id                      TEXT    PRIMARY KEY,
     platform_account_id     TEXT    NOT NULL REFERENCES cp_platform_accounts(id),
@@ -1921,10 +2031,13 @@ CREATE TABLE IF NOT EXISTS cp_analytics_identities (
     metadata_json           TEXT,
     created_at              TEXT    NOT NULL,
     UNIQUE (platform_account_id, analytics_provider_key)
-);
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cp_analytics_account
-    ON cp_analytics_identities (platform_account_id);
-
+    ON cp_analytics_identities (platform_account_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_automation_policies (
     id                      TEXT    PRIMARY KEY,
     scope                   TEXT    NOT NULL
@@ -1938,10 +2051,13 @@ CREATE TABLE IF NOT EXISTS cp_automation_policies (
     actor                   TEXT    NOT NULL,
     created_at              TEXT    NOT NULL,
     is_active               INTEGER NOT NULL DEFAULT 1
-);
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cp_policy_scope
-    ON cp_automation_policies (scope, scope_id, is_active);
-
+    ON cp_automation_policies (scope, scope_id, is_active)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_strategy_profiles (
     id              TEXT    PRIMARY KEY,
     channel_id      TEXT    NOT NULL REFERENCES cp_channels(id),
@@ -1951,9 +2067,12 @@ CREATE TABLE IF NOT EXISTS cp_strategy_profiles (
     created_at      TEXT    NOT NULL,
     is_active       INTEGER NOT NULL DEFAULT 1,
     UNIQUE (channel_id, version)
-);
-CREATE INDEX IF NOT EXISTS idx_cp_strategy_channel ON cp_strategy_profiles (channel_id, is_active);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_strategy_channel ON cp_strategy_profiles (channel_id, is_active)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_events (
     id                      TEXT    PRIMARY KEY,
     event_type              TEXT    NOT NULL,
@@ -1969,10 +2088,15 @@ CREATE TABLE IF NOT EXISTS cp_events (
     source_entity_id        TEXT,
     schema_version          TEXT    NOT NULL DEFAULT '1',
     experiment_id           TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_cp_events_workspace ON cp_events (workspace_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_cp_events_type ON cp_events (event_type, workspace_id);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_events_workspace ON cp_events (workspace_id, created_at DESC)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_events_type ON cp_events (event_type, workspace_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_event_processing (
     id              TEXT    PRIMARY KEY,
     event_id        TEXT    NOT NULL REFERENCES cp_events(id),
@@ -1987,9 +2111,12 @@ CREATE TABLE IF NOT EXISTS cp_event_processing (
     error_message   TEXT,
     created_at      TEXT    NOT NULL,
     UNIQUE (event_id, handler_key)
-);
-CREATE INDEX IF NOT EXISTS idx_cp_ep_pending ON cp_event_processing (status, created_at ASC);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_ep_pending ON cp_event_processing (status, created_at ASC)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_workflows (
     id                  TEXT    PRIMARY KEY,
     workspace_id        TEXT    NOT NULL REFERENCES cp_workspaces(id),
@@ -2002,10 +2129,15 @@ CREATE TABLE IF NOT EXISTS cp_workflows (
     actor               TEXT    NOT NULL,
     created_at          TEXT    NOT NULL,
     updated_at          TEXT    NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_cp_wf_workspace ON cp_workflows (workspace_id, status);
-CREATE INDEX IF NOT EXISTS idx_cp_wf_trigger ON cp_workflows (trigger_event_type, status);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_wf_workspace ON cp_workflows (workspace_id, status)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_wf_trigger ON cp_workflows (trigger_event_type, status)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_workflow_runs (
     id                  TEXT    PRIMARY KEY,
     workflow_id         TEXT    NOT NULL REFERENCES cp_workflows(id),
@@ -2016,9 +2148,12 @@ CREATE TABLE IF NOT EXISTS cp_workflow_runs (
     error_message       TEXT,
     started_at          TEXT    NOT NULL,
     completed_at        TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_cp_wfrun_workflow ON cp_workflow_runs (workflow_id, started_at DESC);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_wfrun_workflow ON cp_workflow_runs (workflow_id, started_at DESC)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_experiments (
     id                      TEXT    PRIMARY KEY,
     workspace_id            TEXT    NOT NULL REFERENCES cp_workspaces(id),
@@ -2038,10 +2173,15 @@ CREATE TABLE IF NOT EXISTS cp_experiments (
     secondary_metrics_json  TEXT,
     guardrails_json         TEXT,
     min_sample_size         INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_cp_exp_workspace ON cp_experiments (workspace_id, status);
-CREATE INDEX IF NOT EXISTS idx_cp_exp_channel ON cp_experiments (channel_id);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_exp_workspace ON cp_experiments (workspace_id, status)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_exp_channel ON cp_experiments (channel_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_experiment_variants (
     id              TEXT    PRIMARY KEY,
     experiment_id   TEXT    NOT NULL REFERENCES cp_experiments(id),
@@ -2051,8 +2191,9 @@ CREATE TABLE IF NOT EXISTS cp_experiment_variants (
     config_json     TEXT,
     created_at      TEXT    NOT NULL,
     UNIQUE (experiment_id, name)
-);
-
+)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_experiment_assignments (
     id              TEXT    PRIMARY KEY,
     experiment_id   TEXT    NOT NULL REFERENCES cp_experiments(id),
@@ -2062,9 +2203,12 @@ CREATE TABLE IF NOT EXISTS cp_experiment_assignments (
                             CHECK (status IN ('active', 'excluded')),
     assigned_at     TEXT    NOT NULL,
     UNIQUE (experiment_id, unit_id)
-);
-CREATE INDEX IF NOT EXISTS idx_cp_assign_exp ON cp_experiment_assignments (experiment_id, unit_id);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_assign_exp ON cp_experiment_assignments (experiment_id, unit_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_operation_executions (
     id                      TEXT    PRIMARY KEY,
     operation_type          TEXT    NOT NULL,
@@ -2089,10 +2233,15 @@ CREATE TABLE IF NOT EXISTS cp_operation_executions (
     target_entity_id        TEXT,
     target_entity_type      TEXT,
     error_category          TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_cp_op_workspace ON cp_operation_executions (workspace_id, status);
-CREATE INDEX IF NOT EXISTS idx_cp_op_idem ON cp_operation_executions (idempotency_key);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_op_workspace ON cp_operation_executions (workspace_id, status)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_op_idem ON cp_operation_executions (idempotency_key)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_cost_records (
     id                          TEXT    PRIMARY KEY,
     workspace_id                TEXT    NOT NULL REFERENCES cp_workspaces(id),
@@ -2112,11 +2261,16 @@ CREATE TABLE IF NOT EXISTS cp_cost_records (
     experiment_id               TEXT,
     entity_id                   TEXT,
     entity_type                 TEXT
-);
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cp_cost_workspace
-    ON cp_cost_records (workspace_id, recorded_at DESC);
-CREATE INDEX IF NOT EXISTS idx_cp_cost_channel ON cp_cost_records (channel_id, recorded_at DESC);
-
+    ON cp_cost_records (workspace_id, recorded_at DESC)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_cost_channel ON cp_cost_records (channel_id, recorded_at DESC)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_budget_policies (
     id                  TEXT    PRIMARY KEY,
     scope               TEXT    NOT NULL
@@ -2130,9 +2284,12 @@ CREATE TABLE IF NOT EXISTS cp_budget_policies (
     actor               TEXT    NOT NULL,
     created_at          TEXT    NOT NULL,
     is_active           INTEGER NOT NULL DEFAULT 1
-);
-CREATE INDEX IF NOT EXISTS idx_cp_budget_scope ON cp_budget_policies (scope, scope_id, is_active);
-
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_budget_scope ON cp_budget_policies (scope, scope_id, is_active)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_health_records (
     id              TEXT    PRIMARY KEY,
     entity_type     TEXT    NOT NULL
@@ -2149,11 +2306,16 @@ CREATE TABLE IF NOT EXISTS cp_health_records (
     detail          TEXT,
     recorded_by     TEXT    NOT NULL,
     recorded_at     TEXT    NOT NULL
-);
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_cp_health_entity
-    ON cp_health_records (entity_type, entity_id, recorded_at DESC);
-CREATE INDEX IF NOT EXISTS idx_cp_health_status ON cp_health_records (status, recorded_at DESC);
-
+    ON cp_health_records (entity_type, entity_id, recorded_at DESC)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_health_status ON cp_health_records (status, recorded_at DESC)
+""",
+        """
 CREATE TABLE IF NOT EXISTS cp_provider_registry (
     id                  TEXT    PRIMARY KEY,
     provider_key        TEXT    NOT NULL UNIQUE,
@@ -2171,12 +2333,12 @@ CREATE TABLE IF NOT EXISTS cp_provider_registry (
     quota_json          TEXT,
     cost_metadata_json  TEXT,
     version_info        TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_cp_provider_domain ON cp_provider_registry (domain, status);
-"""
-
-# Phase 13 DDL — Application layer: pipeline executions, stage log, schedule definitions.
-_DDL_V19_APPLICATION = """
+)
+""",
+        """
+CREATE INDEX IF NOT EXISTS idx_cp_provider_domain ON cp_provider_registry (domain, status)
+""",
+        """
 CREATE TABLE IF NOT EXISTS app_pipeline_executions (
     id                      TEXT    PRIMARY KEY,
     workspace_id            TEXT    NOT NULL REFERENCES cp_workspaces(id),
@@ -2200,14 +2362,21 @@ CREATE TABLE IF NOT EXISTS app_pipeline_executions (
     blocked_reason          TEXT,
     created_at              TEXT    NOT NULL,
     updated_at              TEXT    NOT NULL
-);
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_app_pipeline_workspace
-    ON app_pipeline_executions (workspace_id, status, created_at DESC);
+    ON app_pipeline_executions (workspace_id, status, created_at DESC)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_app_pipeline_channel
-    ON app_pipeline_executions (channel_id, status);
+    ON app_pipeline_executions (channel_id, status)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_app_pipeline_corr
-    ON app_pipeline_executions (correlation_id);
-
+    ON app_pipeline_executions (correlation_id)
+""",
+        """
 CREATE TABLE IF NOT EXISTS app_pipeline_stage_log (
     id              TEXT    PRIMARY KEY,
     pipeline_id     TEXT    NOT NULL REFERENCES app_pipeline_executions(id),
@@ -2226,10 +2395,13 @@ CREATE TABLE IF NOT EXISTS app_pipeline_stage_log (
     completed_at    TEXT,
     created_at      TEXT    NOT NULL,
     UNIQUE(pipeline_id, stage, attempt_number)
-);
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_app_stage_pipeline
-    ON app_pipeline_stage_log (pipeline_id, stage);
-
+    ON app_pipeline_stage_log (pipeline_id, stage)
+""",
+        """
 CREATE TABLE IF NOT EXISTS app_schedule_definitions (
     id                      TEXT    PRIMARY KEY,
     workspace_id            TEXT    NOT NULL REFERENCES cp_workspaces(id),
@@ -2248,473 +2420,50 @@ CREATE TABLE IF NOT EXISTS app_schedule_definitions (
     actor                   TEXT    NOT NULL,
     created_at              TEXT    NOT NULL,
     updated_at              TEXT    NOT NULL
-);
+)
+""",
+        """
 CREATE INDEX IF NOT EXISTS idx_app_schedule_workspace
-    ON app_schedule_definitions (workspace_id, is_active, next_run_at);
-"""
+    ON app_schedule_definitions (workspace_id, is_active, next_run_at)
+""",
+    ]
+    for sql in statements:
+        op.execute(sql)
 
 
-_DDL_V20_AUTH_STORAGE = """
-CREATE TABLE IF NOT EXISTS auth_users (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    email           TEXT    NOT NULL UNIQUE,
-    display_name    TEXT    NOT NULL DEFAULT '',
-    password_hash   TEXT    NOT NULL,
-    is_active       INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
-    created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    updated_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    last_login_at   TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_auth_users_email ON auth_users (email);
-CREATE INDEX IF NOT EXISTS idx_auth_users_active ON auth_users (is_active);
-
-CREATE TABLE IF NOT EXISTS auth_refresh_tokens (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id         INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
-    token_hash      TEXT    NOT NULL UNIQUE,
-    issued_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    expires_at      TEXT    NOT NULL DEFAULT '',
-    revoked_at      TEXT,
-    last_used_at    TEXT,
-    device_hint     TEXT    NOT NULL DEFAULT '',
-    ip_hint         TEXT    NOT NULL DEFAULT ''
-);
-
-CREATE INDEX IF NOT EXISTS idx_art_user ON auth_refresh_tokens (user_id, expires_at);
-CREATE INDEX IF NOT EXISTS idx_art_hash ON auth_refresh_tokens (token_hash);
-
-CREATE TABLE IF NOT EXISTS auth_workspace_roles (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id         INTEGER NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
-    workspace_id    TEXT    NOT NULL,
-    role            TEXT    NOT NULL CHECK (role IN (
-                                'owner', 'admin', 'operator', 'reviewer', 'analyst')),
-    granted_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    granted_by      TEXT    NOT NULL DEFAULT '',
-    UNIQUE (user_id, workspace_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_awr_user ON auth_workspace_roles (user_id);
-CREATE INDEX IF NOT EXISTS idx_awr_workspace ON auth_workspace_roles (workspace_id, role);
-
-CREATE TABLE IF NOT EXISTS obj_storage_objects (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    workspace_id    TEXT    NOT NULL,
-    channel_id      TEXT,
-    storage_backend TEXT    NOT NULL DEFAULT 'local'
-                            CHECK (storage_backend IN ('local', 's3')),
-    bucket          TEXT    NOT NULL DEFAULT '',
-    object_key      TEXT    NOT NULL,
-    sha256          TEXT    NOT NULL,
-    byte_size       INTEGER NOT NULL,
-    content_type    TEXT    NOT NULL DEFAULT 'application/octet-stream',
-    source_entity_type  TEXT NOT NULL DEFAULT '',
-    source_entity_id    TEXT NOT NULL DEFAULT '',
-    created_at      TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
-    deleted_at      TEXT,
-    UNIQUE (storage_backend, bucket, object_key)
-);
-
-CREATE INDEX IF NOT EXISTS idx_oso_workspace ON obj_storage_objects (workspace_id);
-CREATE INDEX IF NOT EXISTS idx_oso_sha256 ON obj_storage_objects (sha256);
-CREATE INDEX IF NOT EXISTS idx_oso_source
-    ON obj_storage_objects (source_entity_type, source_entity_id);
-"""
-
-
-def _get_version(conn: sqlite3.Connection) -> int:
-    exists = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
-    ).fetchone()
-    if not exists:
-        return 0
-    row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-    return row[0] if row else 0
-
-
-def _set_version(conn: sqlite3.Connection, version: int) -> None:
-    conn.execute("DELETE FROM schema_version")
-    conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
-
-
-def _migrate(conn: sqlite3.Connection) -> None:
-    current = _get_version(conn)
-    if current == SCHEMA_VERSION:
-        return
-
-    if current == 0:
-        logger.info("Initialising schema at version %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V1)
-        conn.executescript(_DDL_V2)
-        conn.executescript(_DDL_V3)
-        conn.executescript(_DDL_V4_NEW_TABLES)
-        conn.executescript(_DDL_V5_SCORING)
-        conn.executescript(_DDL_V6_PROMOTE)
-        conn.executescript(_DDL_V7_RESEARCH)
-        conn.executescript(_DDL_V8_CLAIMS)
-        conn.executescript(_DDL_V9_SCRIPTS)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Schema ready at version %d", SCHEMA_VERSION)
-
-    elif current == 1:
-        logger.info("Migrating schema from version 1 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V2)
-        conn.executescript(_DDL_V3)
-        conn.executescript(_DDL_V4_NEW_TABLES)
-        conn.executescript(_DDL_V5_SCORING)
-        conn.executescript(_DDL_V6_PROMOTE)
-        conn.executescript(_DDL_V7_RESEARCH)
-        conn.executescript(_DDL_V8_CLAIMS)
-        conn.executescript(_DDL_V9_SCRIPTS)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 2:
-        logger.info("Migrating schema from version 2 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V3)
-        conn.executescript(_DDL_V4_NEW_TABLES)
-        conn.executescript(_DDL_V5_SCORING)
-        conn.executescript(_DDL_V6_PROMOTE)
-        conn.executescript(_DDL_V7_RESEARCH)
-        conn.executescript(_DDL_V8_CLAIMS)
-        conn.executescript(_DDL_V9_SCRIPTS)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 3:
-        logger.info("Migrating schema from version 3 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V4_NEW_TABLES)
-        conn.executescript(_DDL_V5_SCORING)
-        conn.executescript(_DDL_V6_PROMOTE)
-        conn.executescript(_DDL_V7_RESEARCH)
-        conn.executescript(_DDL_V8_CLAIMS)
-        conn.executescript(_DDL_V9_SCRIPTS)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 4:
-        logger.info("Migrating schema from version 4 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V5_SCORING)
-        conn.executescript(_DDL_V6_PROMOTE)
-        conn.executescript(_DDL_V7_RESEARCH)
-        conn.executescript(_DDL_V8_CLAIMS)
-        conn.executescript(_DDL_V9_SCRIPTS)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 5:
-        logger.info("Migrating schema from version 5 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V6_PROMOTE)
-        conn.executescript(_DDL_V7_RESEARCH)
-        conn.executescript(_DDL_V8_CLAIMS)
-        conn.executescript(_DDL_V9_SCRIPTS)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 6:
-        logger.info("Migrating schema from version 6 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V7_RESEARCH)
-        conn.executescript(_DDL_V8_CLAIMS)
-        conn.executescript(_DDL_V9_SCRIPTS)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 7:
-        logger.info("Migrating schema from version 7 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V8_CLAIMS)
-        conn.executescript(_DDL_V9_SCRIPTS)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 8:
-        logger.info("Migrating schema from version 8 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V9_SCRIPTS)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 9:
-        logger.info("Migrating schema from version 9 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V10_PRODUCTION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 10:
-        logger.info("Migrating schema from version 10 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V11_NARRATION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 11:
-        logger.info("Migrating schema from version 11 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V12_CAPTIONS)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 12:
-        logger.info("Migrating schema from version 12 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V13_SCENES)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 13:
-        logger.info("Migrating schema from version 13 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V14_RENDERS)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 14:
-        logger.info("Migrating schema from version 14 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V15_PUBLISHING)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 15:
-        logger.info("Migrating schema from version 15 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V16_ANALYTICS)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 16:
-        logger.info("Migrating schema from version 16 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V17_LEARNING)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 17:
-        logger.info("Migrating schema from version 17 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V18_CONTROL_PLANE)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    elif current == 18:
-        logger.info("Migrating schema from version 18 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V19_APPLICATION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-    elif current == 19:
-        logger.info("Migrating schema from version 19 to %d", SCHEMA_VERSION)
-        conn.executescript(_DDL_V20_AUTH_STORAGE)
-        _set_version(conn, SCHEMA_VERSION)
-        logger.info("Migration complete")
-
-    else:
-        raise RuntimeError(
-            f"Unsupported schema version {current}; expected <= {SCHEMA_VERSION}. "
-            "Manual migration required."
-        )
-
-
-def open_db(path: Path) -> sqlite3.Connection:
-    """Open (or create) the SQLite database, enforce FK constraints, and run migrations."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    _migrate(conn)
-    conn.commit()
-    logger.debug("Database open: %s", path)
-    return conn
-
-
-def open_db_postgres(url: str) -> CompatConnection:
-    """Open a PostgreSQL connection and return a CompatConnection.
-
-    Schema management for PostgreSQL is handled by Alembic (alembic upgrade head).
-    This function connects and verifies the connection only — it does NOT run DDL.
-    """
-    import psycopg
-
-    from app.core.db_compat import CompatConnection
-
-    pg_conn = psycopg.connect(url, autocommit=False)
-    conn = CompatConnection(pg_conn)
-    logger.debug("PostgreSQL connection open: %s", _redact_url(url))
-    return conn
-
-
-def get_db_connection(db_url: str | None = None, db_path: Path | None = None):
-    """Factory that returns an appropriate DB connection based on configuration.
-
-    Priority:
-    1. db_url argument (explicit override)
-    2. ACE_DATABASE_URL environment variable → PostgreSQL CompatConnection
-    3. db_path argument → SQLite Connection
-    4. Config default (ACE_DB_PATH or platform default) → SQLite Connection
-
-    Usage in tests: pass db_path to force SQLite regardless of env vars.
-    Usage in production: set ACE_DATABASE_URL; db_path is ignored.
-    """
-    import os
-
-    resolved_url = db_url or os.environ.get("ACE_DATABASE_URL", "")
-    if resolved_url:
-        return open_db_postgres(resolved_url)
-
-    if db_path is None:
-        from app.core.config import get_config
-
-        db_path = get_config().db_path
-    return open_db(db_path)
-
-
-def _redact_url(url: str) -> str:
-    """Replace the password in a DSN with ***."""
-    import re
-
-    return re.sub(r"(://[^:]*:)[^@]*(@)", r"\1***\2", url)
+def downgrade() -> None:
+    """Drop all baseline tables in reverse dependency order."""
+    # Tables listed in reverse FK-safe order
+    tables = [
+        "app_schedule_definitions", "app_pipeline_stage_log", "app_pipeline_executions",
+        "cp_provider_registry", "cp_health_records", "cp_budget_policies", "cp_cost_records",
+        "cp_operation_executions", "cp_experiment_assignments", "cp_experiment_variants",
+        "cp_experiments", "cp_workflow_runs", "cp_workflows", "cp_event_processing", "cp_events",
+        "cp_strategy_profiles", "cp_automation_policies", "cp_analytics_identities",
+        "cp_publishing_profiles", "cp_platform_accounts", "cp_credential_profiles",
+        "cp_platforms", "cp_channels", "cp_workspaces", "cp_organizations",
+        "learning_run_generator_results", "recommendation_review_events",
+        "optimization_recommendations", "learning_runs",
+        "analytics_review_events", "analytics_aggregates", "analytics_metrics",
+        "analytics_snapshots",
+        "publishing_review_events", "publications", "publishing_jobs", "publishing_plans",
+        "resolved_assets", "render_manifest_scenes", "render_review_events",
+        "render_jobs", "render_manifests",
+        "scene_manifest_review_events", "scene_manifest_assets", "scene_manifest_scenes",
+        "scene_manifests",
+        "caption_review_events", "caption_cues", "caption_runs",
+        "narration_review_events", "tts_calls", "narration_segment_assets",
+        "narration_runs", "voice_profiles",
+        "production_plan_review_events", "production_segment_citations",
+        "production_segments", "production_plans",
+        "script_citations", "script_generation_runs",
+        "claims", "claim_extraction_run_calls", "claim_extraction_runs", "source_contents",
+        "opportunity_scores", "scoring_policies",
+        "opportunity_state_events", "opportunity_source_evidence",
+        "opportunity_observations", "opportunities", "discovery_runs",
+        "channel_operating_mode_events", "channel_capacity_policies",
+        "channel_profile_versions", "channel_monetization_strategies", "channels",
+        "ai_calls", "runs", "scripts", "sources", "topics", "schema_version",
+    ]
+    for table in tables:
+        op.execute(f"DROP TABLE IF EXISTS {table} CASCADE")

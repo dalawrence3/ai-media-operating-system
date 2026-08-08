@@ -1423,3 +1423,77 @@ Operationally: review event tables are insert-only; no application `UPDATE` or `
 **Decision:** FastAPI route handlers call `ApplicationService` methods and return typed Pydantic models. No domain logic (validation, state transitions, policy evaluation, authorization beyond the existing auth hook) is permitted in routes.
 
 **Reasoning:** The `ApplicationService` facade (Phase 13) is the single coordinating boundary above the Control Plane and domain engines. Duplicating or fragmenting business logic in routes would create a maintenance split and undermine the typed command/query bus contract established in Phase 13.
+
+---
+
+## Phase 15: Deployment, Infrastructure & Production Operations (D-P15-1–D-P15-9)
+
+**D-P15-1 — Argon2id via pwdlib[argon2], not bcrypt or PBKDF2**
+
+**Decision:** Password hashing uses `PasswordHash((Argon2Hasher(),))` from `pwdlib[argon2]`. bcrypt and PBKDF2 were not adopted.
+
+**Reasoning:** Argon2id is the winner of the Password Hashing Competition and is memory-hard (resistant to GPU/ASIC brute-force). bcrypt lacks memory hardness; PBKDF2 lacks memory-hardness and is vulnerable to massively parallel attacks. pwdlib provides a clean, dependency-minimal wrapper with algorithm negotiation and rehash detection built in.
+
+---
+
+**D-P15-2 — Refresh tokens stored as SHA-256 hash only; raw token returned once**
+
+**Decision:** When a refresh token is issued, the raw 64-char hex value is returned to the client and then discarded. Only its SHA-256 hash is persisted in `auth_refresh_tokens.token_hash`. Lookup at refresh time hashes the incoming raw token and queries by hash.
+
+**Reasoning:** A stolen DB backup would yield no usable refresh tokens. The cost is one SHA-256 operation per refresh (microseconds). This follows the same principle as password hashing: the server needs to verify the value, not reproduce it. Raw tokens must never appear in logs, backups, or the DB.
+
+---
+
+**D-P15-3 — RQ with JSONSerializer; pickle forbidden**
+
+**Decision:** The RQ job queue uses `rq.serializers.JSONSerializer` exclusively. The default pickle serializer is never used for application jobs. Queue payloads contain only safe primitive identifiers (pipeline_id, stage, actor, workspace_id). Workers reload canonical state from PostgreSQL via `ApplicationService`.
+
+**Reasoning:** Pickle deserialization is an arbitrary code-execution vector. A compromised message in Redis could execute attacker-controlled code on the worker host. JSON payloads are safe and auditable. Pushing data through the queue instead of state references would make payloads large and stale; pulling from PostgreSQL is correct.
+
+---
+
+**D-P15-4 — Stage-class A/B/C with fail-closed classification**
+
+**Decision:** Pipeline stages are classified A (local/deterministic), B (live AI/TTS provider), or C (live publishing). Unknown stages classify as C. `ProviderBoundary.check_stage()` raises `ProviderBoundaryError` if the required gate is not met.
+
+**Reasoning:** An explicit class system makes the security boundary auditable and testable. Classifying unknowns as C (most restrictive) ensures that any new stage added without an explicit classification is blocked in CI and staging until the operator consciously classifies it. This is the same principle as deny-by-default firewalls.
+
+---
+
+**D-P15-5 — Structlog with _redact_sensitive processor; no allowlist approach**
+
+**Decision:** The log processor blocklist (`_SENSITIVE_KEYS`) contains 27 key patterns. Any key whose `.lower()` is in the set is replaced with `"<redacted>"` before emission. An allowlist (log only known-safe keys) was considered but rejected.
+
+**Reasoning:** A blocklist applied to every event dict requires no per-callsite discipline. An allowlist would require every log call to pre-filter its dict, which is error-prone and requires developer training to maintain. The blocklist is a defense-in-depth measure; the primary defense is that sensitive values should not reach log calls at all. The 27-key set is broad enough to catch the most common mistakes without being so broad it suppresses useful diagnostic data.
+
+---
+
+**D-P15-6 — Isolated Prometheus CollectorRegistry, not the global default**
+
+**Decision:** All metrics are registered on a custom `CollectorRegistry` instance, not the `prometheus_client.REGISTRY` global.
+
+**Reasoning:** The global registry causes test pollution: metrics registered during one test bleed into subsequent tests and can cause duplicate-registration errors when tests are re-run in the same process. An isolated registry can be created fresh per test module without side effects. The tradeoff is that standard exporters (PushGateway) need the registry passed explicitly, which is one extra argument.
+
+---
+
+**D-P15-7 — Multi-stage Dockerfile; non-root user ace (uid 1000)**
+
+**Decision:** The Dockerfile uses a builder stage (full dev deps) and a runtime stage (slim, no build tools). The runtime image drops to user `ace` (uid 1000) before the entrypoint. The base image is `python:3.13-slim`.
+
+**Reasoning:** The builder stage keeps build tools (gcc, pip, wheel) out of the runtime image, reducing attack surface and image size. Running as a non-root user prevents container breakout escalation in most kernel exploits. UID 1000 is conventional for application users in Alpine/Debian images.
+
+---
+
+**D-P15-8 — CD boundary is intentionally manual; no automated push-to-production**
+
+**Decision:** The GitHub Actions CI workflow builds and tests the Docker image but does not push it to a registry or deploy to production. Production deployment requires manual operator action.
+
+**Reasoning:** Automated push-to-production requires a production environment, credentials, and runbooks that are not yet in place. The cost of an unintended production deploy is higher than the cost of a manual step. The CI/CD split is explicit in the workflow file with a comment block describing the three-step manual process.
+
+---
+
+**D-P15-9 — Backup retention at 14 dumps (6-hour cadence); Redis not backed up**
+
+**Decision:** PostgreSQL is backed up every 6 hours via `pg_dump | gzip`. The script keeps the 14 most recent backups (3.5 days of coverage). Redis is not backed up.
+
+**Reasoning:** Redis is used only as a job-queue transport. Any jobs in-flight during a Redis failure can be re-enqueued from the schedule definitions in PostgreSQL. Redis state is ephemeral by design. PostgreSQL holds all canonical state; 6-hour RPO is acceptable for the current operational scale. 14-backup retention is overridable via `BACKUP_RETAIN_COUNT`.

@@ -25,7 +25,7 @@ optional adapters after YouTube is stable.
 - **Incremental.** Each phase depends only on what prior phases have
   implemented and tested.
 
-## Current state (Phase 14 complete)
+## Current state (Phase 15 complete)
 
 - SQLite database at `~/.local/share/ai-content-engine/content.db`
   (override via `ACE_DB_PATH`). WAL journal mode, foreign keys enforced.
@@ -580,7 +580,8 @@ Planned additions per phase:
   8 provider/live-gated stages), fail-closed authorization contract, `ApplicationService`
   bounded facade, structured executor diagnostics; EXECUTOR_CONTRACT_VERSION "13.0.0"
 - Phase 14: Frontend Studio & Dashboard
-- Phase 15: Deployment & Production Infrastructure
+- Phase 15 ✅: Deployment & Production Infrastructure — `auth_users`, `auth_refresh_tokens`,
+  `auth_workspace_roles`, `obj_storage_objects` (SCHEMA_VERSION 20)
 
 ## External integrations and data-source constraints
 
@@ -652,6 +653,62 @@ by automated pre-publish checks: quality score, licence verification,
 duplicate check, factual-risk threshold, daily/weekly publishing limits,
 spending limit. Any failure halts, notifies, and may demote the channel.
 The operator always has an immediate kill switch.
+
+## Production infrastructure boundary (Phase 15)
+
+Phase 15 adds the deployment stack without changing any domain-engine contracts.
+
+### Auth layer (`src/app/auth/`)
+
+```
+HTTP request
+  → RequestIDMiddleware (generate/propagate X-Request-ID)
+  → SecurityHeadersMiddleware (HSTS, CSP, nosniff, …)
+  → MetricsMiddleware (Prometheus counter + histogram)
+  → FastAPI route
+      → decode_access_token(bearer) → JWT claims
+      → has_permission(action, workspace_id, claims["roles"])
+      → ApplicationService
+```
+
+- Passwords: Argon2id via `pwdlib[argon2]` (`PasswordHash((Argon2Hasher(),))`); plaintext never stored or logged
+- Access tokens: HS256 JWT, 15-min TTL; `ACE_SECRET_KEY` ≥ 32 bytes; fails fast if missing
+- Refresh tokens: raw hex returned to client; SHA-256 hash stored in `auth_refresh_tokens.token_hash`; raw value never persisted
+
+### Provider stage-class system (`src/app/providers/`)
+
+```
+dispatch_stage(conn, pipeline, stage, ...)
+  → classify_stage(stage) → StageClass.A | B | C
+  → ProviderBoundary.check_stage(stage)
+      ├─ Class A: always allowed (local/deterministic)
+      ├─ Class B: requires live AI or TTS provider + key
+      └─ Class C: requires Class B + publishing_live_enabled=True
+  → ExecutorResult(status="dispatched" | "blocked" | "error")
+```
+
+Unknown stages classify as C (fail-closed). All live-provider flags default `false` in CI and Compose.
+
+### Observability
+
+- **Logging**: structlog JSON; `_redact_sensitive` processor drops 27 key patterns; correlation ID bound to contextvars via `RequestIDMiddleware`
+- **Metrics**: isolated `CollectorRegistry`; `GET /metrics` serves Prometheus exposition format
+- **Health**: `/health` = liveness (always OK); `/ready` = readiness (pings DB + Redis)
+- **Security headers**: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, CSP, `Cache-Control: no-store` on every response
+
+### Deployment topology
+
+```
+docker-compose.yml
+  postgres:16-alpine  ← canonical state
+  redis:7-alpine      ← job queue transport (ephemeral)
+  migrate (one-shot)  ← alembic upgrade head; must complete before api/worker
+  api                 ← uvicorn; non-root user ace (uid 1000)
+  worker              ← rq worker; same image, overridden CMD
+  scheduler           ← tick loop; same image, overridden CMD
+```
+
+CI: GitHub Actions — backend (ruff + pytest), frontend (npm), docker (build, no push), migrations. Production deployment is intentionally manual (no automated push-to-production in CI).
 
 ## Frontend boundary (Phase 14)
 

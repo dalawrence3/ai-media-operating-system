@@ -14,18 +14,11 @@ behind key technical choices.
 
 ## Current status
 
-**Phase 14 (Frontend Studio & Dashboard) is complete. Phases 1–14 are complete.**
+**Phase 15 (Deployment, Infrastructure & Production Operations) is complete. Phases 1–15 are complete.**
 
-The React SPA (`frontend/`) sits above the FastAPI transport layer, consuming the
-`ApplicationService` facade via a centralized typed API client. 12 production pages cover
-Dashboard, Pipeline Studio, Review Queue, Multi-Account Channels, Analytics, Learning,
-Exception Center, and Operations. All browser API calls go through `src/api/client.ts`
-(the sole `fetch()` point); no backend imports, credentials, or mock data exist in
-production views. Dev actor header is centralized and labeled DEV-ONLY; Phase 15
-replaces it with JWT. Frontend test suite: 13 files, 111 tests (Vitest 4 + React Testing
-Library + MSW v2), typecheck clean, oxlint clean, 326 kB production build. Backend: 3368
-tests pass (1 skipped), ruff clean. SCHEMA_VERSION 19. APPLICATION_CONTRACT_VERSION
-"13.0.0". Cross-workspace isolation enforced on every command and query path.
+The system is production-deployable via Docker Compose. JWT authentication (HS256, 15-min access tokens; Argon2id password hashing; SHA-256-hashed refresh tokens), RBAC (owner/admin/operator/reviewer/analyst; deny-by-default), provider stage-class gating (A/B/C fail-closed), structlog JSON with 27-key sensitive-field redaction, Prometheus metrics on an isolated registry, liveness/readiness health endpoints, security response headers, and a multi-stage Dockerfile with non-root runtime user are all in place. GitHub Actions CI covers backend (ruff + pytest), frontend (npm), Docker build (no push), and migration check; production deployment is intentionally manual. Backup script: `pg_dump | gzip` with 14-backup retention.
+
+Backend: 3558 tests pass (1 skipped), ruff clean. SCHEMA_VERSION 20. Frontend: 111 tests, typecheck clean, lint clean, 326 kB build. Cross-workspace isolation enforced on every command and query path.
 
 Implemented phases:
 - **Phase 0** — environment, diagnostic CLI
@@ -159,7 +152,7 @@ Implemented phases:
     block actions; `BudgetExceededError` on block
   - Actor-aware mutations throughout for future RBAC
   - CLI: `ace control workspace/channel/account/policy/experiment/events review-queue costs`
-- **Phase 13** — Backend Integration & System Architecture (`src/app/application/`): (`src/app/application/`):
+- **Phase 13** — Backend Integration & System Architecture (`src/app/application/`):
   - Application layer: typed command bus, 11-step dispatch pipeline
   - Canonical pipeline controller: research → script_generation → production_plan →
     narration → captions → visual_intelligence → rendering → publishing → analytics → learning
@@ -173,6 +166,20 @@ Implemented phases:
   - CONTRACT_VERSION "13.0.0"; semver compatibility checking
   - Cross-workspace isolation enforced on every command and query
 
+- **Phase 15** — Deployment, Infrastructure & Production Operations:
+  - SCHEMA_VERSION 20: `auth_users`, `auth_refresh_tokens`, `auth_workspace_roles`, `obj_storage_objects`
+  - Auth: JWT access tokens (HS256, 15-min TTL, PyJWT); Argon2id password hashing (`pwdlib[argon2]`); SHA-256-hashed refresh tokens (raw token never stored or logged)
+  - RBAC: 5 roles (owner/admin/operator/reviewer/analyst); deny-by-default `_PERMISSION_MATRIX`
+  - Provider stage-class gating: Class A (local/deterministic) always allowed; Class B (live AI/TTS) requires provider + key; Class C (live publishing) requires Class B + `publishing_live_enabled`; unknown stages → C (fail-closed)
+  - RQ worker layer: `JSONSerializer` enforced; no pickle; JSON-safe payloads only; workers reload state from PostgreSQL
+  - Observability: structlog JSON + 27-key `_redact_sensitive` processor; isolated Prometheus `CollectorRegistry`; `/health` (liveness) + `/ready` (DB + Redis ping); security response headers (nosniff, DENY, CSP, `no-store`)
+  - Docker: multi-stage Dockerfile (builder + runtime), non-root user `ace` (uid 1000), `HEALTHCHECK` against `/health`
+  - Docker Compose: postgres 16, redis 7, migrate (one-shot), api, worker, scheduler; `ACE_SECRET_KEY` required; all live-provider flags default false
+  - CI: GitHub Actions — backend (ruff + pytest), frontend (npm), Docker build (no push), migration check; CD boundary is intentionally manual
+  - Backup: `scripts/backup.sh` (`pg_dump | gzip`, 14-backup retention); `docs/runbooks/backup-restore.md`
+  - N+1 fix: `list_pipelines` now bulk-fetches all stages in a single `IN (…)` query
+  - Integration tests: 13 end-to-end tests covering N+1 regression, auth→pipeline, provider boundary, sensitive-field redaction, refresh token storage invariant
+
 End-to-end workflow: channel strategy → discovery → scoring → topic promotion
 → source ingestion → claim extraction → script generation → human approval
 → production plan creation → human review (approve/reject) → narration
@@ -181,6 +188,28 @@ manifest planning → scene review → rendering → render review → publishin
 analytics ingestion → optimization recommendations → human recommendation review
 → control plane coordination (workspaces, accounts, policies, experiments, costs).
 
+
+## Production deployment (Docker Compose)
+
+```bash
+# 1. Create a .env file with required secrets (never committed)
+echo "ACE_SECRET_KEY=$(python -c 'import secrets; print(secrets.token_hex(32))')" > .env
+echo "POSTGRES_PASSWORD=$(python -c 'import secrets; print(secrets.token_hex(16))')" >> .env
+
+# 2. Start the stack (postgres → redis → migrate → api/worker/scheduler)
+docker compose up -d
+
+# 3. Verify readiness
+curl http://localhost:8000/api/ready
+# {"status":"ready","checks":{"db":true,"redis":true},...}
+
+# 4. View structured JSON logs
+docker compose logs -f api
+```
+
+All live-provider flags (`ACE_TTS_LIVE_ENABLED`, `ACE_PUBLISHING_LIVE_ENABLED`) default to `false`. No live API calls are made until these are explicitly set. Production deployment is always a manual operator step; CI does not push to production.
+
+See `docs/runbooks/backup-restore.md` for backup/restore procedures. See `DECISIONS.md` for rationale behind every infrastructure choice.
 
 ## Requirements
 

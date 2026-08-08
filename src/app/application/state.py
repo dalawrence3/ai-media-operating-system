@@ -81,9 +81,10 @@ def create_stage_entries(
         status = "running" if stage == first else "pending"
         started_at = now if stage == first else None
         conn.execute(
-            "INSERT OR IGNORE INTO app_pipeline_stage_log "
+            "INSERT INTO app_pipeline_stage_log "
             "(id, pipeline_id, stage, attempt_number, status, started_at, created_at) "
-            "VALUES (?,?,?,?,?,?,?)",
+            "VALUES (?,?,?,?,?,?,?) "
+            "ON CONFLICT DO NOTHING",
             (str(uuid.uuid4()), pipeline_id, stage, 1, status, started_at, now),
         )
     conn.commit()
@@ -223,9 +224,7 @@ def list_pipelines(
     channel_id: str | None = None,
     limit: int = 50,
 ) -> list[PipelineView]:
-    sql = (
-        "SELECT * FROM app_pipeline_executions WHERE workspace_id=?"
-    )
+    sql = "SELECT * FROM app_pipeline_executions WHERE workspace_id=?"
     params: list[Any] = [workspace_id]
     if status is not None:
         sql += " AND status=?"
@@ -236,11 +235,46 @@ def list_pipelines(
     sql += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return []
+
+    # Bulk-load all stages in a single query to avoid N+1.
+    pipeline_ids = [row["id"] for row in rows]
+    placeholders = ",".join("?" * len(pipeline_ids))
+    stage_rows = conn.execute(
+        f"SELECT * FROM app_pipeline_stage_log "
+        f"WHERE pipeline_id IN ({placeholders}) ORDER BY attempt_number DESC",
+        pipeline_ids,
+    ).fetchall()
+
+    # Group stage rows by pipeline_id.
+    stages_by_pipeline: dict[str, list] = {pid: [] for pid in pipeline_ids}
+    for sr in stage_rows:
+        stages_by_pipeline[sr["pipeline_id"]].append(sr)
+
     result = []
     for row in rows:
-        stages = _load_stages(conn, row["id"])
+        stages = _build_stages(stages_by_pipeline[row["id"]])
         result.append(_row_to_view(row, stages))
     return result
+
+
+def _build_stages(stage_rows: list) -> list[PipelineStageView]:
+    """Build stage view list from pre-fetched rows (no DB call)."""
+    from app.application.commands import PIPELINE_STAGES
+
+    seen: set[str] = set()
+    latest: list = []
+    for r in stage_rows:
+        if r["stage"] not in seen:
+            seen.add(r["stage"])
+            latest.append(r)
+    latest.sort(
+        key=lambda r: (
+            PIPELINE_STAGES.index(r["stage"]) if r["stage"] in PIPELINE_STAGES else 999
+        )
+    )
+    return [_row_to_stage_view(r) for r in latest]
 
 
 def _row_to_stage_view(r: Any) -> PipelineStageView:

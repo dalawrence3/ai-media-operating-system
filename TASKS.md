@@ -1048,31 +1048,25 @@ and bounded ApplicationService facade for Phase 14.
 - No backend imports, no secrets, no mock data in production views
 - Frontend boundary preserved: React → typed client → FastAPI → ApplicationService → Control Plane / engines
 
-**What waits:** Phase 15 — Deployment, Infrastructure & Production Operations
+**What waits:** Phase 16 (TBD — operator-scoped roadmap item)
 
 ---
 
-### Phase 15 — Deployment & Production Infrastructure
+### Phase 15 — Deployment & Production Infrastructure ✅ Complete
 
-**Objective:** Harden the system for production operation.
+**Completed:** 2026-08-08. SCHEMA_VERSION 20. 3558 backend tests pass.
 
-**Business value:** Enables commercial-scale operation with production reliability.
+**Delivered:**
+- Auth: JWT (HS256, 15-min TTL), Argon2id passwords, SHA-256-hashed refresh tokens, RBAC (5 roles, deny-by-default)
+- Provider stage-class system: A (local) / B (live AI/TTS) / C (live publishing); fail-closed for unknowns
+- RQ worker layer with JSONSerializer enforced; no pickle; JSON-safe payloads
+- Observability: structlog JSON + 27-key redaction, isolated Prometheus registry, liveness/readiness endpoints, security headers
+- Docker: multi-stage Dockerfile (non-root user `ace`), Docker Compose (6 services)
+- CI: GitHub Actions (backend + frontend + docker build + migrations); manual CD boundary
+- Backup: `scripts/backup.sh` (`pg_dump | gzip`, 14-backup retention)
+- N+1 fix in `list_pipelines`; 13 integration tests
 
-**Technical scope (may include):**
-- PostgreSQL migration from SQLite
-- Object storage (S3 or compatible) for artifacts
-- Job queues / workers (Celery, RQ, or similar)
-- Docker / container deployment
-- Production secret management (Vault, AWS Secrets Manager, or similar)
-- Database backups and point-in-time recovery
-- Monitoring and alerting (Prometheus, Grafana, or similar)
-- Horizontal scaling
-- Disaster recovery procedures
-- Deployment configuration management
-
-**Dependencies:** Phase 13 (frontend complete; application stable)
-
-**What waits:** Multi-tenant SaaS (future consideration)
+**What waits:** Phase 16 (TBD)
 
 ---
 

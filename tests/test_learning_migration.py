@@ -13,13 +13,13 @@ from app.core.database import SCHEMA_VERSION, open_db
 
 class TestSchemaVersion:
     def test_schema_version_is_17(self):
-        assert SCHEMA_VERSION == 19
+        assert SCHEMA_VERSION == 20
 
     def test_fresh_db_is_at_version_17(self):
         with tempfile.TemporaryDirectory() as d:
             conn = open_db(pathlib.Path(d) / "test.db")
             row = conn.execute("SELECT version FROM schema_version").fetchone()
-            assert row[0] == 19
+            assert row[0] == 20
 
     def test_learning_tables_exist(self):
         with tempfile.TemporaryDirectory() as d:
@@ -105,7 +105,7 @@ class TestMigrationFrom16:
             # Re-open with v17 — should migrate
             conn17 = open_db(db_path)
             row = conn17.execute("SELECT version FROM schema_version").fetchone()
-            assert row[0] == 19
+            assert row[0] == 20
 
             tables = {
                 r[0]

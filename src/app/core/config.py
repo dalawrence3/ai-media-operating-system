@@ -18,6 +18,51 @@ class Config:
         self.db_path: Path = Path(raw) if raw else _default_db_path()
         self.log_level: str = os.environ.get("ACE_LOG_LEVEL", "WARNING").upper()
 
+        # Phase 15 — PostgreSQL production database URL.
+        # When set, overrides ACE_DB_PATH and uses PostgreSQL instead of SQLite.
+        # Format: postgresql://user:password@host:5432/dbname
+        # Unset (default) → SQLite at db_path (dev/test behaviour unchanged).
+        self.database_url: str = os.environ.get("ACE_DATABASE_URL", "")
+
+        # Phase 15 — Redis URL for job queue and rate limiting.
+        self.redis_url: str = os.environ.get("ACE_REDIS_URL", "redis://localhost:6379/0")
+
+        # Phase 15 — JWT signing secret. Production MUST set this to a random ≥32-byte value.
+        # Empty string means auth is not configured; endpoints requiring auth will reject requests.
+        self.secret_key: str = os.environ.get("ACE_SECRET_KEY", "")
+
+        # Phase 15 — JWT token lifetimes (seconds).
+        self.access_token_expire_seconds: int = int(
+            os.environ.get("ACE_ACCESS_TOKEN_EXPIRE_SECONDS", "900")
+        )
+        self.refresh_token_expire_seconds: int = int(
+            os.environ.get("ACE_REFRESH_TOKEN_EXPIRE_SECONDS", str(7 * 24 * 3600))
+        )
+
+        # Phase 15 — Object storage backend: "local" or "s3".
+        self.object_storage_backend: str = os.environ.get(
+            "ACE_OBJECT_STORAGE_BACKEND", "local"
+        ).lower()
+        raw_bucket = os.environ.get("ACE_OBJECT_STORAGE_BUCKET", "")
+        self.object_storage_bucket: str = raw_bucket or "ace-artifacts"
+        self.object_storage_endpoint: str = os.environ.get("ACE_OBJECT_STORAGE_ENDPOINT", "")
+        self.object_storage_access_key: str = os.environ.get(
+            "ACE_OBJECT_STORAGE_ACCESS_KEY", ""
+        )
+        self.object_storage_secret_key: str = os.environ.get(
+            "ACE_OBJECT_STORAGE_SECRET_KEY", ""
+        )
+        self.object_storage_region: str = os.environ.get(
+            "ACE_OBJECT_STORAGE_REGION", "us-east-1"
+        )
+
+        # Phase 15 — CORS origins (comma-separated, supplements hard-coded dev origins).
+        self.cors_origins: list[str] = [
+            o.strip()
+            for o in os.environ.get("ACE_CORS_ORIGINS", "").split(",")
+            if o.strip()
+        ]
+
         # AI / LLM settings (Phase 2).
         # The application starts and runs non-AI commands without any of these.
         self.anthropic_api_key: str = os.environ.get("ACE_ANTHROPIC_API_KEY", "")
