@@ -89,9 +89,7 @@ class TestFFprobeValidator:
             "streams": [{"codec_type": "audio", "codec_name": "aac"}],
             "format": {"duration": "30.0"},
         }
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=json.dumps(probe), stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(probe), stderr="")
         f = tmp_path / "out.mp4"
         f.write_bytes(b"x")
 
@@ -104,14 +102,17 @@ class TestFFprobeValidator:
     def test_rejects_when_no_audio_stream(self, mock_run, _mock_which, tmp_path):
         probe = {
             "streams": [
-                {"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920,
-                 "r_frame_rate": "30/1"}
+                {
+                    "codec_type": "video",
+                    "codec_name": "h264",
+                    "width": 1080,
+                    "height": 1920,
+                    "r_frame_rate": "30/1",
+                }
             ],
             "format": {"duration": "30.0"},
         }
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=json.dumps(probe), stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(probe), stderr="")
         f = tmp_path / "out.mp4"
         f.write_bytes(b"x")
 
@@ -124,9 +125,7 @@ class TestFFprobeValidator:
     def test_rejects_on_duration_deviation(self, mock_run, _mock_which, tmp_path):
         # Expected 30s, actual 20s → 33% deviation > 5% threshold
         probe = _make_probe_output(duration=20.0)
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=json.dumps(probe), stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(probe), stderr="")
         f = tmp_path / "out.mp4"
         f.write_bytes(b"x")
 
@@ -139,9 +138,7 @@ class TestFFprobeValidator:
     def test_accepts_small_duration_deviation(self, mock_run, _mock_which, tmp_path):
         # Expected 30s, actual 30.1s → 0.3% deviation ≤ 5%
         probe = _make_probe_output(duration=30.1)
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=json.dumps(probe), stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(probe), stderr="")
         f = tmp_path / "out.mp4"
         f.write_bytes(b"x" * 100)
 
@@ -175,9 +172,7 @@ class TestFFprobeValidator:
     @patch("app.media.validator.subprocess.run")
     def test_to_dict_contains_expected_keys(self, mock_run, _mock_which, tmp_path):
         probe = _make_probe_output()
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=json.dumps(probe), stderr=""
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(probe), stderr="")
         f = tmp_path / "out.mp4"
         f.write_bytes(b"x" * 100)
 

@@ -39,9 +39,7 @@ class TestWorkspaceHash:
 
 class TestChannelHash:
     def test_deterministic(self):
-        inp = ChannelHashInput(
-            workspace_id="ws-1", name="Tech", slug="tech", actor="cli"
-        )
+        inp = ChannelHashInput(workspace_id="ws-1", name="Tech", slug="tech", actor="cli")
         assert compute_channel_hash(inp) == compute_channel_hash(inp)
 
     def test_slug_matters(self):
@@ -63,12 +61,18 @@ class TestCredentialHash:
 
     def test_different_refs(self):
         a = CredentialProfileHashInput(
-            workspace_id="ws-1", display_name="YT", credential_type="oauth2",
-            external_ref="ref-1", actor="cli"
+            workspace_id="ws-1",
+            display_name="YT",
+            credential_type="oauth2",
+            external_ref="ref-1",
+            actor="cli",
         )
         b = CredentialProfileHashInput(
-            workspace_id="ws-1", display_name="YT", credential_type="oauth2",
-            external_ref="ref-2", actor="cli"
+            workspace_id="ws-1",
+            display_name="YT",
+            credential_type="oauth2",
+            external_ref="ref-2",
+            actor="cli",
         )
         assert compute_credential_hash(a) != compute_credential_hash(b)
 
@@ -86,12 +90,18 @@ class TestEventHash:
 
     def test_payload_order_independent(self):
         a = EventHashInput(
-            event_type="x", workspace_id="ws-1", actor="cli",
-            payload={"a": 1, "b": 2}, correlation_id=None
+            event_type="x",
+            workspace_id="ws-1",
+            actor="cli",
+            payload={"a": 1, "b": 2},
+            correlation_id=None,
         )
         b = EventHashInput(
-            event_type="x", workspace_id="ws-1", actor="cli",
-            payload={"b": 2, "a": 1}, correlation_id=None
+            event_type="x",
+            workspace_id="ws-1",
+            actor="cli",
+            payload={"b": 2, "a": 1},
+            correlation_id=None,
         )
         assert compute_event_hash(a) == compute_event_hash(b)
 
@@ -123,12 +133,20 @@ class TestExperimentHash:
 
     def test_name_matters(self):
         a = ExperimentHashInput(
-            workspace_id="ws-1", channel_id="ch-1", name="A",
-            hypothesis="H", primary_metric="ctr", actor="cli"
+            workspace_id="ws-1",
+            channel_id="ch-1",
+            name="A",
+            hypothesis="H",
+            primary_metric="ctr",
+            actor="cli",
         )
         b = ExperimentHashInput(
-            workspace_id="ws-1", channel_id="ch-1", name="B",
-            hypothesis="H", primary_metric="ctr", actor="cli"
+            workspace_id="ws-1",
+            channel_id="ch-1",
+            name="B",
+            hypothesis="H",
+            primary_metric="ctr",
+            actor="cli",
         )
         assert compute_experiment_hash(a) != compute_experiment_hash(b)
 

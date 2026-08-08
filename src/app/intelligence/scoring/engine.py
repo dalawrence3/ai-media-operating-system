@@ -75,9 +75,7 @@ def score_opportunity(
     # Load all observations (no staleness filter — factors handle staleness themselves)
     if observation_ids is not None:
         all_obs = [
-            obs
-            for obs in list_observations(conn, opportunity_id)
-            if obs.id in observation_ids
+            obs for obs in list_observations(conn, opportunity_id) if obs.id in observation_ids
         ]
     else:
         all_obs = list_observations(conn, opportunity_id)

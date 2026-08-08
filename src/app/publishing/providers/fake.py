@@ -55,6 +55,7 @@ class FakePublishingProvider:
     def upload(self, package: UploadPackage) -> UploadResult:
         if self._upload_fail:
             from app.publishing.errors import ProviderUploadError
+
             raise ProviderUploadError("Simulated upload failure.")
         return UploadResult(
             provider_video_id=self._video_id,
@@ -71,6 +72,7 @@ class FakePublishingProvider:
     ) -> PublishResult:
         if self._publish_fail:
             from app.publishing.errors import ProviderUploadError
+
             raise ProviderUploadError("Simulated publish failure.")
         now = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
         if scheduled_at:

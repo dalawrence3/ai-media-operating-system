@@ -55,9 +55,7 @@ class DefaultProviderSelector:
         if not candidates:
             raise ProviderSelectionError("No TTS providers are registered")
 
-        if criteria.preferred_provider and registry.is_registered(
-            criteria.preferred_provider
-        ):
+        if criteria.preferred_provider and registry.is_registered(criteria.preferred_provider):
             if self._satisfies(registry, criteria.preferred_provider, criteria):
                 return criteria.preferred_provider
 
@@ -65,9 +63,7 @@ class DefaultProviderSelector:
             if self._satisfies(registry, name, criteria):
                 return name
 
-        raise ProviderSelectionError(
-            f"No registered provider satisfies criteria: {criteria!r}"
-        )
+        raise ProviderSelectionError(f"No registered provider satisfies criteria: {criteria!r}")
 
     @staticmethod
     def _satisfies(
@@ -78,9 +74,7 @@ class DefaultProviderSelector:
         meta = registry.get_metadata(provider_name)
         caps = meta.capabilities
 
-        if criteria.required_language and not caps.accepts_language(
-            criteria.required_language
-        ):
+        if criteria.required_language and not caps.accepts_language(criteria.required_language):
             return False
         if criteria.required_output_format and not caps.accepts_output_format(
             criteria.required_output_format

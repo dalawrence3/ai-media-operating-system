@@ -85,15 +85,11 @@ class TestMetadataValidation:
 
     def test_description_too_long_raises(self):
         with pytest.raises(PublishingValidationError, match="5000"):
-            validate_publishing_metadata(
-                PublishingMetadataDraft(title="T", description="x" * 5001)
-            )
+            validate_publishing_metadata(PublishingMetadataDraft(title="T", description="x" * 5001))
 
     def test_invalid_visibility_raises(self):
         with pytest.raises(PublishingValidationError, match="visibility"):
-            validate_publishing_metadata(
-                PublishingMetadataDraft(title="T", visibility="secret")
-            )
+            validate_publishing_metadata(PublishingMetadataDraft(title="T", visibility="secret"))
 
     def test_all_visibility_values_valid(self):
         for v in ("private", "unlisted", "public"):
@@ -134,9 +130,7 @@ class TestScheduleValidation:
 
     def test_invalid_timezone_raises(self):
         with pytest.raises(PublishingValidationError, match="timezone"):
-            validate_schedule(
-                PublishingScheduleDraft(schedule_type="immediate", timezone="UTC+5")
-            )
+            validate_schedule(PublishingScheduleDraft(schedule_type="immediate", timezone="UTC+5"))
 
     def test_is_scheduled_time_due_immediate(self):
         assert is_scheduled_time_due(PublishingScheduleDraft(schedule_type="immediate"))

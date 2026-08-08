@@ -42,16 +42,18 @@ def _key(**overrides) -> CacheKey:
 
 def _response() -> TTSResponse:
     provider = FakeTTSProvider()
-    return provider.synthesize(TTSRequest(
-        text="Hello",
-        provider=FAKE_PROVIDER_NAME,
-        model=FAKE_MODEL_NAME,
-        voice_id=FAKE_VOICE_ID,
-        language="en-US",
-        speaking_rate=1.0,
-        output_format="wav",
-        sample_rate_hz=22050,
-    ))
+    return provider.synthesize(
+        TTSRequest(
+            text="Hello",
+            provider=FAKE_PROVIDER_NAME,
+            model=FAKE_MODEL_NAME,
+            voice_id=FAKE_VOICE_ID,
+            language="en-US",
+            speaking_rate=1.0,
+            output_format="wav",
+            sample_rate_hz=22050,
+        )
+    )
 
 
 # ── CacheKey ──────────────────────────────────────────────────────────────────

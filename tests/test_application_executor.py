@@ -64,6 +64,7 @@ def channel(conn, workspace):
 @pytest.fixture(autouse=True)
 def _reset_state():
     from app.application import dispatcher as bus
+
     reset_default_executor_registry()
     bus._HANDLERS.clear()
     yield
@@ -159,6 +160,7 @@ class TestStageExecutorRegistry:
 class TestDefaultExecutorRegistration:
     def test_all_canonical_stages_registered(self):
         from app.application.commands import PIPELINE_STAGES
+
         reg = StageExecutorRegistry()
         register_default_executors(reg)
         for stage in PIPELINE_STAGES:
@@ -459,9 +461,12 @@ class TestExecutePipelineStage:
             def execute(self, conn, req):
                 captured.append(req)
                 return StageExecutionResult(
-                    stage=req.stage, executor_key=self.executor_key,
-                    executor_version=self.executor_version, status="blocked",
-                    error_category="test", error_message="capturing only",
+                    stage=req.stage,
+                    executor_key=self.executor_key,
+                    executor_version=self.executor_version,
+                    status="blocked",
+                    error_category="test",
+                    error_message="capturing only",
                 )
 
         pv = pipeline_ctrl.start_pipeline(
@@ -522,8 +527,10 @@ class TestSideEffectOrdering:
                 nonlocal call_count
                 call_count += 1
                 return StageExecutionResult(
-                    stage=req.stage, executor_key=self.executor_key,
-                    executor_version=self.executor_version, status="completed",
+                    stage=req.stage,
+                    executor_key=self.executor_key,
+                    executor_version=self.executor_version,
+                    status="completed",
                 )
 
         reg = StageExecutorRegistry()
@@ -540,9 +547,7 @@ class TestSideEffectOrdering:
 
         bus.register_default_handlers()
         with pytest.raises(WorkspacePausedError):
-            bus.dispatch(
-                conn, cmd, registry=ExtensionRegistry(), auth_hook=allow_all_auth_hook
-            )
+            bus.dispatch(conn, cmd, registry=ExtensionRegistry(), auth_hook=allow_all_auth_hook)
         # Executor must never have been called.
         assert call_count == 0
 
@@ -562,8 +567,10 @@ class TestSideEffectOrdering:
                 nonlocal call_count
                 call_count += 1
                 return StageExecutionResult(
-                    stage=req.stage, executor_key=self.executor_key,
-                    executor_version=self.executor_version, status="completed",
+                    stage=req.stage,
+                    executor_key=self.executor_key,
+                    executor_version=self.executor_version,
+                    status="completed",
                 )
 
         pv_setup = pipeline_ctrl_factory(conn, workspace, channel)
@@ -585,6 +592,7 @@ class TestSideEffectOrdering:
 def pipeline_ctrl_factory(conn, workspace, channel):
     """Helper: start a single-stage research pipeline for test use."""
     from app.application import pipeline as pipeline_ctrl
+
     return pipeline_ctrl.start_pipeline(
         conn,
         StartPipelineCommand(
@@ -603,6 +611,7 @@ class TestExecutorDiagnostics:
 
     def test_unknown_stage_reports_executor_unavailable(self, conn, workspace):
         from app.application.diagnostics import explain_executor_status
+
         reg = StageExecutorRegistry()
         report = explain_executor_status(conn, workspace.id, "nonexistent", executor_registry=reg)
         assert report.status == "error"
@@ -611,6 +620,7 @@ class TestExecutorDiagnostics:
 
     def test_disabled_stage_reports_executor_disabled(self, conn, workspace):
         from app.application.diagnostics import explain_executor_status
+
         reg = StageExecutorRegistry()
         reg.register("research", ExternalProviderRequiredExecutor("research", "ext"))
         reg.disable("research")
@@ -621,6 +631,7 @@ class TestExecutorDiagnostics:
 
     def test_external_provider_stage_reports_blocked(self, conn, workspace):
         from app.application.diagnostics import explain_executor_status
+
         reg = StageExecutorRegistry()
         reg.register("research", ExternalProviderRequiredExecutor("research", "r"))
         report = explain_executor_status(conn, workspace.id, "research", executor_registry=reg)
@@ -630,6 +641,7 @@ class TestExecutorDiagnostics:
 
     def test_provider_required_stage_reports_blocked(self, conn, workspace):
         from app.application.diagnostics import explain_executor_status
+
         reg = StageExecutorRegistry()
         reg.register("narration", ProviderRequiredExecutor("narration", "n"))
         report = explain_executor_status(conn, workspace.id, "narration", executor_registry=reg)
@@ -639,6 +651,7 @@ class TestExecutorDiagnostics:
 
     def test_executable_stage_reports_ok(self, conn, workspace):
         from app.application.diagnostics import explain_executor_status
+
         reg = StageExecutorRegistry()
         reg.register("production_plan", ProductionPlanExecutor())
         report = explain_executor_status(

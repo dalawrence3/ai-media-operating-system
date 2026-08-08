@@ -16,12 +16,14 @@ _DT = datetime(2026, 8, 7, tzinfo=UTC)
 @pytest.fixture()
 def db(tmp_path):
     from app.core.database import open_db
+
     return open_db(tmp_path / "bus.db")
 
 
 @pytest.fixture()
 def workspace(db):
     from app.control_plane.identity import create_workspace
+
     return create_workspace(db, name="W", slug="w", actor="cli")
 
 
@@ -46,6 +48,7 @@ class TestEmitEvent:
 
     def test_invalid_event_type_raises(self, db, workspace):
         from app.control_plane.errors import InvalidEventTypeError
+
         with pytest.raises(InvalidEventTypeError):
             emit_event(
                 db,
@@ -63,10 +66,7 @@ class TestDispatchEvent:
             calls.append(event.event_type)
 
         event_bus.register_handler("workspace.created", "test_handler", handler)
-        ev = emit_event(
-            db, event_type="workspace.created",
-            workspace_id=workspace.id, actor="cli"
-        )
+        ev = emit_event(db, event_type="workspace.created", workspace_id=workspace.id, actor="cli")
         event_bus.dispatch_event(db, ev)
         assert len(calls) == 1
         assert calls[0] == "workspace.created"
@@ -78,10 +78,7 @@ class TestDispatchEvent:
             calls.append(1)
 
         event_bus.register_handler("workspace.created", "idem_handler", handler)
-        ev = emit_event(
-            db, event_type="workspace.created",
-            workspace_id=workspace.id, actor="cli"
-        )
+        ev = emit_event(db, event_type="workspace.created", workspace_id=workspace.id, actor="cli")
         event_bus.dispatch_event(db, ev)
         event_bus.dispatch_event(db, ev)
         assert len(calls) == 1
@@ -91,16 +88,14 @@ class TestDispatchEvent:
             raise ValueError("simulated failure")
 
         event_bus.register_handler("channel.created", "fail_handler", failing_handler)
-        ev = emit_event(
-            db, event_type="channel.created",
-            workspace_id=workspace.id, actor="cli"
-        )
+        ev = emit_event(db, event_type="channel.created", workspace_id=workspace.id, actor="cli")
         results = event_bus.dispatch_event(db, ev)
         assert len(results) == 1
         assert results[0].status in ("failed", "dead_lettered")
 
     def test_dead_letter_after_max_attempts(self, db, workspace):
         from app.control_plane.constants import MAX_DELIVERY_ATTEMPTS
+
         call_count = [0]
 
         def failing_handler(conn, event: ControlEvent) -> None:
@@ -108,9 +103,7 @@ class TestDispatchEvent:
             raise ValueError("always fails")
 
         event_bus.register_handler("channel.paused", "dl_handler", failing_handler)
-        ev = emit_event(
-            db, event_type="channel.paused", workspace_id=workspace.id, actor="cli"
-        )
+        ev = emit_event(db, event_type="channel.paused", workspace_id=workspace.id, actor="cli")
         for _ in range(MAX_DELIVERY_ATTEMPTS):
             event_bus.dispatch_event(db, ev)
 
@@ -139,9 +132,7 @@ class TestDispatchEvent:
             "workspace.archived", "handler_b", lambda c, e: results_b.append(1)
         )
 
-        ev = emit_event(
-            db, event_type="workspace.archived", workspace_id=workspace.id, actor="cli"
-        )
+        ev = emit_event(db, event_type="workspace.archived", workspace_id=workspace.id, actor="cli")
         event_bus.dispatch_event(db, ev)
         assert len(results_a) == 1
         assert len(results_b) == 1

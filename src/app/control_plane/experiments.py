@@ -79,9 +79,7 @@ def activate_experiment(conn: Any, experiment_id: str) -> Experiment:
 def conclude_experiment(conn: Any, experiment_id: str) -> Experiment:
     experiment = repo.get_experiment(conn, experiment_id)
     if experiment.status != EXPERIMENT_STATUS_ACTIVE:
-        raise ExperimentNotActiveError(
-            f"Experiment {experiment_id} must be active to conclude"
-        )
+        raise ExperimentNotActiveError(f"Experiment {experiment_id} must be active to conclude")
     return repo.conclude_experiment(conn, experiment_id)
 
 
@@ -102,9 +100,7 @@ def assign_unit(
 ) -> ExperimentAssignment:
     experiment = repo.get_experiment(conn, experiment_id)
     if experiment.status != EXPERIMENT_STATUS_ACTIVE:
-        raise ExperimentNotActiveError(
-            f"Experiment {experiment_id} must be active for assignments"
-        )
+        raise ExperimentNotActiveError(f"Experiment {experiment_id} must be active for assignments")
     variants = repo.list_variants_by_experiment(conn, experiment_id)
     if not variants:
         raise ValueError(f"Experiment {experiment_id} has no variants")

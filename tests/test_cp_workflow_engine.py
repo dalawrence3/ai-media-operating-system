@@ -21,6 +21,7 @@ _DT = datetime(2026, 8, 7, 10, 0, 0, tzinfo=UTC)
 
 def _make_event(payload: dict) -> ControlEvent:
     import json
+
     return ControlEvent(
         id="ev-1",
         event_type="health.degraded",
@@ -35,6 +36,7 @@ def _make_event(payload: dict) -> ControlEvent:
 
 def _make_workflow(conditions, actions, status="active") -> Workflow:
     import json
+
     return Workflow(
         id="wf-1",
         workspace_id="ws-1",
@@ -159,6 +161,7 @@ class TestEvaluateWorkflow:
 class TestExecuteActions:
     def test_notify_action(self, tmp_path):
         from app.core.database import open_db
+
         db = open_db(tmp_path / "db.db")
         event = _make_event({})
         actions = [
@@ -169,6 +172,7 @@ class TestExecuteActions:
 
     def test_queue_review_action(self, tmp_path):
         from app.core.database import open_db
+
         db = open_db(tmp_path / "db.db")
         event = _make_event({})
         actions = [{"action_type": "queue_review", "params": {"item_type": "health_degraded"}}]
@@ -186,8 +190,12 @@ class TestExecuteActions:
         ch = create_channel(db, workspace_id=ws.id, name="C", slug="c", actor="cli")
         repo.ensure_platform(db, "plt-1", "youtube", "YouTube")
         acc = connect_account(
-            db, channel_id=ch.id, platform_key="youtube",
-            external_account_id="UC-999", display_name="YT", actor="cli"
+            db,
+            channel_id=ch.id,
+            platform_key="youtube",
+            external_account_id="UC-999",
+            display_name="YT",
+            actor="cli",
         )
         event = _make_event({"account_id": acc.id})
         actions = [{"action_type": "pause_account", "params": {"platform_account_id": acc.id}}]
@@ -208,12 +216,18 @@ class TestRunWorkflow:
 
         db = open_db(tmp_path / "db.db")
         from app.control_plane.identity import create_workspace
+
         ws = create_workspace(db, name="W", slug="w", actor="cli")
 
         event_draft = ControlEvent(
-            id="ev-99", event_type="health.degraded",
-            workspace_id=ws.id, actor="cli", payload_json="{}",
-            correlation_id=None, causation_id=None, created_at=_DT
+            id="ev-99",
+            event_type="health.degraded",
+            workspace_id=ws.id,
+            actor="cli",
+            payload_json="{}",
+            correlation_id=None,
+            causation_id=None,
+            created_at=_DT,
         )
         # Store event manually
         db.execute(
@@ -221,12 +235,14 @@ class TestRunWorkflow:
             "(id, event_type, workspace_id, actor, payload_json, "
             "correlation_id, causation_id, created_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            ("ev-99", "health.degraded", ws.id, "cli", "{}", None, None, _DT.isoformat())
+            ("ev-99", "health.degraded", ws.id, "cli", "{}", None, None, _DT.isoformat()),
         )
         db.commit()
 
         wf = create_workflow(
-            db, workspace_id=ws.id, name="Alert",
+            db,
+            workspace_id=ws.id,
+            name="Alert",
             trigger_event_type="health.degraded",
             conditions=[],
             actions=[{"action_type": "notify", "params": {"message": "Hi"}}],
@@ -245,6 +261,7 @@ class TestRunWorkflow:
 
         db = open_db(tmp_path / "db.db")
         from app.control_plane.identity import create_workspace
+
         ws = create_workspace(db, name="W2", slug="w2", actor="cli")
 
         db.execute(
@@ -252,12 +269,14 @@ class TestRunWorkflow:
             "(id, event_type, workspace_id, actor, payload_json, "
             "correlation_id, causation_id, created_at) "
             "VALUES (?,?,?,?,?,?,?,?)",
-            ("ev-88", "health.degraded", ws.id, "cli", "{}", None, None, _DT.isoformat())
+            ("ev-88", "health.degraded", ws.id, "cli", "{}", None, None, _DT.isoformat()),
         )
         db.commit()
 
         wf = create_workflow(
-            db, workspace_id=ws.id, name="Cond",
+            db,
+            workspace_id=ws.id,
+            name="Cond",
             trigger_event_type="health.degraded",
             conditions=[{"field": "status", "operator": "equals", "value": "never"}],
             actions=[{"action_type": "notify", "params": {}}],
@@ -266,9 +285,16 @@ class TestRunWorkflow:
         workflow_obj = repo.get_workflow(db, wf.id)
         run = start_workflow_run(db, wf.id, "ev-88")
         from app.control_plane.models import ControlEvent
+
         event = ControlEvent(
-            id="ev-88", event_type="health.degraded", workspace_id=ws.id, actor="cli",
-            payload_json="{}", correlation_id=None, causation_id=None, created_at=_DT
+            id="ev-88",
+            event_type="health.degraded",
+            workspace_id=ws.id,
+            actor="cli",
+            payload_json="{}",
+            correlation_id=None,
+            causation_id=None,
+            created_at=_DT,
         )
         result = run_workflow(db, workflow_obj, event, run)
         assert result.success

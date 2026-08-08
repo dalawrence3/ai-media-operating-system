@@ -27,6 +27,7 @@ from app.learning.constants import (
 def _make_handoff():
     """Return a minimal AnalyticsHandoff-like object for attribution tests."""
     from unittest.mock import MagicMock
+
     h = MagicMock()
     h.topic_id = 1
     h.script_id = 2
@@ -105,6 +106,7 @@ class TestResolveAttribution:
     def test_all_domains_return_nonempty_subsystem(self):
         h = _make_handoff()
         from app.learning.constants import RECOMMENDATION_DOMAINS
+
         for domain in RECOMMENDATION_DOMAINS:
             subsystem, etype, _ = resolve_attribution(domain, h)
             assert subsystem

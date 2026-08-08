@@ -43,12 +43,8 @@ def _now() -> str:
 # ---------------------------------------------------------------------------
 
 
-def get_production_plan_by_id(
-    conn: sqlite3.Connection, plan_id: int
-) -> ProductionPlan | None:
-    row = conn.execute(
-        "SELECT * FROM production_plans WHERE id = ?", (plan_id,)
-    ).fetchone()
+def get_production_plan_by_id(conn: sqlite3.Connection, plan_id: int) -> ProductionPlan | None:
+    row = conn.execute("SELECT * FROM production_plans WHERE id = ?", (plan_id,)).fetchone()
     return ProductionPlan.from_row(row) if row else None
 
 
@@ -94,9 +90,7 @@ def require_active_approved_production_plan(
 # ---------------------------------------------------------------------------
 
 
-def get_production_segments(
-    conn: sqlite3.Connection, plan_id: int
-) -> list[ProductionSegment]:
+def get_production_segments(conn: sqlite3.Connection, plan_id: int) -> list[ProductionSegment]:
     rows = conn.execute(
         "SELECT * FROM production_segments WHERE plan_id = ? ORDER BY segment_index",
         (plan_id,),
@@ -170,9 +164,7 @@ def get_approved_production_plan_full(
 # ---------------------------------------------------------------------------
 
 
-def list_production_plans(
-    conn: sqlite3.Connection, topic_id: int
-) -> list[ProductionPlan]:
+def list_production_plans(conn: sqlite3.Connection, topic_id: int) -> list[ProductionPlan]:
     rows = conn.execute(
         "SELECT * FROM production_plans WHERE topic_id = ? ORDER BY created_at DESC",
         (topic_id,),
@@ -195,9 +187,7 @@ def list_production_plan_review_events(
 # ---------------------------------------------------------------------------
 
 
-def create_production_plan(
-    conn: sqlite3.Connection, draft: ProductionPlanDraft
-) -> ProductionPlan:
+def create_production_plan(conn: sqlite3.Connection, draft: ProductionPlanDraft) -> ProductionPlan:
     """Insert plan + segments + citations atomically.
 
     Idempotent: if (script_id, input_hash) already exists, raises DuplicateInputHashError.
@@ -332,9 +322,7 @@ def approve_production_plan(
 
     conn.execute("SAVEPOINT approve_pp")
     try:
-        row = conn.execute(
-            "SELECT * FROM production_plans WHERE id = ?", (plan_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM production_plans WHERE id = ?", (plan_id,)).fetchone()
         if row is None:
             raise NoPlanError(f"production plan id={plan_id} not found")
         plan = ProductionPlan.from_row(row)
@@ -429,17 +417,13 @@ def reject_production_plan(
             f"unknown reason_code={reason_code!r}; valid: {sorted(REJECTION_REASON_CODES)}"
         )
     if reason_code == REJECTION_REASON_CODE_REQUIRING_NOTES and not notes:
-        raise InvalidReasonCodeError(
-            f"reason_code={reason_code!r} requires non-empty notes"
-        )
+        raise InvalidReasonCodeError(f"reason_code={reason_code!r} requires non-empty notes")
 
     now = _now()
 
     conn.execute("SAVEPOINT reject_pp")
     try:
-        row = conn.execute(
-            "SELECT * FROM production_plans WHERE id = ?", (plan_id,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM production_plans WHERE id = ?", (plan_id,)).fetchone()
         if row is None:
             raise NoPlanError(f"production plan id={plan_id} not found")
         plan = ProductionPlan.from_row(row)

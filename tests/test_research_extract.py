@@ -43,9 +43,7 @@ def _build_minimal_pdf(pages: list[str]) -> bytes:
     objects[1] = b"<< /Type /Catalog /Pages 2 0 R >>\n"
     # Pages
     kids = " ".join(f"{page_obj_start + i} 0 R" for i in range(len(pages)))
-    objects[2] = (
-        f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>\n"
-    ).encode()
+    objects[2] = (f"<< /Type /Pages /Kids [{kids}] /Count {len(pages)} >>\n").encode()
 
     for i, text in enumerate(pages):
         content_id = content_obj_start + i
@@ -55,8 +53,7 @@ def _build_minimal_pdf(pages: list[str]) -> bytes:
             f"<< /Length {len(stream)} >>\nstream\n".encode() + stream + b"\nendstream\n"
         )
         objects[page_id] = (
-            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-            f"/Contents {content_id} 0 R >>\n"
+            f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents {content_id} 0 R >>\n"
         ).encode()
 
     # Write objects and track xref offsets
@@ -136,8 +133,7 @@ class TestExtractHtml:
 
     def test_extracts_time_datetime(self):
         html = (
-            b'<html><body><time datetime="2024-06-01">June 2024</time>'
-            b"<p>article</p></body></html>"
+            b'<html><body><time datetime="2024-06-01">June 2024</time><p>article</p></body></html>'
         )
         result = extract_html(html)
         assert result.published_at == "2024-06-01"
@@ -209,8 +205,10 @@ class TestExtractPdf:
         pdf = _build_minimal_pdf([""])
         result = extract_pdf(pdf)
         # Either raw_text is None or extraction_error notes no text
-        assert result.extraction_error is not None or result.raw_text is None or (
-            result.raw_text.replace("--- Page 1 ---", "").strip() == ""
+        assert (
+            result.extraction_error is not None
+            or result.raw_text is None
+            or (result.raw_text.replace("--- Page 1 ---", "").strip() == "")
         )
 
     def test_pdf_extraction_method(self):

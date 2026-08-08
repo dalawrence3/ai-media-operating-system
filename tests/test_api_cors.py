@@ -30,6 +30,7 @@ def _get_cors_origins_from_app(monkeypatch, env: str, cors_origins: str = "") ->
     import importlib
 
     import app.api.main as _main
+
     importlib.reload(_main)
     return list(_main._CORS_ORIGINS)
 

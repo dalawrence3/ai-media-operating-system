@@ -341,9 +341,7 @@ class TestClaimExtractionRunCall:
         import sqlite3 as _sqlite3
 
         with pytest.raises(_sqlite3.IntegrityError):
-            create_claim_extraction_run_call(
-                db, claim_extraction_run_id=run.id, **_CALL_DEFAULTS
-            )
+            create_claim_extraction_run_call(db, claim_extraction_run_id=run.id, **_CALL_DEFAULTS)
 
     def test_update_call_outcome(self, db: sqlite3.Connection):
         _, run = _sc_and_run(db)

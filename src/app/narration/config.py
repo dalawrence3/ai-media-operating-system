@@ -33,13 +33,9 @@ class ProviderConfig:
         if not self.model_id:
             raise ProviderConfigError("model_id must not be empty")
         if self.speaking_rate <= 0.0:
-            raise ProviderConfigError(
-                f"speaking_rate must be positive, got {self.speaking_rate}"
-            )
+            raise ProviderConfigError(f"speaking_rate must be positive, got {self.speaking_rate}")
         if self.sample_rate_hz <= 0:
-            raise ProviderConfigError(
-                f"sample_rate_hz must be positive, got {self.sample_rate_hz}"
-            )
+            raise ProviderConfigError(f"sample_rate_hz must be positive, got {self.sample_rate_hz}")
 
     def to_dict(self) -> dict:
         return {
@@ -69,9 +65,7 @@ class ProviderConfigRegistry:
         try:
             return self._configs[name]
         except KeyError:
-            raise ProviderConfigError(
-                f"No provider config registered under {name!r}"
-            ) from None
+            raise ProviderConfigError(f"No provider config registered under {name!r}") from None
 
     def names(self) -> list[str]:
         return list(self._configs.keys())

@@ -403,9 +403,7 @@ def test_topics_promote_allow_unscored_warns_and_succeeds(_unscored_db) -> None:
 
 def test_topics_promote_angle_override(_scored_db) -> None:
     _, opp_id = _scored_db
-    result = runner.invoke(
-        app, ["topics", "promote", str(opp_id), "--angle", "custom angle"]
-    )
+    result = runner.invoke(app, ["topics", "promote", str(opp_id), "--angle", "custom angle"])
     assert result.exit_code == 0, result.output
     result2 = runner.invoke(app, ["topics", "list"])
     assert "custom angle" in result2.output
@@ -413,7 +411,5 @@ def test_topics_promote_angle_override(_scored_db) -> None:
 
 def test_topics_promote_operator_option(_scored_db) -> None:
     _, opp_id = _scored_db
-    result = runner.invoke(
-        app, ["topics", "promote", str(opp_id), "--operator", "alice"]
-    )
+    result = runner.invoke(app, ["topics", "promote", str(opp_id), "--operator", "alice"])
     assert result.exit_code == 0, result.output

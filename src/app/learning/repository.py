@@ -147,9 +147,7 @@ def fail_learning_run(
 
 
 def get_learning_run(conn: sqlite3.Connection, run_id: int) -> LearningRun:
-    row = conn.execute(
-        "SELECT * FROM learning_runs WHERE id = ?", (run_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM learning_runs WHERE id = ?", (run_id,)).fetchone()
     if row is None:
         raise LearningRunNotFoundError(f"No learning run with id={run_id}")
     return LearningRun.from_row(row)
@@ -237,9 +235,7 @@ def get_recommendation(
         (recommendation_id,),
     ).fetchone()
     if row is None:
-        raise RecommendationNotFoundError(
-            f"No recommendation with id={recommendation_id}"
-        )
+        raise RecommendationNotFoundError(f"No recommendation with id={recommendation_id}")
     return OptimizationRecommendation.from_row(row)
 
 
@@ -271,8 +267,7 @@ def list_recommendations(
     params.append(limit)
 
     rows = conn.execute(
-        f"SELECT * FROM optimization_recommendations {where} "
-        f"ORDER BY created_at DESC LIMIT ?",
+        f"SELECT * FROM optimization_recommendations {where} ORDER BY created_at DESC LIMIT ?",
         params,
     ).fetchall()
     return [OptimizationRecommendation.from_row(r) for r in rows]
@@ -309,8 +304,12 @@ def find_active_recommendation_by_key(
         """,
         (
             topic_id,
-            publication_id, publication_id, publication_id,
-            domain, subsystem, measure,
+            publication_id,
+            publication_id,
+            publication_id,
+            domain,
+            subsystem,
+            measure,
             STATUS_SUPERSEDED,
         ),
     ).fetchone()
@@ -406,8 +405,7 @@ def list_review_events(
     params.append(limit)
 
     rows = conn.execute(
-        f"SELECT * FROM recommendation_review_events {where} "
-        f"ORDER BY created_at DESC LIMIT ?",
+        f"SELECT * FROM recommendation_review_events {where} ORDER BY created_at DESC LIMIT ?",
         params,
     ).fetchall()
     return [RecommendationReviewEvent.from_row(r) for r in rows]

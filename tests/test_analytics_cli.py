@@ -59,10 +59,27 @@ def _run(args, db_path: Path):
 
 def _ingest_args(publication_id=1):
     return [
-        "ingest", str(publication_id), "vid123",
-        "--plan", "1", "--job", "1", "--render", "1",
-        "--scene", "1", "--production", "1", "--script", "1",
-        "--topic", "1", "--narration", "1", "--caption", "1",
+        "ingest",
+        str(publication_id),
+        "vid123",
+        "--plan",
+        "1",
+        "--job",
+        "1",
+        "--render",
+        "1",
+        "--scene",
+        "1",
+        "--production",
+        "1",
+        "--script",
+        "1",
+        "--topic",
+        "1",
+        "--narration",
+        "1",
+        "--caption",
+        "1",
     ]
 
 
@@ -164,10 +181,17 @@ class TestEventsCommand:
         conn = open_db(db_path)
         orch = AnalyticsOrchestrator(conn, FakeAnalyticsProvider())
         snap, _ = orch.ingest(
-            provider_video_id="vid123", publication_id=1, publishing_plan_id=1,
-            publishing_job_id=1, render_manifest_id=1, scene_manifest_id=1,
-            production_plan_id=1, script_id=1, topic_id=1,
-            narration_run_id=1, caption_run_id=1,
+            provider_video_id="vid123",
+            publication_id=1,
+            publishing_plan_id=1,
+            publishing_job_id=1,
+            render_manifest_id=1,
+            scene_manifest_id=1,
+            production_plan_id=1,
+            script_id=1,
+            topic_id=1,
+            narration_run_id=1,
+            caption_run_id=1,
         )
         orch.record_review(snapshot_id=snap.id, severity="info", notes="ok")
         conn.close()

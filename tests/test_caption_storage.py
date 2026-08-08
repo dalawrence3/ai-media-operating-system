@@ -141,6 +141,7 @@ class TestCleanupStaleTempFiles:
         old_tmp.write_text("stale", encoding="utf-8")
         import os
         import time
+
         old_time = time.time() - 3600
         os.utime(old_tmp, (old_time, old_time))
         result = cleanup_stale_temp_files(tmp_path, max_age_seconds=60)

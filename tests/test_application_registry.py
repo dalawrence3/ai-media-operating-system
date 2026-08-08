@@ -41,15 +41,14 @@ class TestExtensionEntry:
 class TestExtensionRegistry:
     def test_register_and_get(self):
         reg = ExtensionRegistry()
-        reg.register(
-            key="test.ext", capability="review", version="1.0.0", handler=_noop_handler
-        )
+        reg.register(key="test.ext", capability="review", version="1.0.0", handler=_noop_handler)
         entry = reg.get("test.ext")
         assert entry is not None
         assert entry.key == "test.ext"
 
     def test_get_unknown_returns_none(self):
         from app.application.errors import ExtensionNotFoundError
+
         reg = ExtensionRegistry()
         with pytest.raises(ExtensionNotFoundError):
             reg.get("nonexistent")
@@ -62,6 +61,7 @@ class TestExtensionRegistry:
 
     def test_duplicate_register_raises(self):
         from app.application.errors import ExtensionAlreadyRegisteredError
+
         reg = ExtensionRegistry()
         reg.register(key="dup", capability="c", version="1.0", handler=_noop_handler)
         with pytest.raises(ExtensionAlreadyRegisteredError):
@@ -77,6 +77,7 @@ class TestExtensionRegistry:
 
     def test_disable_unknown_raises(self):
         from app.application.errors import ExtensionNotFoundError
+
         reg = ExtensionRegistry()
         with pytest.raises(ExtensionNotFoundError):
             reg.disable("nonexistent")

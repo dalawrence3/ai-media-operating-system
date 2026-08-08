@@ -41,9 +41,7 @@ def is_system_actor(actor: str) -> bool:
     return actor.startswith(SYSTEM_ACTOR_PREFIX)
 
 
-def default_auth_hook(
-    conn: Any, command_type: str, workspace_id: str, actor: str
-) -> None:
+def default_auth_hook(conn: Any, command_type: str, workspace_id: str, actor: str) -> None:
     """Fail-closed authorization hook.
 
     System actors are always permitted.
@@ -56,9 +54,7 @@ def default_auth_hook(
     raise AuthorizationRequiredError(actor, command_type)
 
 
-def allow_all_auth_hook(
-    conn: Any, command_type: str, workspace_id: str, actor: str
-) -> None:
+def allow_all_auth_hook(conn: Any, command_type: str, workspace_id: str, actor: str) -> None:
     """Permissive hook for development and test environments.
 
     Never inject this hook in production code paths.

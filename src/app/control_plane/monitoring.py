@@ -9,9 +9,7 @@ from app.control_plane import repository as repo
 from app.control_plane.models import EventProcessing, OperationExecution
 
 
-def find_stuck_operations(
-    conn: Any, older_than_minutes: int = 30
-) -> list[OperationExecution]:
+def find_stuck_operations(conn: Any, older_than_minutes: int = 30) -> list[OperationExecution]:
     cutoff = (datetime.now(UTC) - timedelta(minutes=older_than_minutes)).isoformat()
     rows = conn.execute(
         "SELECT * FROM cp_operation_executions "
@@ -20,6 +18,7 @@ def find_stuck_operations(
         (cutoff,),
     ).fetchall()
     from app.control_plane.repository import _row_to_operation_execution
+
     return [_row_to_operation_execution(r) for r in rows]
 
 
@@ -30,6 +29,7 @@ def find_dead_lettered_events(conn: Any, limit: int = 50) -> list[EventProcessin
         (limit,),
     ).fetchall()
     from app.control_plane.repository import _row_to_event_processing
+
     return [_row_to_event_processing(r) for r in rows]
 
 

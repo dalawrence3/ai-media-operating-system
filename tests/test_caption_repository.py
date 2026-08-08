@@ -46,9 +46,7 @@ def db(tmp_path: Path) -> sqlite3.Connection:
 def _seed_db(conn: sqlite3.Connection) -> dict:
     """Insert minimal prerequisite rows; return a dict of inserted IDs."""
     conn.execute("PRAGMA foreign_keys=OFF")
-    conn.execute(
-        "INSERT INTO topics (id, title, angle) VALUES (1, 'T', 'A')"
-    )
+    conn.execute("INSERT INTO topics (id, title, angle) VALUES (1, 'T', 'A')")
     conn.execute(
         "INSERT INTO scripts (id, topic_id, version, body, status)"
         " VALUES (1, 1, 1, 'body', 'approved')"
@@ -137,7 +135,8 @@ def _make_cue(
 
 def _complete_run(conn: sqlite3.Connection, run_id: int) -> None:
     complete_caption_run(
-        conn, run_id,
+        conn,
+        run_id,
         total_cue_count=1,
         total_duration_ms=2000,
         srt_path="captions/plan_1/run_1/captions.srt",
@@ -314,11 +313,16 @@ class TestApproveCaptionRun:
         _seed_db(db)
         run = create_caption_run(db, _make_draft())
         complete_caption_run(
-            db, run.id,
+            db,
+            run.id,
             total_cue_count=0,
             total_duration_ms=0,
-            srt_path="p/c.srt", vtt_path="p/c.vtt", json_path="p/c.json",
-            srt_sha256="a" * 64, vtt_sha256="b" * 64, json_sha256="c" * 64,
+            srt_path="p/c.srt",
+            vtt_path="p/c.vtt",
+            json_path="p/c.json",
+            srt_sha256="a" * 64,
+            vtt_sha256="b" * 64,
+            json_sha256="c" * 64,
         )
         with pytest.raises(IncompleteCaptionRunError):
             approve_caption_run(db, run.id)

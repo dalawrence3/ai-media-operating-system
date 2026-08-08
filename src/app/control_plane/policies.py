@@ -84,15 +84,11 @@ def assert_action_permitted(
     platform_account_id: str | None = None,
 ) -> None:
     """Raise PolicyViolationError if action is not permitted under the effective policy."""
-    effective_level = resolve_effective_level(
-        conn, workspace_id, channel_id, platform_account_id
-    )
+    effective_level = resolve_effective_level(conn, workspace_id, channel_id, platform_account_id)
     if effective_level == AUTOMATION_MANUAL:
         raise PolicyViolationError(AUTOMATION_SUPERVISED, AUTOMATION_MANUAL)
 
     if effective_level == AUTOMATION_SUPERVISED:
-        ws_policy = repo.get_active_policy_for_scope(
-            conn, POLICY_SCOPE_WORKSPACE, workspace_id
-        )
+        ws_policy = repo.get_active_policy_for_scope(conn, POLICY_SCOPE_WORKSPACE, workspace_id)
         if ws_policy and action not in ws_policy.allowed_actions:
             raise PolicyViolationError(AUTOMATION_AUTONOMOUS, AUTOMATION_SUPERVISED)

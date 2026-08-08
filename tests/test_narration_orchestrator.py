@@ -90,9 +90,7 @@ def _vpc(**kwargs) -> VoiceProfileCreate:
 # ── Golden path ───────────────────────────────────────────────────────────────
 
 
-def test_narrate_plan_returns_result(
-    conn: sqlite3.Connection, artifacts: Path
-) -> None:
+def test_narrate_plan_returns_result(conn: sqlite3.Connection, artifacts: Path) -> None:
     vp = create_voice_profile(conn, _vpc())
     result = narrate_plan(
         conn,
@@ -106,9 +104,7 @@ def test_narrate_plan_returns_result(
     assert len(result.assets) == 2
 
 
-def test_narrate_plan_assets_synthesized(
-    conn: sqlite3.Connection, artifacts: Path
-) -> None:
+def test_narrate_plan_assets_synthesized(conn: sqlite3.Connection, artifacts: Path) -> None:
     vp = create_voice_profile(conn, _vpc())
     result = narrate_plan(
         conn,
@@ -124,9 +120,7 @@ def test_narrate_plan_assets_synthesized(
         assert asset.audio_sha256 is not None
 
 
-def test_narrate_plan_audio_files_exist(
-    conn: sqlite3.Connection, artifacts: Path
-) -> None:
+def test_narrate_plan_audio_files_exist(conn: sqlite3.Connection, artifacts: Path) -> None:
     vp = create_voice_profile(conn, _vpc())
     narrate_plan(
         conn,
@@ -139,9 +133,7 @@ def test_narrate_plan_audio_files_exist(
     assert any(artifacts.rglob("*.wav"))
 
 
-def test_narrate_plan_run_completed(
-    conn: sqlite3.Connection, artifacts: Path
-) -> None:
+def test_narrate_plan_run_completed(conn: sqlite3.Connection, artifacts: Path) -> None:
     vp = create_voice_profile(conn, _vpc())
     result = narrate_plan(
         conn,
@@ -159,9 +151,7 @@ def test_narrate_plan_run_completed(
 # ── Idempotency ───────────────────────────────────────────────────────────────
 
 
-def test_narrate_plan_idempotent(
-    conn: sqlite3.Connection, artifacts: Path
-) -> None:
+def test_narrate_plan_idempotent(conn: sqlite3.Connection, artifacts: Path) -> None:
     vp = create_voice_profile(conn, _vpc())
     result1 = narrate_plan(
         conn,
@@ -186,9 +176,7 @@ def test_narrate_plan_idempotent(
 # ── Dry run ───────────────────────────────────────────────────────────────────
 
 
-def test_narrate_plan_dry_run_skips_all(
-    conn: sqlite3.Connection, artifacts: Path
-) -> None:
+def test_narrate_plan_dry_run_skips_all(conn: sqlite3.Connection, artifacts: Path) -> None:
     vp = create_voice_profile(conn, _vpc())
     result = narrate_plan(
         conn,
@@ -242,9 +230,7 @@ def test_narrate_plan_missing_voice_profile_raises(
 # ── TTS call logging ──────────────────────────────────────────────────────────
 
 
-def test_narrate_plan_logs_tts_calls(
-    conn: sqlite3.Connection, artifacts: Path
-) -> None:
+def test_narrate_plan_logs_tts_calls(conn: sqlite3.Connection, artifacts: Path) -> None:
     vp = create_voice_profile(conn, _vpc())
     result = narrate_plan(
         conn,
@@ -260,9 +246,7 @@ def test_narrate_plan_logs_tts_calls(
     assert calls == 2
 
 
-def test_narrate_plan_logs_failed_tts_call(
-    conn: sqlite3.Connection, artifacts: Path
-) -> None:
+def test_narrate_plan_logs_failed_tts_call(conn: sqlite3.Connection, artifacts: Path) -> None:
     vp = create_voice_profile(conn, _vpc())
     with pytest.raises(SynthesisError):
         narrate_plan(

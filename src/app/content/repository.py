@@ -114,18 +114,12 @@ def create_generation_run(
     return _row_to_run(row)
 
 
-def get_generation_run(
-    conn: sqlite3.Connection, run_id: int
-) -> ScriptGenerationRun | None:
-    row = conn.execute(
-        "SELECT * FROM script_generation_runs WHERE id=?", (run_id,)
-    ).fetchone()
+def get_generation_run(conn: sqlite3.Connection, run_id: int) -> ScriptGenerationRun | None:
+    row = conn.execute("SELECT * FROM script_generation_runs WHERE id=?", (run_id,)).fetchone()
     return _row_to_run(row) if row else None
 
 
-def list_generation_runs(
-    conn: sqlite3.Connection, topic_id: int
-) -> list[ScriptGenerationRun]:
+def list_generation_runs(conn: sqlite3.Connection, topic_id: int) -> list[ScriptGenerationRun]:
     rows = conn.execute(
         "SELECT * FROM script_generation_runs WHERE topic_id=? ORDER BY created_at DESC, id DESC",
         (topic_id,),

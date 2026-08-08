@@ -80,6 +80,7 @@ def test_route_result_provider_name() -> None:
 
 def test_route_result_provider_is_tts_provider() -> None:
     from app.narration.protocol import TTSProvider
+
     result = _router().route(RoutingRequest(tts_request=_request()))
     assert isinstance(result.provider, TTSProvider)
 

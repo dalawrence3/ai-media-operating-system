@@ -91,9 +91,7 @@ class ObservabilityContext:
             "span_count": len(self._spans),
             "completed_count": len(completed),
             "error_count": sum(1 for s in completed if not s.ok),
-            "total_duration_ms": sum(
-                s.duration_ms for s in completed if s.duration_ms is not None
-            ),
+            "total_duration_ms": sum(s.duration_ms for s in completed if s.duration_ms is not None),
             "spans": [
                 {
                     "name": s.name,

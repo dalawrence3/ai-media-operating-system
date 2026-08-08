@@ -40,9 +40,7 @@ def _get_nested(payload: dict[str, Any], field: str) -> Any:
     return current
 
 
-def _evaluate_condition(
-    condition: dict[str, Any], payload: dict[str, Any]
-) -> bool:
+def _evaluate_condition(condition: dict[str, Any], payload: dict[str, Any]) -> bool:
     field = condition["field"]
     op = condition["operator"]
     expected = condition.get("value")
@@ -73,9 +71,7 @@ def _evaluate_condition(
     return False
 
 
-def evaluate_workflow(
-    workflow: Workflow, event: ControlEvent
-) -> WorkflowEvaluationResult:
+def evaluate_workflow(workflow: Workflow, event: ControlEvent) -> WorkflowEvaluationResult:
     payload = event.payload
     conditions_passed: list[str] = []
     conditions_failed: list[str] = []
@@ -110,9 +106,7 @@ def execute_actions(
         if action_type == ACTION_PAUSE_ACCOUNT:
             account_id = params.get("platform_account_id")
             if account_id:
-                repo.update_platform_account_status(
-                    conn, account_id, "paused", actor=event.actor
-                )
+                repo.update_platform_account_status(conn, account_id, "paused", actor=event.actor)
                 executed.append(f"{ACTION_PAUSE_ACCOUNT}:{account_id}")
 
         elif action_type == ACTION_RESUME_ACCOUNT:
@@ -174,9 +168,7 @@ def run_workflow(
             actions_executed=executed,
         )
     except Exception as exc:
-        repo.complete_workflow_run(
-            conn, run.id, success=False, error_message=str(exc)
-        )
+        repo.complete_workflow_run(conn, run.id, success=False, error_message=str(exc))
         return WorkflowRunResult(
             run_id=run.id,
             workflow_id=workflow.id,

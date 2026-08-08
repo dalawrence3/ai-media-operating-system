@@ -109,7 +109,8 @@ def start_pipeline(conn: Any, cmd: StartPipelineCommand) -> PipelineView:
 
     # Policy snapshot for audit.
     policy_snap = snapshot_policy_refs(
-        conn, cmd.workspace_id,
+        conn,
+        cmd.workspace_id,
         channel_id=cmd.channel_id,
         platform_account_id=cmd.platform_account_id,
     )
@@ -119,7 +120,7 @@ def start_pipeline(conn: Any, cmd: StartPipelineCommand) -> PipelineView:
     # Determine the stage slice to run.
     start_idx = PIPELINE_STAGES.index(cmd.start_stage)
     end_idx = PIPELINE_STAGES.index(cmd.end_stage)
-    stages_to_run = PIPELINE_STAGES[start_idx: end_idx + 1]
+    stages_to_run = PIPELINE_STAGES[start_idx : end_idx + 1]
 
     pipeline_id = pipeline_state.create_pipeline(
         conn,
@@ -137,9 +138,7 @@ def start_pipeline(conn: Any, cmd: StartPipelineCommand) -> PipelineView:
     )
     pipeline_state.update_pipeline_status(conn, pipeline_id, "running")
 
-    pipeline_state.create_stage_entries(
-        conn, pipeline_id, stages_to_run, first=cmd.start_stage
-    )
+    pipeline_state.create_stage_entries(conn, pipeline_id, stages_to_run, first=cmd.start_stage)
 
     _emit_event(
         conn,
@@ -158,9 +157,7 @@ def start_pipeline(conn: Any, cmd: StartPipelineCommand) -> PipelineView:
     return pipeline_state.get_pipeline(conn, pipeline_id)
 
 
-def advance_pipeline(
-    conn: Any, cmd: AdvancePipelineStageCommand
-) -> PipelineView:
+def advance_pipeline(conn: Any, cmd: AdvancePipelineStageCommand) -> PipelineView:
     """Mark a stage completed, transition to next or complete the pipeline."""
     pv = pipeline_state.get_pipeline(conn, cmd.pipeline_id)
     _assert_workspace_owns_pipeline(pv, cmd.workspace_id)
@@ -171,7 +168,9 @@ def advance_pipeline(
     _check_prerequisites(pv, cmd.stage)
 
     pipeline_state.advance_stage(
-        conn, cmd.pipeline_id, cmd.stage,
+        conn,
+        cmd.pipeline_id,
+        cmd.stage,
         artifact_id=cmd.artifact_id,
         artifact_type=cmd.artifact_type,
     )
@@ -180,7 +179,10 @@ def advance_pipeline(
     if cmd.stage in REVIEW_REQUIRED_STAGES:
         pipeline_state.set_stage_waiting_for_review(conn, cmd.pipeline_id, cmd.stage)
         _emit_event(
-            conn, "pipeline.waiting_for_review", cmd.workspace_id, cmd.actor,
+            conn,
+            "pipeline.waiting_for_review",
+            cmd.workspace_id,
+            cmd.actor,
             {"pipeline_id": cmd.pipeline_id, "stage": cmd.stage},
             correlation_id=pv.correlation_id,
         )
@@ -191,7 +193,10 @@ def advance_pipeline(
     if next_stage is None:
         pipeline_state.update_pipeline_status(conn, cmd.pipeline_id, "completed")
         _emit_event(
-            conn, "pipeline.completed", cmd.workspace_id, cmd.actor,
+            conn,
+            "pipeline.completed",
+            cmd.workspace_id,
+            cmd.actor,
             {"pipeline_id": cmd.pipeline_id},
             correlation_id=pv.correlation_id,
         )
@@ -200,7 +205,10 @@ def advance_pipeline(
             conn, cmd.pipeline_id, "running", current_stage=next_stage
         )
         _emit_event(
-            conn, "pipeline.stage_started", cmd.workspace_id, cmd.actor,
+            conn,
+            "pipeline.stage_started",
+            cmd.workspace_id,
+            cmd.actor,
             {"pipeline_id": cmd.pipeline_id, "stage": next_stage},
             correlation_id=pv.correlation_id,
         )
@@ -213,7 +221,10 @@ def fail_pipeline(conn: Any, cmd: FailPipelineStageCommand) -> PipelineView:
     _assert_workspace_owns_pipeline(pv, cmd.workspace_id)
     pipeline_state.fail_stage(conn, cmd.pipeline_id, cmd.stage, error_message=cmd.error_message)
     _emit_event(
-        conn, "pipeline.stage_failed", cmd.workspace_id, cmd.actor,
+        conn,
+        "pipeline.stage_failed",
+        cmd.workspace_id,
+        cmd.actor,
         {"pipeline_id": cmd.pipeline_id, "stage": cmd.stage, "error": cmd.error_message},
         correlation_id=pv.correlation_id,
     )
@@ -225,7 +236,10 @@ def pause_pipeline(conn: Any, pipeline_id: str, workspace_id: str, actor: str) -
     _assert_workspace_owns_pipeline(pv, workspace_id)
     pipeline_state.update_pipeline_status(conn, pipeline_id, "paused")
     _emit_event(
-        conn, "pipeline.paused", workspace_id, actor,
+        conn,
+        "pipeline.paused",
+        workspace_id,
+        actor,
         {"pipeline_id": pipeline_id},
         correlation_id=pv.correlation_id,
     )
@@ -237,7 +251,10 @@ def resume_pipeline(conn: Any, pipeline_id: str, workspace_id: str, actor: str) 
     _assert_workspace_owns_pipeline(pv, workspace_id)
     pipeline_state.update_pipeline_status(conn, pipeline_id, "running")
     _emit_event(
-        conn, "pipeline.resumed", workspace_id, actor,
+        conn,
+        "pipeline.resumed",
+        workspace_id,
+        actor,
         {"pipeline_id": pipeline_id},
         correlation_id=pv.correlation_id,
     )
@@ -253,7 +270,10 @@ def cancel_pipeline(
         conn, pipeline_id, "cancelled", error_message=reason or None
     )
     _emit_event(
-        conn, "pipeline.cancelled", workspace_id, actor,
+        conn,
+        "pipeline.cancelled",
+        workspace_id,
+        actor,
         {"pipeline_id": pipeline_id, "reason": reason},
         correlation_id=pv.correlation_id,
     )
@@ -310,14 +330,20 @@ def execute_pipeline_stage(
         executor = registry.get(cmd.stage)
     except ExecutorNotFoundError:
         _emit_event(
-            conn, "pipeline.executor_not_found", cmd.workspace_id, cmd.actor,
+            conn,
+            "pipeline.executor_not_found",
+            cmd.workspace_id,
+            cmd.actor,
             {"pipeline_id": cmd.pipeline_id, "stage": cmd.stage},
             correlation_id=pv.correlation_id,
         )
         raise
     except ExecutorDisabledError:
         _emit_event(
-            conn, "pipeline.executor_disabled", cmd.workspace_id, cmd.actor,
+            conn,
+            "pipeline.executor_disabled",
+            cmd.workspace_id,
+            cmd.actor,
             {"pipeline_id": cmd.pipeline_id, "stage": cmd.stage},
             correlation_id=pv.correlation_id,
         )
@@ -355,7 +381,9 @@ def execute_pipeline_stage(
     # Persist result and transition stage state.
     if result.status == "completed":
         pipeline_state.advance_stage(
-            conn, cmd.pipeline_id, cmd.stage,
+            conn,
+            cmd.pipeline_id,
+            cmd.stage,
             artifact_id=result.artifact_id,
             artifact_type=result.artifact_type,
         )
@@ -363,7 +391,10 @@ def execute_pipeline_stage(
         if next_stage is None:
             pipeline_state.update_pipeline_status(conn, cmd.pipeline_id, "completed")
             _emit_event(
-                conn, "pipeline.completed", cmd.workspace_id, cmd.actor,
+                conn,
+                "pipeline.completed",
+                cmd.workspace_id,
+                cmd.actor,
                 {"pipeline_id": cmd.pipeline_id},
                 correlation_id=pv.correlation_id,
             )
@@ -372,20 +403,28 @@ def execute_pipeline_stage(
                 conn, cmd.pipeline_id, "running", current_stage=next_stage
             )
             _emit_event(
-                conn, "pipeline.stage_started", cmd.workspace_id, cmd.actor,
+                conn,
+                "pipeline.stage_started",
+                cmd.workspace_id,
+                cmd.actor,
                 {"pipeline_id": cmd.pipeline_id, "stage": next_stage},
                 correlation_id=pv.correlation_id,
             )
 
     elif result.status == "waiting_for_review":
         pipeline_state.advance_stage(
-            conn, cmd.pipeline_id, cmd.stage,
+            conn,
+            cmd.pipeline_id,
+            cmd.stage,
             artifact_id=result.artifact_id,
             artifact_type=result.artifact_type,
         )
         pipeline_state.set_stage_waiting_for_review(conn, cmd.pipeline_id, cmd.stage)
         _emit_event(
-            conn, "pipeline.waiting_for_review", cmd.workspace_id, cmd.actor,
+            conn,
+            "pipeline.waiting_for_review",
+            cmd.workspace_id,
+            cmd.actor,
             {
                 "pipeline_id": cmd.pipeline_id,
                 "stage": cmd.stage,
@@ -397,11 +436,16 @@ def execute_pipeline_stage(
 
     elif result.status == "failed":
         pipeline_state.fail_stage(
-            conn, cmd.pipeline_id, cmd.stage,
+            conn,
+            cmd.pipeline_id,
+            cmd.stage,
             error_message=result.error_message or "executor reported failure",
         )
         _emit_event(
-            conn, "pipeline.stage_failed", cmd.workspace_id, cmd.actor,
+            conn,
+            "pipeline.stage_failed",
+            cmd.workspace_id,
+            cmd.actor,
             {
                 "pipeline_id": cmd.pipeline_id,
                 "stage": cmd.stage,
@@ -413,11 +457,16 @@ def execute_pipeline_stage(
 
     else:  # blocked
         pipeline_state.update_pipeline_status(
-            conn, cmd.pipeline_id, "blocked",
+            conn,
+            cmd.pipeline_id,
+            "blocked",
             blocked_reason=result.error_message or "executor blocked",
         )
         _emit_event(
-            conn, "pipeline.stage_blocked", cmd.workspace_id, cmd.actor,
+            conn,
+            "pipeline.stage_blocked",
+            cmd.workspace_id,
+            cmd.actor,
             {
                 "pipeline_id": cmd.pipeline_id,
                 "stage": cmd.stage,

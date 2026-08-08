@@ -119,8 +119,11 @@ class FFprobeValidator:
 
     def _probe(self, path: Path) -> dict[str, Any]:
         cmd = [
-            self._ffprobe, "-v", "quiet",
-            "-print_format", "json",
+            self._ffprobe,
+            "-v",
+            "quiet",
+            "-print_format",
+            "json",
             "-show_streams",
             "-show_format",
             str(path),

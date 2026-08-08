@@ -24,9 +24,8 @@ from app.narration.providers.elevenlabs import (
     ElevenLabsTTSProvider,
 )
 
-_LIVE_ENABLED = (
-    os.environ.get("ACE_TTS_LIVE_ENABLED", "").lower() in {"1", "true", "yes"}
-    and bool(os.environ.get("ACE_ELEVENLABS_API_KEY", "").strip())
+_LIVE_ENABLED = os.environ.get("ACE_TTS_LIVE_ENABLED", "").lower() in {"1", "true", "yes"} and bool(
+    os.environ.get("ACE_ELEVENLABS_API_KEY", "").strip()
 )
 
 skip_unless_live = pytest.mark.skipif(
@@ -57,6 +56,7 @@ def test_elevenlabs_smoke_live_synthesis() -> None:
     import wave
 
     from app.core.config import reset_config
+
     reset_config()
 
     provider = ElevenLabsTTSProvider()

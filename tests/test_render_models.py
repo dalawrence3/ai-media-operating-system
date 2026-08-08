@@ -32,14 +32,27 @@ def _make_manifest_row(**overrides) -> sqlite3.Row:
         """
     )
     defaults = dict(
-        id=1, scene_manifest_id=10, narration_run_id=20, caption_run_id=30,
-        topic_id=1, plan_id=2, script_id=3, experiment_id=None,
-        input_hash="abc123", render_schema_version="Render-v1",
+        id=1,
+        scene_manifest_id=10,
+        narration_run_id=20,
+        caption_run_id=30,
+        topic_id=1,
+        plan_id=2,
+        script_id=3,
+        experiment_id=None,
+        input_hash="abc123",
+        render_schema_version="Render-v1",
         compositor_version="compositor-1.0.0",
-        total_scene_count=5, total_duration_ms=30000,
-        width=1080, height=1920, fps=30,
-        caption_burn_in=0, status="draft",
-        approved_at=None, rejected_at=None, superseded_at=None,
+        total_scene_count=5,
+        total_duration_ms=30000,
+        width=1080,
+        height=1920,
+        fps=30,
+        caption_burn_in=0,
+        status="draft",
+        approved_at=None,
+        rejected_at=None,
+        superseded_at=None,
         superseded_by_id=None,
         created_at="2026-08-06T10:00:00",
         updated_at="2026-08-06T10:00:00",
@@ -68,14 +81,30 @@ def _make_job_row(**overrides) -> sqlite3.Row:
         """
     )
     defaults = dict(
-        id=1, render_manifest_id=1, backend="ffmpeg", backend_version="ffmpeg-1.0.0",
-        output_path=None, output_sha256=None, duration_s=None,
-        file_size_bytes=None, render_time_s=None,
-        width=1080, height=1920, fps=30,
-        video_codec="libx264", audio_codec="aac", crf=23, audio_bitrate="128k",
-        caption_burn_in=0, ffmpeg_cmd_json=None, status="pending",
-        error_message=None, validated=0, validation_metadata_json=None,
-        started_at=None, completed_at=None,
+        id=1,
+        render_manifest_id=1,
+        backend="ffmpeg",
+        backend_version="ffmpeg-1.0.0",
+        output_path=None,
+        output_sha256=None,
+        duration_s=None,
+        file_size_bytes=None,
+        render_time_s=None,
+        width=1080,
+        height=1920,
+        fps=30,
+        video_codec="libx264",
+        audio_codec="aac",
+        crf=23,
+        audio_bitrate="128k",
+        caption_burn_in=0,
+        ffmpeg_cmd_json=None,
+        status="pending",
+        error_message=None,
+        validated=0,
+        validation_metadata_json=None,
+        started_at=None,
+        completed_at=None,
         created_at="2026-08-06T10:00:00",
         updated_at="2026-08-06T10:00:00",
     )
@@ -124,6 +153,7 @@ class TestRenderJob:
 
     def test_from_row_with_cmd(self):
         import json
+
         cmd = ["ffmpeg", "-i", "input.wav", "output.mp4"]
         row = _make_job_row(ffmpeg_cmd_json=json.dumps(cmd), status="completed")
         j = RenderJob.from_row(row)
@@ -131,6 +161,7 @@ class TestRenderJob:
 
     def test_from_row_validated(self):
         import json
+
         meta = {"duration_s": 30.1, "has_video": True}
         row = _make_job_row(
             validated=1,

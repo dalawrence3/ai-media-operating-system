@@ -43,9 +43,7 @@ def _check_https_downgrade(response: httpx.Response, original_scheme: str) -> No
                 )
     # Also check final URL
     if response.url.scheme == "http":
-        raise SecurityError(
-            f"Request started as HTTPS but final URL is HTTP: {response.url}"
-        )
+        raise SecurityError(f"Request started as HTTPS but final URL is HTTP: {response.url}")
 
 
 def fetch_url(
@@ -64,9 +62,7 @@ def fetch_url(
 
     original_scheme = urlparse(url).scheme.lower()
 
-    timeout = httpx.Timeout(
-        HTTP_READ_TIMEOUT, connect=HTTP_CONNECT_TIMEOUT, pool=5.0
-    )
+    timeout = httpx.Timeout(HTTP_READ_TIMEOUT, connect=HTTP_CONNECT_TIMEOUT, pool=5.0)
 
     own_client = http_client is None
     client = http_client or httpx.Client(
@@ -91,9 +87,7 @@ def fetch_url(
                 # Validate MIME type
                 content_type = response.headers.get("content-type", "")
                 mime_type = content_type.split(";")[0].strip().lower() or None
-                if mime_type and not any(
-                    mime_type.startswith(p) for p in ALLOWED_MIME_PREFIXES
-                ):
+                if mime_type and not any(mime_type.startswith(p) for p in ALLOWED_MIME_PREFIXES):
                     raise FetchError(
                         f"Unsupported content type {content_type!r}. "
                         f"Expected one of: {', '.join(ALLOWED_MIME_PREFIXES)}",
@@ -117,9 +111,7 @@ def fetch_url(
                 canonical_url = str(response.url)
 
         except httpx.TooManyRedirects as exc:
-            raise FetchError(
-                f"Too many redirects (limit: {HTTP_MAX_REDIRECTS}): {exc}"
-            ) from exc
+            raise FetchError(f"Too many redirects (limit: {HTTP_MAX_REDIRECTS}): {exc}") from exc
         except httpx.TimeoutException as exc:
             raise FetchError(f"Request timed out: {exc}") from exc
         except httpx.NetworkError as exc:

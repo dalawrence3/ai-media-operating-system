@@ -81,7 +81,9 @@ def dispatch_stage(
     except ProviderBoundaryError as exc:
         logger.warning(
             "Stage blocked by boundary gate: pipeline=%s stage=%s class=%s",
-            pipeline_id, stage, stage_class.value,
+            pipeline_id,
+            stage,
+            stage_class.value,
         )
         return ExecutorResult(
             status="blocked",

@@ -52,10 +52,9 @@ def validate_publishing_metadata(metadata: PublishingMetadataDraft) -> None:
         )
     for tag in metadata.tags:
         if len(tag) > _MAX_TAG_LEN:
-            raise PublishingValidationError(
-                f"Tag {tag!r} exceeds {_MAX_TAG_LEN} chars."
-            )
+            raise PublishingValidationError(f"Tag {tag!r} exceeds {_MAX_TAG_LEN} chars.")
     from app.publishing.constants import VISIBILITY_OPTIONS
+
     if metadata.visibility not in VISIBILITY_OPTIONS:
         raise PublishingValidationError(
             f"Invalid visibility {metadata.visibility!r}. "

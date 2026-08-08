@@ -34,8 +34,8 @@ class ObjectRef:
 
     storage_backend: str  # "local" or "s3"
     bucket: str
-    object_key: str       # workspace-scoped: workspace_id/channel_id/…/filename
-    sha256: str           # hex-encoded SHA-256 of raw bytes
+    object_key: str  # workspace-scoped: workspace_id/channel_id/…/filename
+    sha256: str  # hex-encoded SHA-256 of raw bytes
     byte_size: int
     content_type: str
 
@@ -44,8 +44,7 @@ class ObjectRef:
         actual = hashlib.sha256(data).hexdigest()
         if actual != self.sha256:
             raise StorageIntegrityError(
-                f"SHA-256 mismatch for {self.object_key}: "
-                f"expected {self.sha256}, got {actual}"
+                f"SHA-256 mismatch for {self.object_key}: expected {self.sha256}, got {actual}"
             )
 
 

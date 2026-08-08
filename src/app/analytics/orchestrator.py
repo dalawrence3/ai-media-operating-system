@@ -99,9 +99,7 @@ def _validate_publication_eligibility(
     ).fetchone()
 
     if pub is None:
-        raise PublicationIneligibleError(
-            publication_id, "publication not found in database"
-        )
+        raise PublicationIneligibleError(publication_id, "publication not found in database")
 
     status = pub["status"] or ""
     if status not in PUBLICATION_ELIGIBLE_STATUSES:
@@ -113,9 +111,7 @@ def _validate_publication_eligibility(
 
     provider_video_id = pub["provider_video_id"]
     if not provider_video_id:
-        raise PublicationIneligibleError(
-            publication_id, "provider_video_id is null or empty"
-        )
+        raise PublicationIneligibleError(publication_id, "provider_video_id is null or empty")
 
     pub_provider = pub["provider"] or ""
     if pub_provider != provider_name:

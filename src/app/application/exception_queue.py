@@ -154,9 +154,7 @@ def get_exception_queue(conn: Any, workspace_id: str) -> list[ExceptionView]:
                 exception_type="health_degraded",
                 entity_id=hr["entity_id"],
                 workspace_id=workspace_id,
-                description=(
-                    f"{hr['entity_type']} '{hr['entity_id']}' health: {hr['status']}"
-                ),
+                description=(f"{hr['entity_type']} '{hr['entity_id']}' health: {hr['status']}"),
                 severity="high" if hr["status"] in ("unavailable", "failed") else "medium",
                 occurred_at=hr["recorded_at"] or _now_iso(),
                 metadata={

@@ -290,7 +290,8 @@ def _make_completed_run_with_assets(conn: sqlite3.Connection) -> int:
             conn, _asset_draft(run.id, seg_id, input_hash=("x" * 63 + str(seg_id)))
         )
         finalize_narration_segment_asset(
-            conn, asset.id,
+            conn,
+            asset.id,
             audio_path=f"narration/plan_1/run_{run.id}/segment_{seg_id}.wav",
             audio_sha256="e" * 64,
             duration_seconds=2.0,
@@ -328,9 +329,13 @@ def test_approve_run_with_rejected_segments_raises(conn: sqlite3.Connection) -> 
     run = create_narration_run(conn, _run_draft(vp.id))
     asset = create_narration_segment_asset(conn, _asset_draft(run.id, 1))
     finalize_narration_segment_asset(
-        conn, asset.id,
-        audio_path="x.wav", audio_sha256="e" * 64,
-        duration_seconds=1.0, characters_billed=5, cost_usd=0.0,
+        conn,
+        asset.id,
+        audio_path="x.wav",
+        audio_sha256="e" * 64,
+        duration_seconds=1.0,
+        characters_billed=5,
+        cost_usd=0.0,
     )
     reject_narration_segment_asset(conn, asset.id, reason_code="pacing")
     complete_narration_run(conn, run.id)
@@ -383,7 +388,8 @@ def test_finalize_segment_asset(conn: sqlite3.Connection) -> None:
     run = create_narration_run(conn, _run_draft(vp.id))
     asset = create_narration_segment_asset(conn, _asset_draft(run.id, 1))
     done = finalize_narration_segment_asset(
-        conn, asset.id,
+        conn,
+        asset.id,
         audio_path="narration/plan_1/run_1/segment_1.wav",
         audio_sha256="e" * 64,
         duration_seconds=2.5,
@@ -400,15 +406,23 @@ def test_finalize_non_pending_raises(conn: sqlite3.Connection) -> None:
     run = create_narration_run(conn, _run_draft(vp.id))
     asset = create_narration_segment_asset(conn, _asset_draft(run.id, 1))
     finalize_narration_segment_asset(
-        conn, asset.id,
-        audio_path="x.wav", audio_sha256="e" * 64,
-        duration_seconds=1.0, characters_billed=5, cost_usd=0.0,
+        conn,
+        asset.id,
+        audio_path="x.wav",
+        audio_sha256="e" * 64,
+        duration_seconds=1.0,
+        characters_billed=5,
+        cost_usd=0.0,
     )
     with pytest.raises(IllegalSegmentTransitionError):
         finalize_narration_segment_asset(
-            conn, asset.id,
-            audio_path="x.wav", audio_sha256="e" * 64,
-            duration_seconds=1.0, characters_billed=5, cost_usd=0.0,
+            conn,
+            asset.id,
+            audio_path="x.wav",
+            audio_sha256="e" * 64,
+            duration_seconds=1.0,
+            characters_billed=5,
+            cost_usd=0.0,
         )
 
 
@@ -417,9 +431,13 @@ def test_reject_segment_asset(conn: sqlite3.Connection) -> None:
     run = create_narration_run(conn, _run_draft(vp.id))
     asset = create_narration_segment_asset(conn, _asset_draft(run.id, 1))
     finalize_narration_segment_asset(
-        conn, asset.id,
-        audio_path="x.wav", audio_sha256="e" * 64,
-        duration_seconds=1.0, characters_billed=5, cost_usd=0.0,
+        conn,
+        asset.id,
+        audio_path="x.wav",
+        audio_sha256="e" * 64,
+        duration_seconds=1.0,
+        characters_billed=5,
+        cost_usd=0.0,
     )
     rejected = reject_narration_segment_asset(conn, asset.id, reason_code="pacing")
     assert rejected.status == "rejected"
@@ -446,9 +464,13 @@ def test_other_reason_code_requires_notes(conn: sqlite3.Connection) -> None:
     run = create_narration_run(conn, _run_draft(vp.id))
     asset = create_narration_segment_asset(conn, _asset_draft(run.id, 1))
     finalize_narration_segment_asset(
-        conn, asset.id,
-        audio_path="x.wav", audio_sha256="e" * 64,
-        duration_seconds=1.0, characters_billed=5, cost_usd=0.0,
+        conn,
+        asset.id,
+        audio_path="x.wav",
+        audio_sha256="e" * 64,
+        duration_seconds=1.0,
+        characters_billed=5,
+        cost_usd=0.0,
     )
     with pytest.raises(InvalidNarrationReasonCodeError):
         reject_narration_segment_asset(conn, asset.id, reason_code="other")
@@ -459,16 +481,24 @@ def test_finalize_after_rejection_creates_review_event(conn: sqlite3.Connection)
     run = create_narration_run(conn, _run_draft(vp.id))
     asset1 = create_narration_segment_asset(conn, _asset_draft(run.id, 1, input_hash="x" * 64))
     finalize_narration_segment_asset(
-        conn, asset1.id,
-        audio_path="x.wav", audio_sha256="e" * 64,
-        duration_seconds=1.0, characters_billed=5, cost_usd=0.0,
+        conn,
+        asset1.id,
+        audio_path="x.wav",
+        audio_sha256="e" * 64,
+        duration_seconds=1.0,
+        characters_billed=5,
+        cost_usd=0.0,
     )
     reject_narration_segment_asset(conn, asset1.id, reason_code="pacing")
     asset2 = create_narration_segment_asset(conn, _asset_draft(run.id, 1, input_hash="y" * 64))
     finalize_narration_segment_asset(
-        conn, asset2.id,
-        audio_path="y.wav", audio_sha256="f" * 64,
-        duration_seconds=1.5, characters_billed=5, cost_usd=0.0,
+        conn,
+        asset2.id,
+        audio_path="y.wav",
+        audio_sha256="f" * 64,
+        duration_seconds=1.5,
+        characters_billed=5,
+        cost_usd=0.0,
     )
     events = list_narration_review_events(conn, run.id)
     assert any(e.event_type == "segment_regenerated" for e in events)
@@ -544,9 +574,13 @@ def test_approve_supersedes_prior_approved_run(conn: sqlite3.Connection) -> None
             conn, _asset_draft(run2.id, seg_id, input_hash=("z" * 63 + str(seg_id)))
         )
         finalize_narration_segment_asset(
-            conn, asset.id,
-            audio_path=f"x_{seg_id}.wav", audio_sha256="e" * 64,
-            duration_seconds=2.0, characters_billed=10, cost_usd=0.0,
+            conn,
+            asset.id,
+            audio_path=f"x_{seg_id}.wav",
+            audio_sha256="e" * 64,
+            duration_seconds=2.0,
+            characters_billed=10,
+            cost_usd=0.0,
         )
     complete_narration_run(conn, run2.id)
     approve_narration_run(conn, run2.id)
@@ -569,9 +603,13 @@ def test_approve_prior_run_retains_approved_status(conn: sqlite3.Connection) -> 
             conn, _asset_draft(run2.id, seg_id, input_hash=("z" * 63 + str(seg_id)))
         )
         finalize_narration_segment_asset(
-            conn, asset.id,
-            audio_path=f"x_{seg_id}.wav", audio_sha256="e" * 64,
-            duration_seconds=2.0, characters_billed=10, cost_usd=0.0,
+            conn,
+            asset.id,
+            audio_path=f"x_{seg_id}.wav",
+            audio_sha256="e" * 64,
+            duration_seconds=2.0,
+            characters_billed=10,
+            cost_usd=0.0,
         )
     complete_narration_run(conn, run2.id)
     approve_narration_run(conn, run2.id)
@@ -592,9 +630,13 @@ def test_approve_no_rejection_event_for_superseded(conn: sqlite3.Connection) -> 
             conn, _asset_draft(run2.id, seg_id, input_hash=("z" * 63 + str(seg_id)))
         )
         finalize_narration_segment_asset(
-            conn, asset.id,
-            audio_path=f"x_{seg_id}.wav", audio_sha256="e" * 64,
-            duration_seconds=2.0, characters_billed=10, cost_usd=0.0,
+            conn,
+            asset.id,
+            audio_path=f"x_{seg_id}.wav",
+            audio_sha256="e" * 64,
+            duration_seconds=2.0,
+            characters_billed=10,
+            cost_usd=0.0,
         )
     complete_narration_run(conn, run2.id)
     approve_narration_run(conn, run2.id)
@@ -614,9 +656,13 @@ def test_active_approved_returns_replacement_after_supersession(conn: sqlite3.Co
             conn, _asset_draft(run2.id, seg_id, input_hash=("z" * 63 + str(seg_id)))
         )
         finalize_narration_segment_asset(
-            conn, asset.id,
-            audio_path=f"x_{seg_id}.wav", audio_sha256="e" * 64,
-            duration_seconds=2.0, characters_billed=10, cost_usd=0.0,
+            conn,
+            asset.id,
+            audio_path=f"x_{seg_id}.wav",
+            audio_sha256="e" * 64,
+            duration_seconds=2.0,
+            characters_billed=10,
+            cost_usd=0.0,
         )
     complete_narration_run(conn, run2.id)
     approve_narration_run(conn, run2.id)
@@ -637,9 +683,13 @@ def test_historical_approved_run_still_queryable(conn: sqlite3.Connection) -> No
             conn, _asset_draft(run2.id, seg_id, input_hash=("z" * 63 + str(seg_id)))
         )
         finalize_narration_segment_asset(
-            conn, asset.id,
-            audio_path=f"x_{seg_id}.wav", audio_sha256="e" * 64,
-            duration_seconds=2.0, characters_billed=10, cost_usd=0.0,
+            conn,
+            asset.id,
+            audio_path=f"x_{seg_id}.wav",
+            audio_sha256="e" * 64,
+            duration_seconds=2.0,
+            characters_billed=10,
+            cost_usd=0.0,
         )
     complete_narration_run(conn, run2.id)
     approve_narration_run(conn, run2.id)
@@ -676,9 +726,13 @@ def _make_synthesized_asset(conn: sqlite3.Connection) -> int:
     run = create_narration_run(conn, _run_draft(vp.id))
     asset = create_narration_segment_asset(conn, _asset_draft(run.id, 1))
     finalize_narration_segment_asset(
-        conn, asset.id,
-        audio_path="x.wav", audio_sha256="e" * 64,
-        duration_seconds=1.0, characters_billed=5, cost_usd=0.0,
+        conn,
+        asset.id,
+        audio_path="x.wav",
+        audio_sha256="e" * 64,
+        duration_seconds=1.0,
+        characters_billed=5,
+        cost_usd=0.0,
     )
     return asset.id
 
@@ -725,6 +779,7 @@ def test_severity_validated_before_savepoint(conn: sqlite3.Connection) -> None:
         reject_narration_segment_asset(conn, asset_id, reason_code="pacing", severity=99)
     # Asset must still be synthesized (no partial DB change).
     from app.narration.repository import require_narration_segment_asset
+
     asset = require_narration_segment_asset(conn, asset_id)
     assert asset.status == "synthesized"
 
@@ -735,7 +790,11 @@ def test_severity_validated_before_savepoint(conn: sqlite3.Connection) -> None:
 def test_segment_rejection_event_has_context(conn: sqlite3.Connection) -> None:
     asset_id = _make_synthesized_asset(conn)
     reject_narration_segment_asset(
-        conn, asset_id, reason_code="pacing", severity=2, actor="qa-1",
+        conn,
+        asset_id,
+        reason_code="pacing",
+        severity=2,
+        actor="qa-1",
         expected_correction="slow down",
     )
     conn.row_factory = sqlite3.Row
@@ -758,16 +817,24 @@ def test_regeneration_event_identifies_both_assets(conn: sqlite3.Connection) -> 
     run = create_narration_run(conn, _run_draft(vp.id))
     asset1 = create_narration_segment_asset(conn, _asset_draft(run.id, 1, input_hash="x" * 64))
     finalize_narration_segment_asset(
-        conn, asset1.id,
-        audio_path="x.wav", audio_sha256="e" * 64,
-        duration_seconds=1.0, characters_billed=5, cost_usd=0.0,
+        conn,
+        asset1.id,
+        audio_path="x.wav",
+        audio_sha256="e" * 64,
+        duration_seconds=1.0,
+        characters_billed=5,
+        cost_usd=0.0,
     )
     reject_narration_segment_asset(conn, asset1.id, reason_code="pacing")
     asset2 = create_narration_segment_asset(conn, _asset_draft(run.id, 1, input_hash="y" * 64))
     finalize_narration_segment_asset(
-        conn, asset2.id,
-        audio_path="y.wav", audio_sha256="f" * 64,
-        duration_seconds=1.5, characters_billed=5, cost_usd=0.0,
+        conn,
+        asset2.id,
+        audio_path="y.wav",
+        audio_sha256="f" * 64,
+        duration_seconds=1.5,
+        characters_billed=5,
+        cost_usd=0.0,
         actor="qa-1",
     )
     conn.row_factory = sqlite3.Row

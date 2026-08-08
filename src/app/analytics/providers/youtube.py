@@ -53,17 +53,17 @@ _SECONDS_PER_MINUTE = 60.0
 # currency is intentionally absent: it is a string code and cannot be stored
 # as a REAL column.  Currency codes are preserved in raw_metrics_json only.
 _YT_FIELD_MAP: dict[str, str] = {
-    "views":                        METRIC_VIEWS,
-    "averageViewDuration":          METRIC_AVERAGE_VIEW_DURATION,
-    "impressions":                  METRIC_IMPRESSIONS,
-    "impressionClickThroughRate":   METRIC_CTR,
-    "likes":                        METRIC_LIKES,
-    "dislikes":                     METRIC_DISLIKES,
-    "comments":                     METRIC_COMMENTS,
-    "shares":                       METRIC_SHARES,
-    "subscribersGained":            METRIC_SUBSCRIBERS_GAINED,
-    "subscribersLost":              METRIC_SUBSCRIBERS_LOST,
-    "estimatedRevenue":             METRIC_REVENUE_ESTIMATE,
+    "views": METRIC_VIEWS,
+    "averageViewDuration": METRIC_AVERAGE_VIEW_DURATION,
+    "impressions": METRIC_IMPRESSIONS,
+    "impressionClickThroughRate": METRIC_CTR,
+    "likes": METRIC_LIKES,
+    "dislikes": METRIC_DISLIKES,
+    "comments": METRIC_COMMENTS,
+    "shares": METRIC_SHARES,
+    "subscribersGained": METRIC_SUBSCRIBERS_GAINED,
+    "subscribersLost": METRIC_SUBSCRIBERS_LOST,
+    "estimatedRevenue": METRIC_REVENUE_ESTIMATE,
 }
 
 

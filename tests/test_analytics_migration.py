@@ -23,9 +23,7 @@ class TestSchemaMigration:
         conn = open_db(tmp_path / "test.db")
         tables = {
             r[0]
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "analytics_snapshots" in tables
         assert "analytics_metrics" in tables
@@ -34,31 +32,50 @@ class TestSchemaMigration:
 
     def test_analytics_snapshot_columns(self, tmp_path: Path):
         conn = open_db(tmp_path / "test.db")
-        cols = {
-            r[1]
-            for r in conn.execute("PRAGMA table_info(analytics_snapshots)").fetchall()
-        }
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(analytics_snapshots)").fetchall()}
         expected = {
-            "id", "publication_id", "publishing_plan_id", "publishing_job_id",
-            "render_manifest_id", "scene_manifest_id", "production_plan_id",
-            "script_id", "topic_id", "narration_run_id", "caption_run_id",
-            "experiment_id", "provider", "provider_version", "adapter_version",
-            "engine_version", "analytics_schema_version", "db_schema_version",
-            "input_hash", "raw_metrics_json", "period_start", "period_end",
-            "ingested_at", "created_at",
+            "id",
+            "publication_id",
+            "publishing_plan_id",
+            "publishing_job_id",
+            "render_manifest_id",
+            "scene_manifest_id",
+            "production_plan_id",
+            "script_id",
+            "topic_id",
+            "narration_run_id",
+            "caption_run_id",
+            "experiment_id",
+            "provider",
+            "provider_version",
+            "adapter_version",
+            "engine_version",
+            "analytics_schema_version",
+            "db_schema_version",
+            "input_hash",
+            "raw_metrics_json",
+            "period_start",
+            "period_end",
+            "ingested_at",
+            "created_at",
         }
         assert expected <= cols
 
     def test_analytics_metrics_columns(self, tmp_path: Path):
         conn = open_db(tmp_path / "test.db")
-        cols = {
-            r[1]
-            for r in conn.execute("PRAGMA table_info(analytics_metrics)").fetchall()
-        }
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(analytics_metrics)").fetchall()}
         expected = {
-            "id", "snapshot_id", "publication_id", "topic_id", "provider",
-            "metric_name", "metric_value", "period_start", "period_end",
-            "input_hash", "created_at",
+            "id",
+            "snapshot_id",
+            "publication_id",
+            "topic_id",
+            "provider",
+            "metric_name",
+            "metric_value",
+            "period_start",
+            "period_end",
+            "input_hash",
+            "created_at",
         }
         assert expected <= cols
 
@@ -159,8 +176,6 @@ class TestSchemaMigration:
         assert version == 20
         tables = {
             r[0]
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "analytics_snapshots" in tables

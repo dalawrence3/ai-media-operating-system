@@ -19,7 +19,7 @@ class LearningRunHashInput:
     """Canonical fields that uniquely identify a learning run."""
 
     topic_id: int
-    publication_id: int | None      # None = topic-level run
+    publication_id: int | None  # None = topic-level run
     engine_version: str
     schema_version: str
     algorithm_version: str
@@ -65,42 +65,48 @@ def _stable_json(obj: object) -> str:
 
 def compute_learning_run_hash(inp: LearningRunHashInput) -> str:
     """Return a hex SHA-256 hash for the learning run input."""
-    payload = _stable_json({
-        "topic_id": inp.topic_id,
-        "publication_id": inp.publication_id,
-        "engine_version": inp.engine_version,
-        "schema_version": inp.schema_version,
-        "algorithm_version": inp.algorithm_version,
-        "snapshot_ids_sorted": sorted(inp.snapshot_ids_sorted),
-    })
+    payload = _stable_json(
+        {
+            "topic_id": inp.topic_id,
+            "publication_id": inp.publication_id,
+            "engine_version": inp.engine_version,
+            "schema_version": inp.schema_version,
+            "algorithm_version": inp.algorithm_version,
+            "snapshot_ids_sorted": sorted(inp.snapshot_ids_sorted),
+        }
+    )
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def compute_recommendation_hash(inp: RecommendationHashInput) -> str:
     """Return a hex SHA-256 hash for the recommendation input."""
-    payload = _stable_json({
-        "learning_run_id": inp.learning_run_id,
-        "topic_id": inp.topic_id,
-        "publication_id": inp.publication_id,
-        "domain": inp.domain,
-        "subsystem": inp.subsystem,
-        "measure": inp.measure,
-        "engine_version": inp.engine_version,
-        "schema_version": inp.schema_version,
-        "algorithm_version": inp.algorithm_version,
-        "evidence_classification": inp.evidence_classification,
-        "recommendation_strength": inp.recommendation_strength,
-        "evidence_snapshot_ids_sorted": sorted(inp.evidence_snapshot_ids_sorted),
-    })
+    payload = _stable_json(
+        {
+            "learning_run_id": inp.learning_run_id,
+            "topic_id": inp.topic_id,
+            "publication_id": inp.publication_id,
+            "domain": inp.domain,
+            "subsystem": inp.subsystem,
+            "measure": inp.measure,
+            "engine_version": inp.engine_version,
+            "schema_version": inp.schema_version,
+            "algorithm_version": inp.algorithm_version,
+            "evidence_classification": inp.evidence_classification,
+            "recommendation_strength": inp.recommendation_strength,
+            "evidence_snapshot_ids_sorted": sorted(inp.evidence_snapshot_ids_sorted),
+        }
+    )
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
 def compute_review_event_hash(inp: ReviewEventHashInput) -> str:
     """Return a hex SHA-256 hash for the review event input."""
-    payload = _stable_json({
-        "recommendation_id": inp.recommendation_id,
-        "topic_id": inp.topic_id,
-        "event_type": inp.event_type,
-        "reviewer": inp.reviewer,
-    })
+    payload = _stable_json(
+        {
+            "recommendation_id": inp.recommendation_id,
+            "topic_id": inp.topic_id,
+            "event_type": inp.event_type,
+            "reviewer": inp.reviewer,
+        }
+    )
     return hashlib.sha256(payload.encode()).hexdigest()

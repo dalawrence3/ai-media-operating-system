@@ -426,6 +426,7 @@ def test_script_body_hash_changes_when_text_changes() -> None:
 
 def test_plan_draft_to_json_summary_is_valid_json() -> None:
     import json
+
     draft = build_production_plan(_make_approved_script())
     summary = plan_draft_to_json_summary(draft)
     parsed = json.loads(summary)
@@ -436,11 +437,20 @@ def test_plan_draft_to_json_summary_is_valid_json() -> None:
 
 def test_plan_draft_to_json_summary_includes_required_keys() -> None:
     import json
+
     draft = build_production_plan(_make_approved_script())
     parsed = json.loads(plan_draft_to_json_summary(draft))
     required = {
-        "topic_id", "script_id", "script_version", "title", "format",
-        "total_estimated_duration_s", "total_word_count", "segment_count",
-        "requires_evidence_review", "warnings", "input_hash",
+        "topic_id",
+        "script_id",
+        "script_version",
+        "title",
+        "format",
+        "total_estimated_duration_s",
+        "total_word_count",
+        "segment_count",
+        "requires_evidence_review",
+        "warnings",
+        "input_hash",
     }
     assert required <= parsed.keys()

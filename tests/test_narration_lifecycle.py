@@ -65,11 +65,18 @@ def test_synthesis_works_before_initialize() -> None:
 
     p = FakeTTSProvider()
     assert p.lifecycle_state == ProviderLifecycleState.CREATED
-    resp = p.synthesize(TTSRequest(
-        text="Test", provider=FAKE_PROVIDER_NAME, model=FAKE_MODEL_NAME,
-        voice_id=FAKE_VOICE_ID, language="en-US", speaking_rate=1.0,
-        output_format="wav", sample_rate_hz=22050,
-    ))
+    resp = p.synthesize(
+        TTSRequest(
+            text="Test",
+            provider=FAKE_PROVIDER_NAME,
+            model=FAKE_MODEL_NAME,
+            voice_id=FAKE_VOICE_ID,
+            language="en-US",
+            speaking_rate=1.0,
+            output_format="wav",
+            sample_rate_hz=22050,
+        )
+    )
     assert resp.audio_bytes
 
 
@@ -79,11 +86,18 @@ def test_synthesis_works_after_initialize() -> None:
 
     p = FakeTTSProvider()
     p.initialize()
-    resp = p.synthesize(TTSRequest(
-        text="Hello", provider=FAKE_PROVIDER_NAME, model=FAKE_MODEL_NAME,
-        voice_id=FAKE_VOICE_ID, language="en-US", speaking_rate=1.0,
-        output_format="wav", sample_rate_hz=22050,
-    ))
+    resp = p.synthesize(
+        TTSRequest(
+            text="Hello",
+            provider=FAKE_PROVIDER_NAME,
+            model=FAKE_MODEL_NAME,
+            voice_id=FAKE_VOICE_ID,
+            language="en-US",
+            speaking_rate=1.0,
+            output_format="wav",
+            sample_rate_hz=22050,
+        )
+    )
     assert resp.audio_bytes
 
 

@@ -102,9 +102,7 @@ class InMemoryResponseCache:
         elif len(self._store) >= self._max_size:
             oldest = self._order.pop(0)
             del self._store[oldest]
-        entry = CacheEntry(
-            key=key, response=response, cached_at=datetime.now(tz=UTC)
-        )
+        entry = CacheEntry(key=key, response=response, cached_at=datetime.now(tz=UTC))
         self._store[key] = entry
         self._order.append(key)
 

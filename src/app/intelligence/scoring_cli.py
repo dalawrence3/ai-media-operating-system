@@ -103,18 +103,42 @@ def intelligence_score(
         typer.echo("  ⚠ Requires research: audience_fit or another factor has no data.")
 
     factors = [
-        ("audience_fit", result.score_audience_fit,
-         result.eff_weight_audience_fit, result.status_audience_fit),
-        ("evergreen_value", result.score_evergreen_value,
-         result.eff_weight_evergreen_value, result.status_evergreen_value),
-        ("audience_demand", result.score_audience_demand,
-         result.eff_weight_audience_demand, result.status_audience_demand),
-        ("content_novelty", result.score_content_novelty,
-         result.eff_weight_content_novelty, result.status_content_novelty),
-        ("trend_strength", result.score_trend_strength,
-         result.eff_weight_trend_strength, result.status_trend_strength),
-        ("competition", result.score_competition,
-         result.eff_weight_competition, result.status_competition),
+        (
+            "audience_fit",
+            result.score_audience_fit,
+            result.eff_weight_audience_fit,
+            result.status_audience_fit,
+        ),
+        (
+            "evergreen_value",
+            result.score_evergreen_value,
+            result.eff_weight_evergreen_value,
+            result.status_evergreen_value,
+        ),
+        (
+            "audience_demand",
+            result.score_audience_demand,
+            result.eff_weight_audience_demand,
+            result.status_audience_demand,
+        ),
+        (
+            "content_novelty",
+            result.score_content_novelty,
+            result.eff_weight_content_novelty,
+            result.status_content_novelty,
+        ),
+        (
+            "trend_strength",
+            result.score_trend_strength,
+            result.eff_weight_trend_strength,
+            result.status_trend_strength,
+        ),
+        (
+            "competition",
+            result.score_competition,
+            result.eff_weight_competition,
+            result.status_competition,
+        ),
     ]
     typer.echo("")
     typer.echo("  Factor breakdown:")
@@ -127,7 +151,7 @@ def intelligence_score(
     typer.echo(f"  Observations: {obs_count}  |  Input hash: {result.input_hash[:8]}...")
     typer.echo(f"  Scorer: {result.scorer_version}  |  Scored at: {result.scored_at}")
     default_tag = "  (default)" if policy.is_default else ""
-    typer.echo(f"  Policy: v{policy.version} \"{policy.label}\"{default_tag}")
+    typer.echo(f'  Policy: v{policy.version} "{policy.label}"{default_tag}')
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +225,7 @@ def intelligence_score_all(
 
     results.sort(key=lambda x: -x[1].composite_score)
 
-    typer.echo(f"Scored {len(opps)} opportunities  (policy: v{policy.version} \"{policy.label}\")")
+    typer.echo(f'Scored {len(opps)} opportunities  (policy: v{policy.version} "{policy.label}")')
     typer.echo("")
     typer.echo(f"  {'#':<5} {'topic':<35} {'score':>6} {'conf':>6} {'flags'}")
     typer.echo("  " + "-" * 65)
@@ -276,7 +300,7 @@ def intelligence_explain(
     typer.echo(f"  Scorer:        {result.scorer_version}")
     typer.echo(f"  Scored at:     {result.scored_at}")
     if policy:
-        typer.echo(f"  Policy:        v{policy.version} \"{policy.label}\"")
+        typer.echo(f'  Policy:        v{policy.version} "{policy.label}"')
     typer.echo("")
     typer.echo(f"  Composite:  {result.composite_score:.4f}")
     conf_tag = "  ⚠ below threshold" if result.below_confidence_threshold else ""
@@ -286,18 +310,42 @@ def intelligence_explain(
     typer.echo("")
     typer.echo("  Factor detail:")
     factors = [
-        ("trend_strength", result.score_trend_strength,
-         result.eff_weight_trend_strength, result.status_trend_strength),
-        ("audience_demand", result.score_audience_demand,
-         result.eff_weight_audience_demand, result.status_audience_demand),
-        ("competition", result.score_competition,
-         result.eff_weight_competition, result.status_competition),
-        ("evergreen_value", result.score_evergreen_value,
-         result.eff_weight_evergreen_value, result.status_evergreen_value),
-        ("audience_fit", result.score_audience_fit,
-         result.eff_weight_audience_fit, result.status_audience_fit),
-        ("content_novelty", result.score_content_novelty,
-         result.eff_weight_content_novelty, result.status_content_novelty),
+        (
+            "trend_strength",
+            result.score_trend_strength,
+            result.eff_weight_trend_strength,
+            result.status_trend_strength,
+        ),
+        (
+            "audience_demand",
+            result.score_audience_demand,
+            result.eff_weight_audience_demand,
+            result.status_audience_demand,
+        ),
+        (
+            "competition",
+            result.score_competition,
+            result.eff_weight_competition,
+            result.status_competition,
+        ),
+        (
+            "evergreen_value",
+            result.score_evergreen_value,
+            result.eff_weight_evergreen_value,
+            result.status_evergreen_value,
+        ),
+        (
+            "audience_fit",
+            result.score_audience_fit,
+            result.eff_weight_audience_fit,
+            result.status_audience_fit,
+        ),
+        (
+            "content_novelty",
+            result.score_content_novelty,
+            result.eff_weight_content_novelty,
+            result.status_content_novelty,
+        ),
     ]
     for name, score, ew, status in factors:
         score_str = f"{score:.4f}" if score is not None else "    —   "
@@ -331,10 +379,7 @@ def policy_list(
 
     for p in policies:
         default_flag = "  [DEFAULT]" if p.is_default else ""
-        typer.echo(
-            f"[{p.id}] v{p.version} \"{p.label}\""
-            f"  status={p.status.value}{default_flag}"
-        )
+        typer.echo(f'[{p.id}] v{p.version} "{p.label}"  status={p.status.value}{default_flag}')
 
 
 # ---------------------------------------------------------------------------
@@ -355,7 +400,7 @@ def policy_show(
         typer.echo(f"Scoring policy {policy_id} not found.", err=True)
         raise typer.Exit(1)
 
-    typer.echo(f"Scoring policy [{policy.id}] v{policy.version}: \"{policy.label}\"")
+    typer.echo(f'Scoring policy [{policy.id}] v{policy.version}: "{policy.label}"')
     typer.echo(f"  Status:      {policy.status.value}{'  [DEFAULT]' if policy.is_default else ''}")
     typer.echo(f"  Channel:     {policy.channel_id}")
     typer.echo(f"  Created:     {policy.created_at}  by {policy.created_by or '(unset)'}")
@@ -367,18 +412,30 @@ def policy_show(
         typer.echo(f"  Description: {policy.description}")
     typer.echo("")
     typer.echo("  Factor weights:")
-    typer.echo(f"    audience_fit:       {policy.weight_audience_fit:.2f}"
-               f"  [{policy.missing_audience_fit.value}]")
-    typer.echo(f"    evergreen_value:    {policy.weight_evergreen_value:.2f}"
-               f"  [{policy.missing_evergreen_value.value}]")
-    typer.echo(f"    audience_demand:    {policy.weight_audience_demand:.2f}"
-               f"  [{policy.missing_audience_demand.value}]")
-    typer.echo(f"    competition:        {policy.weight_competition:.2f}"
-               f"  [{policy.missing_competition.value}]")
-    typer.echo(f"    content_novelty:    {policy.weight_content_novelty:.2f}"
-               f"  [{policy.missing_content_novelty.value}]")
-    typer.echo(f"    trend_strength:     {policy.weight_trend_strength:.2f}"
-               f"  [{policy.missing_trend_strength.value}]")
+    typer.echo(
+        f"    audience_fit:       {policy.weight_audience_fit:.2f}"
+        f"  [{policy.missing_audience_fit.value}]"
+    )
+    typer.echo(
+        f"    evergreen_value:    {policy.weight_evergreen_value:.2f}"
+        f"  [{policy.missing_evergreen_value.value}]"
+    )
+    typer.echo(
+        f"    audience_demand:    {policy.weight_audience_demand:.2f}"
+        f"  [{policy.missing_audience_demand.value}]"
+    )
+    typer.echo(
+        f"    competition:        {policy.weight_competition:.2f}"
+        f"  [{policy.missing_competition.value}]"
+    )
+    typer.echo(
+        f"    content_novelty:    {policy.weight_content_novelty:.2f}"
+        f"  [{policy.missing_content_novelty.value}]"
+    )
+    typer.echo(
+        f"    trend_strength:     {policy.weight_trend_strength:.2f}"
+        f"  [{policy.missing_trend_strength.value}]"
+    )
     typer.echo("")
     typer.echo("  Confidence parameters:")
     typer.echo(f"    min_confidence_threshold:       {policy.min_confidence_threshold}")
@@ -425,7 +482,7 @@ def policy_create(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from None
 
-    typer.echo(f"Created draft scoring policy [{policy.id}] v{policy.version}: \"{policy.label}\"")
+    typer.echo(f'Created draft scoring policy [{policy.id}] v{policy.version}: "{policy.label}"')
     typer.echo(f"  Run 'ace intelligence policy activate {policy.id} --confirm' to activate.")
 
 
@@ -450,7 +507,7 @@ def policy_clone(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from None
 
-    typer.echo(f"Cloned policy {policy_id} → [{cloned.id}] v{cloned.version}: \"{cloned.label}\"")
+    typer.echo(f'Cloned policy {policy_id} → [{cloned.id}] v{cloned.version}: "{cloned.label}"')
     typer.echo("  Status: draft (not yet active)")
     typer.echo(f"  Run 'ace intelligence policy update {cloned.id} --help' to change weights.")
     typer.echo(f"  Run 'ace intelligence policy activate {cloned.id} --confirm' to activate.")
@@ -468,48 +525,32 @@ def policy_update(
     description: Annotated[
         str | None, typer.Option("--description", help="New description.")
     ] = None,
-    weight_trend_strength: Annotated[
-        float | None, typer.Option("--weight-trend-strength")
-    ] = None,
+    weight_trend_strength: Annotated[float | None, typer.Option("--weight-trend-strength")] = None,
     weight_audience_demand: Annotated[
         float | None, typer.Option("--weight-audience-demand")
     ] = None,
-    weight_competition: Annotated[
-        float | None, typer.Option("--weight-competition")
-    ] = None,
+    weight_competition: Annotated[float | None, typer.Option("--weight-competition")] = None,
     weight_evergreen_value: Annotated[
         float | None, typer.Option("--weight-evergreen-value")
     ] = None,
-    weight_audience_fit: Annotated[
-        float | None, typer.Option("--weight-audience-fit")
-    ] = None,
+    weight_audience_fit: Annotated[float | None, typer.Option("--weight-audience-fit")] = None,
     weight_content_novelty: Annotated[
         float | None, typer.Option("--weight-content-novelty")
     ] = None,
-    missing_trend_strength: Annotated[
-        str | None, typer.Option("--missing-trend-strength")
-    ] = None,
+    missing_trend_strength: Annotated[str | None, typer.Option("--missing-trend-strength")] = None,
     missing_audience_demand: Annotated[
         str | None, typer.Option("--missing-audience-demand")
     ] = None,
-    missing_competition: Annotated[
-        str | None, typer.Option("--missing-competition")
-    ] = None,
+    missing_competition: Annotated[str | None, typer.Option("--missing-competition")] = None,
     missing_evergreen_value: Annotated[
         str | None, typer.Option("--missing-evergreen-value")
     ] = None,
-    missing_audience_fit: Annotated[
-        str | None, typer.Option("--missing-audience-fit")
-    ] = None,
+    missing_audience_fit: Annotated[str | None, typer.Option("--missing-audience-fit")] = None,
     missing_content_novelty: Annotated[
         str | None, typer.Option("--missing-content-novelty")
     ] = None,
-    min_confidence_threshold: Annotated[
-        float | None, typer.Option("--min-confidence")
-    ] = None,
-    freshness_decay_days: Annotated[
-        float | None, typer.Option("--freshness-decay-days")
-    ] = None,
+    min_confidence_threshold: Annotated[float | None, typer.Option("--min-confidence")] = None,
+    freshness_decay_days: Annotated[float | None, typer.Option("--freshness-decay-days")] = None,
     max_corroboration_bonus: Annotated[
         float | None, typer.Option("--max-corroboration-bonus")
     ] = None,
@@ -583,7 +624,7 @@ def policy_update(
 
     policy = get_scoring_policy(conn, policy_id)
     assert policy is not None
-    typer.echo(f"Policy [{policy_id}] v{policy.version} \"{policy.label}\" updated.")
+    typer.echo(f'Policy [{policy_id}] v{policy.version} "{policy.label}" updated.')
 
 
 # ---------------------------------------------------------------------------
@@ -610,7 +651,7 @@ def policy_activate(
     if not confirm:
         status_word = "activate" if policy.status.value == "draft" else "set as default"
         typer.echo(
-            f"Policy [{policy_id}] v{policy.version} \"{policy.label}\" will be {status_word} "
+            f'Policy [{policy_id}] v{policy.version} "{policy.label}" will be {status_word} '
             f"for channel {policy.channel_id}. "
             "All future scoring calls will use this policy. "
             "Pass --confirm to proceed."
@@ -627,7 +668,7 @@ def policy_activate(
     updated = get_scoring_policy(conn, policy_id)
     assert updated is not None
     typer.echo(
-        f"Policy [{policy_id}] v{updated.version} \"{updated.label}\" activated "
+        f'Policy [{policy_id}] v{updated.version} "{updated.label}" activated '
         f"as default for channel {updated.channel_id}."
     )
 
@@ -654,4 +695,4 @@ def policy_archive(
 
     policy = get_scoring_policy(conn, policy_id)
     if policy:
-        typer.echo(f"Policy [{policy_id}] \"{policy.label}\" archived.")
+        typer.echo(f'Policy [{policy_id}] "{policy.label}" archived.')

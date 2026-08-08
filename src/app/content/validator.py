@@ -141,9 +141,7 @@ def validate_script(
     for cid in sorted(cited_ids):
         claim = evidence_by_id.get(cid)
         if claim and claim.requires_date_review:
-            warnings.append(
-                f"Claim {cid} requires date review — citation may be time-sensitive"
-            )
+            warnings.append(f"Claim {cid} requires date review — citation may be time-sensitive")
 
     # Step 11: local word count and duration
     word_count = count_words(script)

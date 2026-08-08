@@ -57,9 +57,7 @@ def _http_and_dns_patch(handler):
     from contextlib import ExitStack
 
     stack = ExitStack()
-    stack.enter_context(
-        patch(_FETCH_CLIENT_PATH, return_value=_mock_client(handler))
-    )
+    stack.enter_context(patch(_FETCH_CLIENT_PATH, return_value=_mock_client(handler)))
     stack.enter_context(
         patch(
             "app.research.validate.socket.getaddrinfo",
@@ -144,9 +142,7 @@ class TestSourcesFetch:
         with _http_and_dns_patch(handler):
             runner.invoke(app, [*_FETCH_CMD, "http://example.com/page", "--topic", "1"])
         with _http_and_dns_patch(handler):
-            result = runner.invoke(
-                app, [*_FETCH_CMD, "http://example.com/page", "--topic", "1"]
-            )
+            result = runner.invoke(app, [*_FETCH_CMD, "http://example.com/page", "--topic", "1"])
         assert result.exit_code == 0
         assert "unchanged" in result.output
 
@@ -265,6 +261,7 @@ def _ingest_and_extract(tmp_path: Path, monkeypatch, *, text: str = "The sky is 
     """Ingest a file and run extract-claims with the fake provider."""
     monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
     from app.core.config import reset_config as _reset
+
     _reset()
 
     f = tmp_path / "doc.txt"
@@ -273,18 +270,23 @@ def _ingest_and_extract(tmp_path: Path, monkeypatch, *, text: str = "The sky is 
     res = _ingest(str(f))
     assert res.exit_code == 0
 
-    fake_out = _json.dumps({
-        "claims": [
-            {
-                "claim_text": "The sky is blue.",
-                "claim_type": "factual",
-                "supporting_quote": "sky is blue",
-            }
-        ]
-    })
-    monkeypatch.setattr("app.ai.fake.FakeProvider.__init__",
-                        lambda self, output=fake_out: setattr(self, "_output", output))
+    fake_out = _json.dumps(
+        {
+            "claims": [
+                {
+                    "claim_text": "The sky is blue.",
+                    "claim_type": "factual",
+                    "supporting_quote": "sky is blue",
+                }
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        "app.ai.fake.FakeProvider.__init__",
+        lambda self, output=fake_out: setattr(self, "_output", output),
+    )
     from unittest.mock import patch as _patch
+
     with _patch("app.ai.fake.FakeProvider._output", fake_out, create=True):
         pass  # just set up env; FakeProvider is instantiated in the CLI
 
@@ -314,6 +316,7 @@ class TestSourcesExtractClaims:
         monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
         monkeypatch.setenv("ACE_DRY_RUN", "1")
         from app.core.config import reset_config as _reset
+
         _reset()
 
         _create_topic()
@@ -341,12 +344,11 @@ class TestSourcesListClaims:
         assert result.exit_code == 0
         assert "0 active evidence" in result.output
 
-    def test_list_claims_after_extraction(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_list_claims_after_extraction(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
         monkeypatch.setenv("ACE_DRY_RUN", "1")
         from app.core.config import reset_config as _reset
+
         _reset()
 
         _create_topic()
@@ -375,12 +377,11 @@ class TestSourcesClaimRuns:
         assert result.exit_code == 0
         assert "no content" in result.output
 
-    def test_claim_runs_shows_run_history(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
+    def test_claim_runs_shows_run_history(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setenv("ACE_AI_PROVIDER", "fake")
         monkeypatch.setenv("ACE_DRY_RUN", "1")
         from app.core.config import reset_config as _reset
+
         _reset()
 
         _create_topic()

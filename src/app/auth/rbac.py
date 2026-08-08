@@ -109,9 +109,7 @@ def require_role(
     """
     role = workspace_roles.get(workspace_id)
     if not role:
-        raise PermissionError(
-            f"User is not a member of workspace {workspace_id!r}"
-        )
+        raise PermissionError(f"User is not a member of workspace {workspace_id!r}")
     required = str(minimum_role.value if isinstance(minimum_role, Role) else minimum_role)
     if _role_rank(role) > _role_rank(required):
         raise PermissionError(

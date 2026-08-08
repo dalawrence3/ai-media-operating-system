@@ -152,9 +152,7 @@ def _row_to_credential_profile(row: Any) -> CredentialProfile:
         actor=row["actor"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
-        expires_at=(
-            datetime.fromisoformat(row["expires_at"]) if row["expires_at"] else None
-        ),
+        expires_at=(datetime.fromisoformat(row["expires_at"]) if row["expires_at"] else None),
     )
 
 
@@ -235,9 +233,7 @@ def _row_to_event_processing(row: Any) -> EventProcessing:
         last_attempt_at=(
             datetime.fromisoformat(row["last_attempt_at"]) if row["last_attempt_at"] else None
         ),
-        completed_at=(
-            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
-        ),
+        completed_at=(datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None),
         error_message=row["error_message"],
         created_at=datetime.fromisoformat(row["created_at"]),
     )
@@ -267,9 +263,7 @@ def _row_to_workflow_run(row: Any) -> WorkflowRun:
         result_json=row["result_json"],
         error_message=row["error_message"],
         started_at=datetime.fromisoformat(row["started_at"]),
-        completed_at=(
-            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
-        ),
+        completed_at=(datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None),
     )
 
 
@@ -285,12 +279,8 @@ def _row_to_experiment(row: Any) -> Experiment:
         actor=row["actor"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
-        activated_at=(
-            datetime.fromisoformat(row["activated_at"]) if row["activated_at"] else None
-        ),
-        concluded_at=(
-            datetime.fromisoformat(row["concluded_at"]) if row["concluded_at"] else None
-        ),
+        activated_at=(datetime.fromisoformat(row["activated_at"]) if row["activated_at"] else None),
+        concluded_at=(datetime.fromisoformat(row["concluded_at"]) if row["concluded_at"] else None),
         secondary_metrics_json=row["secondary_metrics_json"],
         guardrails_json=row["guardrails_json"],
         min_sample_size=row["min_sample_size"],
@@ -428,9 +418,7 @@ def create_organization(conn: Any, draft: OrganizationDraft) -> Organization:
 
 
 def get_organization(conn: Any, organization_id: str) -> Organization:
-    row = conn.execute(
-        "SELECT * FROM cp_organizations WHERE id = ?", (organization_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_organizations WHERE id = ?", (organization_id,)).fetchone()
     if not row:
         raise Exception(f"Organization not found: {organization_id}")
     return _row_to_organization(row)
@@ -450,16 +438,23 @@ def create_workspace(conn: Any, draft: WorkspaceDraft) -> Workspace:
              organization_id)
         VALUES (?,?,?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.name, draft.slug, draft.status, draft.actor,
-         draft.metadata_json, now, now, draft.organization_id),
+        (
+            draft.id,
+            draft.name,
+            draft.slug,
+            draft.status,
+            draft.actor,
+            draft.metadata_json,
+            now,
+            now,
+            draft.organization_id,
+        ),
     )
     return get_workspace(conn, draft.id)
 
 
 def get_workspace(conn: Any, workspace_id: str) -> Workspace:
-    row = conn.execute(
-        "SELECT * FROM cp_workspaces WHERE id = ?", (workspace_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_workspaces WHERE id = ?", (workspace_id,)).fetchone()
     if not row:
         raise WorkspaceNotFoundError(workspace_id)
     return _row_to_workspace(row)
@@ -471,9 +466,7 @@ def list_workspaces(conn: Any, status: str | None = None) -> list[Workspace]:
             "SELECT * FROM cp_workspaces WHERE status = ? ORDER BY created_at ASC", (status,)
         ).fetchall()
     else:
-        rows = conn.execute(
-            "SELECT * FROM cp_workspaces ORDER BY created_at ASC"
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM cp_workspaces ORDER BY created_at ASC").fetchall()
     return [_row_to_workspace(r) for r in rows]
 
 
@@ -500,16 +493,24 @@ def create_channel(conn: Any, draft: ChannelDraft) -> Channel:
              created_at, updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.workspace_id, draft.name, draft.slug, draft.status, draft.actor,
-         draft.description, draft.metadata_json, now, now),
+        (
+            draft.id,
+            draft.workspace_id,
+            draft.name,
+            draft.slug,
+            draft.status,
+            draft.actor,
+            draft.description,
+            draft.metadata_json,
+            now,
+            now,
+        ),
     )
     return get_channel(conn, draft.id)
 
 
 def get_channel(conn: Any, channel_id: str) -> Channel:
-    row = conn.execute(
-        "SELECT * FROM cp_channels WHERE id = ?", (channel_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_channels WHERE id = ?", (channel_id,)).fetchone()
     if not row:
         raise ChannelNotFoundError(channel_id)
     return _row_to_channel(row)
@@ -588,17 +589,26 @@ def create_platform_account(conn: Any, draft: PlatformAccountDraft) -> PlatformA
              created_at, updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.channel_id, draft.platform_id, draft.platform_key,
-         draft.external_account_id, draft.display_name, draft.status,
-         draft.credential_profile_id, draft.actor, draft.metadata_json, now, now),
+        (
+            draft.id,
+            draft.channel_id,
+            draft.platform_id,
+            draft.platform_key,
+            draft.external_account_id,
+            draft.display_name,
+            draft.status,
+            draft.credential_profile_id,
+            draft.actor,
+            draft.metadata_json,
+            now,
+            now,
+        ),
     )
     return get_platform_account(conn, draft.id)
 
 
 def get_platform_account(conn: Any, account_id: str) -> PlatformAccount:
-    row = conn.execute(
-        "SELECT * FROM cp_platform_accounts WHERE id = ?", (account_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_platform_accounts WHERE id = ?", (account_id,)).fetchone()
     if not row:
         raise PlatformAccountNotFoundError(account_id)
     return _row_to_platform_account(row)
@@ -641,9 +651,7 @@ def pause_platform_account(conn: Any, account_id: str, actor: str) -> PlatformAc
 # ---------------------------------------------------------------------------
 
 
-def create_credential_profile(
-    conn: Any, draft: CredentialProfileDraft
-) -> CredentialProfile:
+def create_credential_profile(conn: Any, draft: CredentialProfileDraft) -> CredentialProfile:
     now = _now().isoformat()
     conn.execute(
         """
@@ -652,9 +660,18 @@ def create_credential_profile(
              actor, expires_at, created_at, updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.workspace_id, draft.display_name, draft.credential_type,
-         draft.status, draft.external_ref, draft.actor,
-         draft.expires_at.isoformat() if draft.expires_at else None, now, now),
+        (
+            draft.id,
+            draft.workspace_id,
+            draft.display_name,
+            draft.credential_type,
+            draft.status,
+            draft.external_ref,
+            draft.actor,
+            draft.expires_at.isoformat() if draft.expires_at else None,
+            now,
+            now,
+        ),
     )
     return get_credential_profile(conn, draft.id)
 
@@ -715,24 +732,27 @@ def create_automation_policy(conn: Any, draft: AutomationPolicyDraft) -> Automat
              created_at, is_active)
         VALUES (?,?,?,?,?,?,?,1)
         """,
-        (draft.id, draft.scope, draft.scope_id, draft.automation_level,
-         json.dumps(sorted(draft.allowed_actions)), draft.actor, now),
+        (
+            draft.id,
+            draft.scope,
+            draft.scope_id,
+            draft.automation_level,
+            json.dumps(sorted(draft.allowed_actions)),
+            draft.actor,
+            now,
+        ),
     )
     return get_automation_policy(conn, draft.id)
 
 
 def get_automation_policy(conn: Any, policy_id: str) -> AutomationPolicy:
-    row = conn.execute(
-        "SELECT * FROM cp_automation_policies WHERE id = ?", (policy_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_automation_policies WHERE id = ?", (policy_id,)).fetchone()
     if not row:
         raise Exception(f"Automation policy not found: {policy_id}")
     return _row_to_automation_policy(row)
 
 
-def get_active_policy_for_scope(
-    conn: Any, scope: str, scope_id: str
-) -> AutomationPolicy | None:
+def get_active_policy_for_scope(conn: Any, scope: str, scope_id: str) -> AutomationPolicy | None:
     row = conn.execute(
         "SELECT * FROM cp_automation_policies WHERE scope = ? AND scope_id = ? AND is_active = 1",
         (scope, scope_id),
@@ -759,24 +779,26 @@ def create_strategy_profile(conn: Any, draft: StrategyProfileDraft) -> StrategyP
             (id, channel_id, version, config_json, actor, created_at, is_active)
         VALUES (?,?,?,?,?,?,1)
         """,
-        (draft.id, draft.channel_id, draft.version,
-         json.dumps(draft.config, sort_keys=True), draft.actor, now),
+        (
+            draft.id,
+            draft.channel_id,
+            draft.version,
+            json.dumps(draft.config, sort_keys=True),
+            draft.actor,
+            now,
+        ),
     )
     return get_strategy_profile(conn, draft.id)
 
 
 def get_strategy_profile(conn: Any, profile_id: str) -> StrategyProfile:
-    row = conn.execute(
-        "SELECT * FROM cp_strategy_profiles WHERE id = ?", (profile_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_strategy_profiles WHERE id = ?", (profile_id,)).fetchone()
     if not row:
         raise Exception(f"Strategy profile not found: {profile_id}")
     return _row_to_strategy_profile(row)
 
 
-def get_active_strategy_for_channel(
-    conn: Any, channel_id: str
-) -> StrategyProfile | None:
+def get_active_strategy_for_channel(conn: Any, channel_id: str) -> StrategyProfile | None:
     row = conn.execute(
         "SELECT * FROM cp_strategy_profiles WHERE channel_id = ? AND is_active = 1",
         (channel_id,),
@@ -786,9 +808,7 @@ def get_active_strategy_for_channel(
     return _row_to_strategy_profile(row)
 
 
-def list_strategy_profiles_by_channel(
-    conn: Any, channel_id: str
-) -> list[StrategyProfile]:
+def list_strategy_profiles_by_channel(conn: Any, channel_id: str) -> list[StrategyProfile]:
     rows = conn.execute(
         "SELECT * FROM cp_strategy_profiles WHERE channel_id = ? ORDER BY version DESC",
         (channel_id,),
@@ -812,19 +832,28 @@ def create_event(conn: Any, draft: ControlEventDraft) -> ControlEvent:
              schema_version, experiment_id)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.event_type, draft.workspace_id, draft.actor,
-         json.dumps(draft.payload, sort_keys=True),
-         draft.correlation_id, draft.causation_id, now,
-         draft.channel_id, draft.platform_account_id,
-         draft.source_engine, draft.source_entity_id, "1", draft.experiment_id),
+        (
+            draft.id,
+            draft.event_type,
+            draft.workspace_id,
+            draft.actor,
+            json.dumps(draft.payload, sort_keys=True),
+            draft.correlation_id,
+            draft.causation_id,
+            now,
+            draft.channel_id,
+            draft.platform_account_id,
+            draft.source_engine,
+            draft.source_entity_id,
+            "1",
+            draft.experiment_id,
+        ),
     )
     return get_event(conn, draft.id)
 
 
 def get_event(conn: Any, event_id: str) -> ControlEvent:
-    row = conn.execute(
-        "SELECT * FROM cp_events WHERE id = ?", (event_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_events WHERE id = ?", (event_id,)).fetchone()
     if not row:
         raise Exception(f"Event not found: {event_id}")
     return _row_to_control_event(row)
@@ -920,18 +949,24 @@ def create_workflow(conn: Any, draft: WorkflowDraft) -> Workflow:
              actions_json, status, actor, created_at, updated_at)
         VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.workspace_id, draft.name, draft.trigger_event_type,
-         json.dumps(draft.conditions, sort_keys=True),
-         json.dumps(draft.actions, sort_keys=True),
-         draft.status, draft.actor, now, now),
+        (
+            draft.id,
+            draft.workspace_id,
+            draft.name,
+            draft.trigger_event_type,
+            json.dumps(draft.conditions, sort_keys=True),
+            json.dumps(draft.actions, sort_keys=True),
+            draft.status,
+            draft.actor,
+            now,
+            now,
+        ),
     )
     return get_workflow(conn, draft.id)
 
 
 def get_workflow(conn: Any, workflow_id: str) -> Workflow:
-    row = conn.execute(
-        "SELECT * FROM cp_workflows WHERE id = ?", (workflow_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_workflows WHERE id = ?", (workflow_id,)).fetchone()
     if not row:
         raise WorkflowNotFoundError(workflow_id)
     return _row_to_workflow(row)
@@ -990,9 +1025,7 @@ def create_workflow_run(
 
 
 def get_workflow_run(conn: Any, run_id: str) -> WorkflowRun:
-    row = conn.execute(
-        "SELECT * FROM cp_workflow_runs WHERE id = ?", (run_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_workflow_runs WHERE id = ?", (run_id,)).fetchone()
     if not row:
         raise WorkflowRunNotFoundError(run_id)
     return _row_to_workflow_run(row)
@@ -1033,20 +1066,27 @@ def create_experiment(conn: Any, draft: ExperimentDraft) -> Experiment:
              secondary_metrics_json, guardrails_json, min_sample_size)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.workspace_id, draft.channel_id, draft.name,
-         draft.hypothesis, draft.status, draft.primary_metric,
-         draft.actor, now, now,
-         json.dumps(draft.secondary_metrics) if draft.secondary_metrics else None,
-         json.dumps(draft.guardrails) if draft.guardrails else None,
-         draft.min_sample_size),
+        (
+            draft.id,
+            draft.workspace_id,
+            draft.channel_id,
+            draft.name,
+            draft.hypothesis,
+            draft.status,
+            draft.primary_metric,
+            draft.actor,
+            now,
+            now,
+            json.dumps(draft.secondary_metrics) if draft.secondary_metrics else None,
+            json.dumps(draft.guardrails) if draft.guardrails else None,
+            draft.min_sample_size,
+        ),
     )
     return get_experiment(conn, draft.id)
 
 
 def get_experiment(conn: Any, experiment_id: str) -> Experiment:
-    row = conn.execute(
-        "SELECT * FROM cp_experiments WHERE id = ?", (experiment_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_experiments WHERE id = ?", (experiment_id,)).fetchone()
     if not row:
         raise ExperimentNotFoundError(experiment_id)
     return _row_to_experiment(row)
@@ -1098,9 +1138,7 @@ def list_experiments_by_workspace(
     return [_row_to_experiment(r) for r in rows]
 
 
-def create_experiment_variant(
-    conn: Any, draft: ExperimentVariantDraft
-) -> ExperimentVariant:
+def create_experiment_variant(conn: Any, draft: ExperimentVariantDraft) -> ExperimentVariant:
     now = _now().isoformat()
     conn.execute(
         """
@@ -1108,19 +1146,21 @@ def create_experiment_variant(
             (id, experiment_id, name, variant_type, description, config_json, created_at)
         VALUES (?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.experiment_id, draft.name, draft.variant_type,
-         draft.description,
-         json.dumps(draft.config, sort_keys=True) if draft.config else None, now),
+        (
+            draft.id,
+            draft.experiment_id,
+            draft.name,
+            draft.variant_type,
+            draft.description,
+            json.dumps(draft.config, sort_keys=True) if draft.config else None,
+            now,
+        ),
     )
-    row = conn.execute(
-        "SELECT * FROM cp_experiment_variants WHERE id = ?", (draft.id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_experiment_variants WHERE id = ?", (draft.id,)).fetchone()
     return _row_to_experiment_variant(row)
 
 
-def list_variants_by_experiment(
-    conn: Any, experiment_id: str
-) -> list[ExperimentVariant]:
+def list_variants_by_experiment(conn: Any, experiment_id: str) -> list[ExperimentVariant]:
     rows = conn.execute(
         "SELECT * FROM cp_experiment_variants WHERE experiment_id = ? ORDER BY created_at ASC",
         (experiment_id,),
@@ -1161,9 +1201,7 @@ def get_or_create_assignment(
 # ---------------------------------------------------------------------------
 
 
-def create_operation_execution(
-    conn: Any, draft: OperationExecutionDraft
-) -> OperationExecution:
+def create_operation_execution(conn: Any, draft: OperationExecutionDraft) -> OperationExecution:
     existing = conn.execute(
         "SELECT * FROM cp_operation_executions WHERE idempotency_key = ?",
         (draft.idempotency_key,),
@@ -1180,11 +1218,24 @@ def create_operation_execution(
              engine, target_entity_id, target_entity_type)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.operation_type, draft.workspace_id, draft.channel_id,
-         draft.platform_account_id, draft.idempotency_key, "pending", draft.actor,
-         draft.correlation_id, draft.source_event_id,
-         json.dumps(draft.input_data) if draft.input_data else None, now, now,
-         draft.engine, draft.target_entity_id, draft.target_entity_type),
+        (
+            draft.id,
+            draft.operation_type,
+            draft.workspace_id,
+            draft.channel_id,
+            draft.platform_account_id,
+            draft.idempotency_key,
+            "pending",
+            draft.actor,
+            draft.correlation_id,
+            draft.source_event_id,
+            json.dumps(draft.input_data) if draft.input_data else None,
+            now,
+            now,
+            draft.engine,
+            draft.target_entity_id,
+            draft.target_entity_type,
+        ),
     )
     return get_operation_execution(conn, draft.id)
 
@@ -1198,9 +1249,7 @@ def get_operation_execution(conn: Any, operation_id: str) -> OperationExecution:
     return _row_to_operation_execution(row)
 
 
-def get_operation_by_idempotency_key(
-    conn: Any, idempotency_key: str
-) -> OperationExecution | None:
+def get_operation_by_idempotency_key(conn: Any, idempotency_key: str) -> OperationExecution | None:
     row = conn.execute(
         "SELECT * FROM cp_operation_executions WHERE idempotency_key = ?",
         (idempotency_key,),
@@ -1250,20 +1299,29 @@ def create_cost_record(conn: Any, draft: CostRecordDraft) -> CostRecord:
              engine, experiment_id, entity_id, entity_type)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.workspace_id, draft.channel_id, draft.platform_account_id,
-         draft.operation_execution_id, draft.provider_key, draft.cost_unit,
-         draft.quantity, draft.usd_equivalent, draft.description, now,
-         draft.engine, draft.experiment_id, draft.entity_id, draft.entity_type),
+        (
+            draft.id,
+            draft.workspace_id,
+            draft.channel_id,
+            draft.platform_account_id,
+            draft.operation_execution_id,
+            draft.provider_key,
+            draft.cost_unit,
+            draft.quantity,
+            draft.usd_equivalent,
+            draft.description,
+            now,
+            draft.engine,
+            draft.experiment_id,
+            draft.entity_id,
+            draft.entity_type,
+        ),
     )
-    row = conn.execute(
-        "SELECT * FROM cp_cost_records WHERE id = ?", (draft.id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_cost_records WHERE id = ?", (draft.id,)).fetchone()
     return _row_to_cost_record(row)
 
 
-def sum_cost_usd_by_workspace(
-    conn: Any, workspace_id: str, since: datetime
-) -> float:
+def sum_cost_usd_by_workspace(conn: Any, workspace_id: str, since: datetime) -> float:
     row = conn.execute(
         "SELECT COALESCE(SUM(usd_equivalent),0) AS total FROM cp_cost_records "
         "WHERE workspace_id = ? AND recorded_at >= ?",
@@ -1272,9 +1330,7 @@ def sum_cost_usd_by_workspace(
     return float(row[0])
 
 
-def sum_cost_usd_by_channel(
-    conn: Any, channel_id: str, since: datetime
-) -> float:
+def sum_cost_usd_by_channel(conn: Any, channel_id: str, since: datetime) -> float:
     row = conn.execute(
         "SELECT COALESCE(SUM(usd_equivalent),0) AS total FROM cp_cost_records "
         "WHERE channel_id = ? AND recorded_at >= ?",
@@ -1283,9 +1339,7 @@ def sum_cost_usd_by_channel(
     return float(row[0])
 
 
-def sum_cost_usd_by_account(
-    conn: Any, platform_account_id: str, since: datetime
-) -> float:
+def sum_cost_usd_by_account(conn: Any, platform_account_id: str, since: datetime) -> float:
     row = conn.execute(
         "SELECT COALESCE(SUM(usd_equivalent),0) AS total FROM cp_cost_records "
         "WHERE platform_account_id = ? AND recorded_at >= ?",
@@ -1323,18 +1377,23 @@ def create_budget_policy(conn: Any, draft: BudgetPolicyDraft) -> BudgetPolicy:
              on_exceed_action, actor, created_at, is_active)
         VALUES (?,?,?,?,?,?,?,?,?,1)
         """,
-        (draft.id, draft.scope, draft.scope_id, draft.period, draft.limit_usd,
-         draft.warning_threshold, draft.on_exceed_action, draft.actor, now),
+        (
+            draft.id,
+            draft.scope,
+            draft.scope_id,
+            draft.period,
+            draft.limit_usd,
+            draft.warning_threshold,
+            draft.on_exceed_action,
+            draft.actor,
+            now,
+        ),
     )
-    row = conn.execute(
-        "SELECT * FROM cp_budget_policies WHERE id = ?", (draft.id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_budget_policies WHERE id = ?", (draft.id,)).fetchone()
     return _row_to_budget_policy(row)
 
 
-def get_active_budget_for_scope(
-    conn: Any, scope: str, scope_id: str
-) -> BudgetPolicy | None:
+def get_active_budget_for_scope(conn: Any, scope: str, scope_id: str) -> BudgetPolicy | None:
     row = conn.execute(
         "SELECT * FROM cp_budget_policies WHERE scope = ? AND scope_id = ? AND is_active = 1",
         (scope, scope_id),
@@ -1357,18 +1416,21 @@ def create_health_record(conn: Any, draft: HealthRecordDraft) -> HealthRecord:
             (id, entity_type, entity_id, status, detail, recorded_by, recorded_at)
         VALUES (?,?,?,?,?,?,?)
         """,
-        (draft.id, draft.entity_type, draft.entity_id, draft.status,
-         draft.detail, draft.recorded_by, now),
+        (
+            draft.id,
+            draft.entity_type,
+            draft.entity_id,
+            draft.status,
+            draft.detail,
+            draft.recorded_by,
+            now,
+        ),
     )
-    row = conn.execute(
-        "SELECT * FROM cp_health_records WHERE id = ?", (draft.id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_health_records WHERE id = ?", (draft.id,)).fetchone()
     return _row_to_health_record(row)
 
 
-def get_latest_health_record(
-    conn: Any, entity_type: str, entity_id: str
-) -> HealthRecord | None:
+def get_latest_health_record(conn: Any, entity_type: str, entity_id: str) -> HealthRecord | None:
     row = conn.execute(
         "SELECT * FROM cp_health_records WHERE entity_type = ? AND entity_id = ? "
         "ORDER BY recorded_at DESC LIMIT 1",
@@ -1412,11 +1474,16 @@ def register_provider(conn: Any, draft: ProviderRegistryDraft) -> ProviderRegist
             "UPDATE cp_provider_registry SET display_name = ?, status = ?, "
             "capabilities_json = ?, quota_json = ?, cost_metadata_json = ?, "
             "version_info = ?, updated_at = ? WHERE provider_key = ?",
-            (draft.display_name, draft.status,
-             json.dumps(sorted(draft.capabilities)),
-             json.dumps(draft.quota) if draft.quota else None,
-             json.dumps(draft.cost_metadata) if draft.cost_metadata else None,
-             draft.version_info, now, draft.provider_key),
+            (
+                draft.display_name,
+                draft.status,
+                json.dumps(sorted(draft.capabilities)),
+                json.dumps(draft.quota) if draft.quota else None,
+                json.dumps(draft.cost_metadata) if draft.cost_metadata else None,
+                draft.version_info,
+                now,
+                draft.provider_key,
+            ),
         )
     else:
         conn.execute(
@@ -1426,11 +1493,19 @@ def register_provider(conn: Any, draft: ProviderRegistryDraft) -> ProviderRegist
                  registered_at, updated_at, quota_json, cost_metadata_json, version_info)
             VALUES (?,?,?,?,?,?,?,?,?,?,?)
             """,
-            (draft.id, draft.provider_key, draft.domain, draft.display_name,
-             draft.status, json.dumps(sorted(draft.capabilities)), now, now,
-             json.dumps(draft.quota) if draft.quota else None,
-             json.dumps(draft.cost_metadata) if draft.cost_metadata else None,
-             draft.version_info),
+            (
+                draft.id,
+                draft.provider_key,
+                draft.domain,
+                draft.display_name,
+                draft.status,
+                json.dumps(sorted(draft.capabilities)),
+                now,
+                now,
+                json.dumps(draft.quota) if draft.quota else None,
+                json.dumps(draft.cost_metadata) if draft.cost_metadata else None,
+                draft.version_info,
+            ),
         )
     row = conn.execute(
         "SELECT * FROM cp_provider_registry WHERE provider_key = ?", (draft.provider_key,)
@@ -1455,9 +1530,7 @@ def list_providers_by_domain(conn: Any, domain: str) -> list[ProviderRegistryEnt
     return [_row_to_provider_entry(r) for r in rows]
 
 
-def update_provider_health(
-    conn: Any, provider_key: str, status: str
-) -> ProviderRegistryEntry:
+def update_provider_health(conn: Any, provider_key: str, status: str) -> ProviderRegistryEntry:
     now = _now().isoformat()
     conn.execute(
         "UPDATE cp_provider_registry SET status = ?, updated_at = ? WHERE provider_key = ?",
@@ -1471,10 +1544,9 @@ def update_provider_health(
 # ---------------------------------------------------------------------------
 
 
-def create_publishing_profile(
-    conn: Any, draft: PublishingProfileDraft
-) -> PublishingProfile:
+def create_publishing_profile(conn: Any, draft: PublishingProfileDraft) -> PublishingProfile:
     import json as _json
+
     now = _now().isoformat()
     conn.execute(
         "UPDATE cp_publishing_profiles SET is_active = 0, updated_at = ? "
@@ -1487,18 +1559,20 @@ def create_publishing_profile(
             (id, platform_account_id, config_json, is_active, actor, created_at, updated_at)
         VALUES (?,?,?,1,?,?,?)
         """,
-        (draft.id, draft.platform_account_id,
-         _json.dumps(draft.config, sort_keys=True), draft.actor, now, now),
+        (
+            draft.id,
+            draft.platform_account_id,
+            _json.dumps(draft.config, sort_keys=True),
+            draft.actor,
+            now,
+            now,
+        ),
     )
-    row = conn.execute(
-        "SELECT * FROM cp_publishing_profiles WHERE id = ?", (draft.id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_publishing_profiles WHERE id = ?", (draft.id,)).fetchone()
     return _row_to_publishing_profile(row)
 
 
-def get_active_publishing_profile(
-    conn: Any, platform_account_id: str
-) -> PublishingProfile | None:
+def get_active_publishing_profile(conn: Any, platform_account_id: str) -> PublishingProfile | None:
     row = conn.execute(
         "SELECT * FROM cp_publishing_profiles "
         "WHERE platform_account_id = ? AND is_active = 1 LIMIT 1",
@@ -1509,9 +1583,7 @@ def get_active_publishing_profile(
     return _row_to_publishing_profile(row)
 
 
-def list_publishing_profiles(
-    conn: Any, platform_account_id: str
-) -> list[PublishingProfile]:
+def list_publishing_profiles(conn: Any, platform_account_id: str) -> list[PublishingProfile]:
     rows = conn.execute(
         "SELECT * FROM cp_publishing_profiles WHERE platform_account_id = ? "
         "ORDER BY created_at DESC",
@@ -1525,10 +1597,9 @@ def list_publishing_profiles(
 # ---------------------------------------------------------------------------
 
 
-def create_analytics_identity(
-    conn: Any, draft: AnalyticsIdentityDraft
-) -> AnalyticsIdentity:
+def create_analytics_identity(conn: Any, draft: AnalyticsIdentityDraft) -> AnalyticsIdentity:
     import json as _json
+
     now = _now().isoformat()
     existing = conn.execute(
         "SELECT id FROM cp_analytics_identities "
@@ -1539,9 +1610,12 @@ def create_analytics_identity(
         conn.execute(
             "UPDATE cp_analytics_identities SET analytics_account_id = ?, metadata_json = ? "
             "WHERE platform_account_id = ? AND analytics_provider_key = ?",
-            (_json.dumps(draft.metadata) if draft.metadata else None,
-             draft.analytics_account_id, draft.platform_account_id,
-             draft.analytics_provider_key),
+            (
+                _json.dumps(draft.metadata) if draft.metadata else None,
+                draft.analytics_account_id,
+                draft.platform_account_id,
+                draft.analytics_provider_key,
+            ),
         )
         row = conn.execute(
             "SELECT * FROM cp_analytics_identities WHERE id = ?", (existing["id"],)
@@ -1554,9 +1628,14 @@ def create_analytics_identity(
                  metadata_json, created_at)
             VALUES (?,?,?,?,?,?)
             """,
-            (draft.id, draft.platform_account_id, draft.analytics_provider_key,
-             draft.analytics_account_id,
-             _json.dumps(draft.metadata) if draft.metadata else None, now),
+            (
+                draft.id,
+                draft.platform_account_id,
+                draft.analytics_provider_key,
+                draft.analytics_account_id,
+                _json.dumps(draft.metadata) if draft.metadata else None,
+                now,
+            ),
         )
         row = conn.execute(
             "SELECT * FROM cp_analytics_identities WHERE id = ?", (draft.id,)
@@ -1564,9 +1643,7 @@ def create_analytics_identity(
     return _row_to_analytics_identity(row)
 
 
-def list_analytics_identities(
-    conn: Any, platform_account_id: str
-) -> list[AnalyticsIdentity]:
+def list_analytics_identities(conn: Any, platform_account_id: str) -> list[AnalyticsIdentity]:
     rows = conn.execute(
         "SELECT * FROM cp_analytics_identities WHERE platform_account_id = ? "
         "ORDER BY created_at ASC",

@@ -73,7 +73,8 @@ class ProviderFailoverChain:
             return None
 
         alternatives = [
-            name for name in self._providers
+            name
+            for name in self._providers
             if name != context.original_provider and registry.is_registered(name)
         ]
         idx = context.attempt - 1

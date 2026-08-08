@@ -39,25 +39,31 @@ def _make_channel(db: sqlite3.Connection, name: str = "Test Channel"):
 
 
 def _make_run(db: sqlite3.Connection, channel_id: int, profile_version_id: int) -> DiscoveryRun:
-    return create_discovery_run(db, DiscoveryRun(
-        channel_id=channel_id,
-        profile_version_id=profile_version_id,
-        adapter_name=AdapterName.manual,
-        status=RunStatus.running,
-    ))
+    return create_discovery_run(
+        db,
+        DiscoveryRun(
+            channel_id=channel_id,
+            profile_version_id=profile_version_id,
+            adapter_name=AdapterName.manual,
+            status=RunStatus.running,
+        ),
+    )
 
 
 def _make_policy(db: sqlite3.Connection, channel_id: int) -> ScoringPolicy:
     existing = list_scoring_policies(db, channel_id)
     next_version = max((p.version for p in existing), default=0) + 1
-    policy = create_scoring_policy(db, ScoringPolicy(
-        channel_id=channel_id,
-        version=next_version,
-        label="test policy",
-        missing_competition=MissingDataPolicy.reweight_available,
-        missing_trend_strength=MissingDataPolicy.reweight_available,
-        missing_audience_demand=MissingDataPolicy.reweight_available,
-    ))
+    policy = create_scoring_policy(
+        db,
+        ScoringPolicy(
+            channel_id=channel_id,
+            version=next_version,
+            label="test policy",
+            missing_competition=MissingDataPolicy.reweight_available,
+            missing_trend_strength=MissingDataPolicy.reweight_available,
+            missing_audience_demand=MissingDataPolicy.reweight_available,
+        ),
+    )
     activate_scoring_policy(db, policy.id)
     return get_scoring_policy(db, policy.id)
 
@@ -69,12 +75,15 @@ def _make_opp(
     topic: str = "index fund basics",
 ) -> Opportunity:
     run = _make_run(db, channel_id, profile_version_id)
-    return create_opportunity(db, Opportunity(
-        channel_id=channel_id,
-        raw_topic=topic,
-        normalized_topic=topic,
-        discovery_run_id=run.id,
-    ))
+    return create_opportunity(
+        db,
+        Opportunity(
+            channel_id=channel_id,
+            raw_topic=topic,
+            normalized_topic=topic,
+            discovery_run_id=run.id,
+        ),
+    )
 
 
 def _make_obs(
@@ -83,13 +92,16 @@ def _make_obs(
     run_id: int,
     adapter: AdapterName = AdapterName.youtube_data_api,
 ) -> OpportunityObservation:
-    return create_observation(db, OpportunityObservation(
-        opportunity_id=opp_id,
-        discovery_run_id=run_id,
-        adapter_name=adapter,
-        source_quality_tier=SourceQualityTier.medium,
-        signal_age_days=30.0,
-    ))
+    return create_observation(
+        db,
+        OpportunityObservation(
+            opportunity_id=opp_id,
+            discovery_run_id=run_id,
+            adapter_name=adapter,
+            source_quality_tier=SourceQualityTier.medium,
+            signal_age_days=30.0,
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -190,15 +202,18 @@ def test_score_opportunity_requires_research_flag(db: sqlite3.Connection) -> Non
     existing = list_scoring_policies(db, channel.id)
     next_version = max((p.version for p in existing), default=0) + 1
     # audience_fit=require_research; without proper niche data it'll be absent
-    policy = create_scoring_policy(db, ScoringPolicy(
-        channel_id=channel.id,
-        version=next_version,
-        label="research policy",
-        missing_audience_fit=MissingDataPolicy.require_research,
-        missing_competition=MissingDataPolicy.reweight_available,
-        missing_trend_strength=MissingDataPolicy.reweight_available,
-        missing_audience_demand=MissingDataPolicy.reweight_available,
-    ))
+    policy = create_scoring_policy(
+        db,
+        ScoringPolicy(
+            channel_id=channel.id,
+            version=next_version,
+            label="research policy",
+            missing_audience_fit=MissingDataPolicy.require_research,
+            missing_competition=MissingDataPolicy.reweight_available,
+            missing_trend_strength=MissingDataPolicy.reweight_available,
+            missing_audience_demand=MissingDataPolicy.reweight_available,
+        ),
+    )
     activate_scoring_policy(db, policy.id)
     policy = get_scoring_policy(db, policy.id)
 
@@ -220,15 +235,18 @@ def test_score_opportunity_below_confidence_threshold(db: sqlite3.Connection) ->
     existing = list_scoring_policies(db, channel.id)
     next_version = max((p.version for p in existing), default=0) + 1
     # Very high threshold so most scores fail it
-    policy = create_scoring_policy(db, ScoringPolicy(
-        channel_id=channel.id,
-        version=next_version,
-        label="high threshold",
-        min_confidence_threshold=0.99,
-        missing_competition=MissingDataPolicy.reweight_available,
-        missing_trend_strength=MissingDataPolicy.reweight_available,
-        missing_audience_demand=MissingDataPolicy.reweight_available,
-    ))
+    policy = create_scoring_policy(
+        db,
+        ScoringPolicy(
+            channel_id=channel.id,
+            version=next_version,
+            label="high threshold",
+            min_confidence_threshold=0.99,
+            missing_competition=MissingDataPolicy.reweight_available,
+            missing_trend_strength=MissingDataPolicy.reweight_available,
+            missing_audience_demand=MissingDataPolicy.reweight_available,
+        ),
+    )
     activate_scoring_policy(db, policy.id)
     policy = get_scoring_policy(db, policy.id)
     opp = _make_opp(db, channel.id, profile.id)

@@ -55,8 +55,14 @@ class TestPlatformConstants:
         assert "instagram" in KNOWN_PLATFORMS
 
     def test_account_statuses_complete(self):
-        required = {"connected", "disconnected", "credential_invalid",
-                    "credential_expiring", "quota_limited", "paused"}
+        required = {
+            "connected",
+            "disconnected",
+            "credential_invalid",
+            "credential_expiring",
+            "quota_limited",
+            "paused",
+        }
         assert required <= PLATFORM_ACCOUNT_STATUSES
 
 
@@ -86,8 +92,16 @@ class TestEventConstants:
 
 class TestWorkflowConstants:
     def test_condition_operators(self):
-        required = {"equals", "not_equals", "greater_than", "less_than",
-                    "in", "not_in", "exists", "boolean"}
+        required = {
+            "equals",
+            "not_equals",
+            "greater_than",
+            "less_than",
+            "in",
+            "not_in",
+            "exists",
+            "boolean",
+        }
         assert required == WORKFLOW_CONDITION_OPERATORS
 
     def test_action_types(self):

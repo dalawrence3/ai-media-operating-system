@@ -42,91 +42,97 @@ ANALYTICS_SCHEMA_VERSION = "1.0.0"
 
 # ── Canonical metric names ────────────────────────────────────────────────────
 
-METRIC_VIEWS                    = "views"
-METRIC_WATCH_TIME_SECONDS       = "watch_time_seconds"
-METRIC_AVERAGE_VIEW_DURATION    = "average_view_duration"
-METRIC_IMPRESSIONS              = "impressions"
-METRIC_CTR                      = "ctr"
-METRIC_LIKES                    = "likes"
-METRIC_DISLIKES                 = "dislikes"
-METRIC_COMMENTS                 = "comments"
-METRIC_SHARES                   = "shares"
-METRIC_SUBSCRIBERS_GAINED       = "subscribers_gained"
-METRIC_SUBSCRIBERS_LOST         = "subscribers_lost"
-METRIC_REVENUE_ESTIMATE         = "revenue_estimate"
+METRIC_VIEWS = "views"
+METRIC_WATCH_TIME_SECONDS = "watch_time_seconds"
+METRIC_AVERAGE_VIEW_DURATION = "average_view_duration"
+METRIC_IMPRESSIONS = "impressions"
+METRIC_CTR = "ctr"
+METRIC_LIKES = "likes"
+METRIC_DISLIKES = "dislikes"
+METRIC_COMMENTS = "comments"
+METRIC_SHARES = "shares"
+METRIC_SUBSCRIBERS_GAINED = "subscribers_gained"
+METRIC_SUBSCRIBERS_LOST = "subscribers_lost"
+METRIC_REVENUE_ESTIMATE = "revenue_estimate"
 
-CANONICAL_METRICS: frozenset[str] = frozenset({
-    METRIC_VIEWS,
-    METRIC_WATCH_TIME_SECONDS,
-    METRIC_AVERAGE_VIEW_DURATION,
-    METRIC_IMPRESSIONS,
-    METRIC_CTR,
-    METRIC_LIKES,
-    METRIC_DISLIKES,
-    METRIC_COMMENTS,
-    METRIC_SHARES,
-    METRIC_SUBSCRIBERS_GAINED,
-    METRIC_SUBSCRIBERS_LOST,
-    METRIC_REVENUE_ESTIMATE,
-})
+CANONICAL_METRICS: frozenset[str] = frozenset(
+    {
+        METRIC_VIEWS,
+        METRIC_WATCH_TIME_SECONDS,
+        METRIC_AVERAGE_VIEW_DURATION,
+        METRIC_IMPRESSIONS,
+        METRIC_CTR,
+        METRIC_LIKES,
+        METRIC_DISLIKES,
+        METRIC_COMMENTS,
+        METRIC_SHARES,
+        METRIC_SUBSCRIBERS_GAINED,
+        METRIC_SUBSCRIBERS_LOST,
+        METRIC_REVENUE_ESTIMATE,
+    }
+)
 
 # ── Metric semantic kinds ─────────────────────────────────────────────────────
 
-METRIC_KIND_ADDITIVE  = "additive"   # sum across non-overlapping periods
-METRIC_KIND_GAUGE     = "gauge"      # cumulative total, take latest value
-METRIC_KIND_RATIO     = "ratio"      # provider-computed ratio, take latest
-METRIC_KIND_MONETARY  = "monetary"   # additive but currency-constrained
+METRIC_KIND_ADDITIVE = "additive"  # sum across non-overlapping periods
+METRIC_KIND_GAUGE = "gauge"  # cumulative total, take latest value
+METRIC_KIND_RATIO = "ratio"  # provider-computed ratio, take latest
+METRIC_KIND_MONETARY = "monetary"  # additive but currency-constrained
 
 METRIC_KIND: dict[str, str] = {
-    METRIC_VIEWS:                   METRIC_KIND_ADDITIVE,
-    METRIC_WATCH_TIME_SECONDS:      METRIC_KIND_ADDITIVE,
-    METRIC_IMPRESSIONS:             METRIC_KIND_ADDITIVE,
-    METRIC_SHARES:                  METRIC_KIND_ADDITIVE,
-    METRIC_SUBSCRIBERS_GAINED:      METRIC_KIND_ADDITIVE,
-    METRIC_SUBSCRIBERS_LOST:        METRIC_KIND_ADDITIVE,
-    METRIC_REVENUE_ESTIMATE:        METRIC_KIND_MONETARY,
-    METRIC_LIKES:                   METRIC_KIND_GAUGE,
-    METRIC_DISLIKES:                METRIC_KIND_GAUGE,
-    METRIC_COMMENTS:                METRIC_KIND_GAUGE,
-    METRIC_CTR:                     METRIC_KIND_RATIO,
-    METRIC_AVERAGE_VIEW_DURATION:   METRIC_KIND_RATIO,
+    METRIC_VIEWS: METRIC_KIND_ADDITIVE,
+    METRIC_WATCH_TIME_SECONDS: METRIC_KIND_ADDITIVE,
+    METRIC_IMPRESSIONS: METRIC_KIND_ADDITIVE,
+    METRIC_SHARES: METRIC_KIND_ADDITIVE,
+    METRIC_SUBSCRIBERS_GAINED: METRIC_KIND_ADDITIVE,
+    METRIC_SUBSCRIBERS_LOST: METRIC_KIND_ADDITIVE,
+    METRIC_REVENUE_ESTIMATE: METRIC_KIND_MONETARY,
+    METRIC_LIKES: METRIC_KIND_GAUGE,
+    METRIC_DISLIKES: METRIC_KIND_GAUGE,
+    METRIC_COMMENTS: METRIC_KIND_GAUGE,
+    METRIC_CTR: METRIC_KIND_RATIO,
+    METRIC_AVERAGE_VIEW_DURATION: METRIC_KIND_RATIO,
 }
 
 # ── Aggregation period types ──────────────────────────────────────────────────
 
-PERIOD_DAILY    = "daily"
-PERIOD_WEEKLY   = "weekly"
-PERIOD_MONTHLY  = "monthly"
+PERIOD_DAILY = "daily"
+PERIOD_WEEKLY = "weekly"
+PERIOD_MONTHLY = "monthly"
 PERIOD_LIFETIME = "lifetime"
 
-PERIOD_TYPES: frozenset[str] = frozenset({
-    PERIOD_DAILY,
-    PERIOD_WEEKLY,
-    PERIOD_MONTHLY,
-    PERIOD_LIFETIME,
-})
+PERIOD_TYPES: frozenset[str] = frozenset(
+    {
+        PERIOD_DAILY,
+        PERIOD_WEEKLY,
+        PERIOD_MONTHLY,
+        PERIOD_LIFETIME,
+    }
+)
 
 # ── Review event severity ─────────────────────────────────────────────────────
 
-SEVERITY_INFO     = "info"
-SEVERITY_WARNING  = "warning"
-SEVERITY_ERROR    = "error"
+SEVERITY_INFO = "info"
+SEVERITY_WARNING = "warning"
+SEVERITY_ERROR = "error"
 SEVERITY_CRITICAL = "critical"
-SEVERITY_OTHER    = "other"
+SEVERITY_OTHER = "other"
 
-REVIEW_SEVERITIES: frozenset[str] = frozenset({
-    SEVERITY_INFO,
-    SEVERITY_WARNING,
-    SEVERITY_ERROR,
-    SEVERITY_CRITICAL,
-    SEVERITY_OTHER,
-})
+REVIEW_SEVERITIES: frozenset[str] = frozenset(
+    {
+        SEVERITY_INFO,
+        SEVERITY_WARNING,
+        SEVERITY_ERROR,
+        SEVERITY_CRITICAL,
+        SEVERITY_OTHER,
+    }
+)
 
 SEVERITY_REQUIRES_NOTES: frozenset[str] = frozenset({SEVERITY_OTHER})
 
 # ── Aggregation operations ────────────────────────────────────────────────────
 
-AGG_SUM  = "sum"
+AGG_SUM = "sum"
 AGG_LAST = "last"
 
 # How each metric reduces within a period bucket.
@@ -145,36 +151,38 @@ AGG_LAST = "last"
 #   CurrencyMismatchError is raised if currencies differ across summed snapshots.
 
 METRIC_AGGREGATION_OP: dict[str, str] = {
-    METRIC_VIEWS:                   AGG_SUM,
-    METRIC_WATCH_TIME_SECONDS:      AGG_SUM,
-    METRIC_IMPRESSIONS:             AGG_SUM,
-    METRIC_SHARES:                  AGG_SUM,
-    METRIC_SUBSCRIBERS_GAINED:      AGG_SUM,
-    METRIC_SUBSCRIBERS_LOST:        AGG_SUM,
-    METRIC_REVENUE_ESTIMATE:        AGG_SUM,
-    METRIC_LIKES:                   AGG_LAST,
-    METRIC_DISLIKES:                AGG_LAST,
-    METRIC_COMMENTS:                AGG_LAST,
-    METRIC_CTR:                     AGG_LAST,
-    METRIC_AVERAGE_VIEW_DURATION:   AGG_LAST,
+    METRIC_VIEWS: AGG_SUM,
+    METRIC_WATCH_TIME_SECONDS: AGG_SUM,
+    METRIC_IMPRESSIONS: AGG_SUM,
+    METRIC_SHARES: AGG_SUM,
+    METRIC_SUBSCRIBERS_GAINED: AGG_SUM,
+    METRIC_SUBSCRIBERS_LOST: AGG_SUM,
+    METRIC_REVENUE_ESTIMATE: AGG_SUM,
+    METRIC_LIKES: AGG_LAST,
+    METRIC_DISLIKES: AGG_LAST,
+    METRIC_COMMENTS: AGG_LAST,
+    METRIC_CTR: AGG_LAST,
+    METRIC_AVERAGE_VIEW_DURATION: AGG_LAST,
 }
 
 # Publication eligibility: statuses that permit analytics ingestion
-PUBLICATION_ELIGIBLE_STATUSES: frozenset[str] = frozenset({
-    "uploaded",
-    "scheduled",
-    "published",
-})
+PUBLICATION_ELIGIBLE_STATUSES: frozenset[str] = frozenset(
+    {
+        "uploaded",
+        "scheduled",
+        "published",
+    }
+)
 
 # ── Aggregate calculation methods ─────────────────────────────────────────────
 
-CALC_METHOD_SUM                = "sum"
+CALC_METHOD_SUM = "sum"
 CALC_METHOD_LATEST_OBSERVATION = "latest_observation"
 
 # Maps METRIC_AGGREGATION_OP values to the readable calculation method label
 # stored in analytics_aggregates.calculation_method.
 _AGG_OP_TO_CALC_METHOD: dict[str, str] = {
-    AGG_SUM:  CALC_METHOD_SUM,
+    AGG_SUM: CALC_METHOD_SUM,
     AGG_LAST: CALC_METHOD_LATEST_OBSERVATION,
 }
 

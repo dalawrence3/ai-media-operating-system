@@ -59,6 +59,7 @@ from app.control_plane.workflows import (
 @pytest.fixture()
 def db(tmp_path):
     from app.core.database import open_db
+
     return open_db(tmp_path / "test.db")
 
 
@@ -129,16 +130,24 @@ class TestAccountManagement:
 
     def test_disconnect_account(self, db, channel, platform):
         acc = connect_account(
-            db, channel_id=channel.id, platform_key="youtube",
-            external_account_id="UC-001", display_name="YT", actor="cli"
+            db,
+            channel_id=channel.id,
+            platform_key="youtube",
+            external_account_id="UC-001",
+            display_name="YT",
+            actor="cli",
         )
         updated = disconnect_account(db, acc.id, "cli")
         assert updated.status == "disconnected"
 
     def test_pause_and_resume(self, db, channel, platform):
         acc = connect_account(
-            db, channel_id=channel.id, platform_key="youtube",
-            external_account_id="UC-002", display_name="YT2", actor="cli"
+            db,
+            channel_id=channel.id,
+            platform_key="youtube",
+            external_account_id="UC-002",
+            display_name="YT2",
+            actor="cli",
         )
         paused = pause_account(db, acc.id, "cli")
         assert paused.status == "paused"
@@ -147,8 +156,12 @@ class TestAccountManagement:
 
     def test_mark_credential_statuses(self, db, channel, platform):
         acc = connect_account(
-            db, channel_id=channel.id, platform_key="youtube",
-            external_account_id="UC-003", display_name="YT3", actor="cli"
+            db,
+            channel_id=channel.id,
+            platform_key="youtube",
+            external_account_id="UC-003",
+            display_name="YT3",
+            actor="cli",
         )
         updated = mark_credential_invalid(db, acc.id, "cli")
         assert updated.status == "credential_invalid"
@@ -174,16 +187,24 @@ class TestCredentialProfiles:
 
     def test_revoke_credential(self, db, workspace):
         profile = create_credential_profile(
-            db, workspace_id=workspace.id, display_name="K",
-            credential_type="api_key", external_ref="ref", actor="cli"
+            db,
+            workspace_id=workspace.id,
+            display_name="K",
+            credential_type="api_key",
+            external_ref="ref",
+            actor="cli",
         )
         updated = revoke_credential(db, profile.id, "admin")
         assert updated.status == "revoked"
 
     def test_expire_and_reactivate(self, db, workspace):
         profile = create_credential_profile(
-            db, workspace_id=workspace.id, display_name="K",
-            credential_type="api_key", external_ref="ref2", actor="cli"
+            db,
+            workspace_id=workspace.id,
+            display_name="K",
+            credential_type="api_key",
+            external_ref="ref2",
+            actor="cli",
         )
         expired = mark_credential_expired(db, profile.id, "cli")
         assert expired.status == "expired"
@@ -206,15 +227,21 @@ class TestPolicies:
 
     def test_manual_is_most_restrictive(self, db, workspace):
         set_policy(
-            db, scope="workspace", scope_id=workspace.id,
-            automation_level="autonomous", allowed_actions=[], actor="cli"
+            db,
+            scope="workspace",
+            scope_id=workspace.id,
+            automation_level="autonomous",
+            allowed_actions=[],
+            actor="cli",
         )
-        channel = create_channel(
-            db, workspace_id=workspace.id, name="C", slug="c", actor="cli"
-        )
+        channel = create_channel(db, workspace_id=workspace.id, name="C", slug="c", actor="cli")
         set_policy(
-            db, scope="channel", scope_id=channel.id,
-            automation_level="manual", allowed_actions=[], actor="cli"
+            db,
+            scope="channel",
+            scope_id=channel.id,
+            automation_level="manual",
+            allowed_actions=[],
+            actor="cli",
         )
         level = resolve_effective_level(db, workspace.id, channel_id=channel.id)
         assert level == "manual"
@@ -222,14 +249,22 @@ class TestPolicies:
     def test_invalid_level_raises(self, db, workspace):
         with pytest.raises(InvalidAutomationLevelError):
             set_policy(
-                db, scope="workspace", scope_id=workspace.id,
-                automation_level="superauto", allowed_actions=[], actor="cli"
+                db,
+                scope="workspace",
+                scope_id=workspace.id,
+                automation_level="superauto",
+                allowed_actions=[],
+                actor="cli",
             )
 
     def test_manual_blocks_actions(self, db, workspace):
         set_policy(
-            db, scope="workspace", scope_id=workspace.id,
-            automation_level="manual", allowed_actions=[], actor="cli"
+            db,
+            scope="workspace",
+            scope_id=workspace.id,
+            automation_level="manual",
+            allowed_actions=[],
+            actor="cli",
         )
         with pytest.raises(PolicyViolationError):
             assert_action_permitted(db, "publish", workspace_id=workspace.id)
@@ -248,12 +283,8 @@ class TestStrategies:
         assert sp.is_active
 
     def test_second_profile_increments_version(self, db, channel):
-        create_strategy_profile(
-            db, channel_id=channel.id, config={"v": 1}, actor="cli"
-        )
-        sp2 = create_strategy_profile(
-            db, channel_id=channel.id, config={"v": 2}, actor="cli"
-        )
+        create_strategy_profile(db, channel_id=channel.id, config={"v": 1}, actor="cli")
+        sp2 = create_strategy_profile(db, channel_id=channel.id, config={"v": 2}, actor="cli")
         assert sp2.version == 2
 
     def test_get_active_returns_latest(self, db, channel):
@@ -267,27 +298,41 @@ class TestStrategies:
 class TestExperiments:
     def test_create_draft(self, db, workspace, channel):
         exp = create_experiment(
-            db, workspace_id=workspace.id, channel_id=channel.id,
-            name="CTR test", hypothesis="A > B", primary_metric="ctr", actor="cli"
+            db,
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="CTR test",
+            hypothesis="A > B",
+            primary_metric="ctr",
+            actor="cli",
         )
         assert exp.status == "draft"
         assert exp.activated_at is None
 
     def test_add_variant(self, db, workspace, channel):
         exp = create_experiment(
-            db, workspace_id=workspace.id, channel_id=channel.id,
-            name="E", hypothesis="H", primary_metric="m", actor="cli"
+            db,
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="E",
+            hypothesis="H",
+            primary_metric="m",
+            actor="cli",
         )
         variant = add_variant(
-            db, experiment_id=exp.id, name="Control",
-            variant_type="control", description="Baseline"
+            db, experiment_id=exp.id, name="Control", variant_type="control", description="Baseline"
         )
         assert variant.variant_type == "control"
 
     def test_cannot_add_variant_after_activate(self, db, workspace, channel):
         exp = create_experiment(
-            db, workspace_id=workspace.id, channel_id=channel.id,
-            name="E2", hypothesis="H", primary_metric="m", actor="cli"
+            db,
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="E2",
+            hypothesis="H",
+            primary_metric="m",
+            actor="cli",
         )
         add_variant(db, experiment_id=exp.id, name="A", variant_type="control")
         activate_experiment(db, exp.id)
@@ -296,8 +341,13 @@ class TestExperiments:
 
     def test_activate_makes_immutable(self, db, workspace, channel):
         exp = create_experiment(
-            db, workspace_id=workspace.id, channel_id=channel.id,
-            name="E3", hypothesis="H", primary_metric="m", actor="cli"
+            db,
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="E3",
+            hypothesis="H",
+            primary_metric="m",
+            actor="cli",
         )
         activated = activate_experiment(db, exp.id)
         assert activated.status == "active"
@@ -307,8 +357,13 @@ class TestExperiments:
 
     def test_conclude_experiment(self, db, workspace, channel):
         exp = create_experiment(
-            db, workspace_id=workspace.id, channel_id=channel.id,
-            name="E4", hypothesis="H", primary_metric="m", actor="cli"
+            db,
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="E4",
+            hypothesis="H",
+            primary_metric="m",
+            actor="cli",
         )
         activate_experiment(db, exp.id)
         concluded = conclude_experiment(db, exp.id)
@@ -317,16 +372,26 @@ class TestExperiments:
 
     def test_conclude_requires_active(self, db, workspace, channel):
         exp = create_experiment(
-            db, workspace_id=workspace.id, channel_id=channel.id,
-            name="E5", hypothesis="H", primary_metric="m", actor="cli"
+            db,
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="E5",
+            hypothesis="H",
+            primary_metric="m",
+            actor="cli",
         )
         with pytest.raises(ExperimentNotActiveError):
             conclude_experiment(db, exp.id)
 
     def test_assign_unit_idempotent(self, db, workspace, channel):
         exp = create_experiment(
-            db, workspace_id=workspace.id, channel_id=channel.id,
-            name="E6", hypothesis="H", primary_metric="m", actor="cli"
+            db,
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="E6",
+            hypothesis="H",
+            primary_metric="m",
+            actor="cli",
         )
         add_variant(db, experiment_id=exp.id, name="Control", variant_type="control")
         activate_experiment(db, exp.id)
@@ -377,18 +442,26 @@ class TestWorkflows:
 
     def test_activate_workflow(self, db, workspace):
         wf = create_workflow(
-            db, workspace_id=workspace.id, name="W",
+            db,
+            workspace_id=workspace.id,
+            name="W",
             trigger_event_type="health.degraded",
-            conditions=[], actions=[], actor="cli"
+            conditions=[],
+            actions=[],
+            actor="cli",
         )
         updated = activate_workflow(db, wf.id, "cli")
         assert updated.status == "active"
 
     def test_pause_workflow(self, db, workspace):
         wf = create_workflow(
-            db, workspace_id=workspace.id, name="W2",
+            db,
+            workspace_id=workspace.id,
+            name="W2",
             trigger_event_type="health.degraded",
-            conditions=[], actions=[], actor="cli"
+            conditions=[],
+            actions=[],
+            actor="cli",
         )
         activate_workflow(db, wf.id, "cli")
         paused = pause_workflow(db, wf.id, "cli")

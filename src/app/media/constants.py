@@ -12,7 +12,7 @@ FFPROBE_VALIDATOR_VERSION = "ffprobe-1.0.0"
 # ── Resolution presets ────────────────────────────────────────────────────────
 
 # (width, height)
-RESOLUTION_SHORTS = (1080, 1920)   # YouTube Shorts / TikTok portrait
+RESOLUTION_SHORTS = (1080, 1920)  # YouTube Shorts / TikTok portrait
 RESOLUTION_LANDSCAPE_HD = (1920, 1080)
 RESOLUTION_PORTRAIT_720 = (720, 1280)
 
@@ -66,9 +66,7 @@ RENDER_JOB_STATUSES = (
 
 RENDER_JOB_VALID_TRANSITIONS: dict[str, frozenset[str]] = {
     RENDER_JOB_STATUS_PENDING: frozenset({RENDER_JOB_STATUS_RENDERING}),
-    RENDER_JOB_STATUS_RENDERING: frozenset(
-        {RENDER_JOB_STATUS_COMPLETED, RENDER_JOB_STATUS_FAILED}
-    ),
+    RENDER_JOB_STATUS_RENDERING: frozenset({RENDER_JOB_STATUS_COMPLETED, RENDER_JOB_STATUS_FAILED}),
     RENDER_JOB_STATUS_COMPLETED: frozenset(),
     RENDER_JOB_STATUS_FAILED: frozenset(),
 }

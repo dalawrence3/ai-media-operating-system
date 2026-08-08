@@ -61,13 +61,15 @@ def _simple_script(
     hook_text: str = "Hook text.",
     hook_cited: list[int] | None = None,
 ) -> GeneratedScript:
-    return _script_from_sections([
-        {
-            "section_type": "hook",
-            "text": hook_text,
-            "cited_claim_ids": hook_cited or [],
-        }
-    ])
+    return _script_from_sections(
+        [
+            {
+                "section_type": "hook",
+                "text": hook_text,
+                "cited_claim_ids": hook_cited or [],
+            }
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -105,6 +105,7 @@ class TestCreatePublishingPlan:
 
     def test_unique_input_hash_enforced(self, db):
         import sqlite3 as _sqlite3
+
         _create_plan(db, input_hash="same_hash")
         with pytest.raises(_sqlite3.IntegrityError):
             _create_plan(db, input_hash="same_hash")
@@ -197,9 +198,7 @@ class TestPlanStatusTransitions:
         reject_publishing_plan(db, plan.id, reason_code="quality", notes="too dark")
         events = list_publishing_review_events(db, plan.id)
         assert any(
-            e.event_type == "plan_rejected"
-            and e.reason_code == "quality"
-            and e.notes == "too dark"
+            e.event_type == "plan_rejected" and e.reason_code == "quality" and e.notes == "too dark"
             for e in events
         )
 
@@ -328,6 +327,7 @@ class TestPublications:
 
     def test_illegal_publication_transition_raises(self, db):
         from app.publishing.errors import IllegalPublicationTransitionError
+
         _, _, pub = self._setup(db)
         with pytest.raises(IllegalPublicationTransitionError):
             update_publication_status(db, pub.id, "published")  # must go through uploaded

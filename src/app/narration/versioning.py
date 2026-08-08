@@ -32,10 +32,7 @@ class ProviderVersion:
         schema_version: str = NARRATION_SCHEMA_VERSION,
         algorithm_version: str = NARRATION_ALGORITHM_VERSION,
     ) -> bool:
-        return (
-            self.schema_version == schema_version
-            and self.algorithm_version == algorithm_version
-        )
+        return self.schema_version == schema_version and self.algorithm_version == algorithm_version
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -83,9 +80,7 @@ class ProviderVersionRegistry:
     ) -> ProviderVersion:
         version = self.get(provider_name)
         if version is None:
-            raise ProviderVersionIncompatibleError(
-                provider_name, "no version record registered"
-            )
+            raise ProviderVersionIncompatibleError(provider_name, "no version record registered")
         if not version.is_compatible(
             schema_version=schema_version,
             algorithm_version=algorithm_version,

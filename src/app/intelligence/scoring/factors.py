@@ -27,6 +27,7 @@ def _clip(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
 # Factor 1: trend_strength
 # ---------------------------------------------------------------------------
 
+
 def compute_trend_strength(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
     """
     Measures recency and engagement signal strength from the top video.
@@ -109,6 +110,7 @@ def compute_trend_strength(ctx: FactorContext, policy: ScoringPolicy) -> FactorR
 # ---------------------------------------------------------------------------
 # Factor 2: audience_demand
 # ---------------------------------------------------------------------------
+
 
 def compute_audience_demand(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
     """
@@ -204,6 +206,7 @@ def compute_audience_demand(ctx: FactorContext, policy: ScoringPolicy) -> Factor
 # Factor 3: competition
 # ---------------------------------------------------------------------------
 
+
 def compute_competition(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
     """
     Inverse of competition saturation.
@@ -225,10 +228,7 @@ def compute_competition(ctx: FactorContext, policy: ScoringPolicy) -> FactorResu
                     contributing_obs_ids.append(obs.id)
                 if ev.id:
                     ev_row_ids.append(ev.id)
-            elif (
-                ev.evidence_type == "incumbent_subscriber_count"
-                and ev.evidence_value is not None
-            ):
+            elif ev.evidence_type == "incumbent_subscriber_count" and ev.evidence_value is not None:
                 subscriber_count = ev.evidence_value
                 if ev.id:
                     ev_row_ids.append(ev.id)
@@ -260,15 +260,39 @@ def compute_competition(ctx: FactorContext, policy: ScoringPolicy) -> FactorResu
 # Factor 4: evergreen_value
 # ---------------------------------------------------------------------------
 
-_TEMPORAL_TOKENS: frozenset[str] = frozenset({
-    "2024", "2025", "2026", "today", "now", "breaking", "latest",
-    "this week", "this month", "this year", "trending", "viral",
-})
+_TEMPORAL_TOKENS: frozenset[str] = frozenset(
+    {
+        "2024",
+        "2025",
+        "2026",
+        "today",
+        "now",
+        "breaking",
+        "latest",
+        "this week",
+        "this month",
+        "this year",
+        "trending",
+        "viral",
+    }
+)
 
-_TIMELESS_TOKENS: frozenset[str] = frozenset({
-    "how to", "guide", "basics", "beginner", "tips", "complete",
-    "ultimate", "explained", "what is", "why", "always", "forever",
-})
+_TIMELESS_TOKENS: frozenset[str] = frozenset(
+    {
+        "how to",
+        "guide",
+        "basics",
+        "beginner",
+        "tips",
+        "complete",
+        "ultimate",
+        "explained",
+        "what is",
+        "why",
+        "always",
+        "forever",
+    }
+)
 
 
 def compute_evergreen_value(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
@@ -301,6 +325,7 @@ def compute_evergreen_value(ctx: FactorContext, policy: ScoringPolicy) -> Factor
 # ---------------------------------------------------------------------------
 # Factor 5: audience_fit
 # ---------------------------------------------------------------------------
+
 
 def compute_audience_fit(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
     """
@@ -342,9 +367,7 @@ def compute_audience_fit(ctx: FactorContext, policy: ScoringPolicy) -> FactorRes
         len(topic_tokens & secondary_tokens) / len(topic_tokens) if secondary_tokens else 0.0
     )
 
-    desc_overlap = (
-        len(topic_tokens & desc_tokens) / len(topic_tokens) if desc_tokens else 0.0
-    )
+    desc_overlap = len(topic_tokens & desc_tokens) / len(topic_tokens) if desc_tokens else 0.0
 
     # Component 4: manual demand note phrase matching against niche
     manual_note_texts: list[str] = []
@@ -384,6 +407,7 @@ def compute_audience_fit(ctx: FactorContext, policy: ScoringPolicy) -> FactorRes
 # ---------------------------------------------------------------------------
 # Factor 6: content_novelty
 # ---------------------------------------------------------------------------
+
 
 def compute_content_novelty(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
     """

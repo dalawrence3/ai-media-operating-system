@@ -144,10 +144,7 @@ class TestDerivePageNumber:
         assert page == 3
 
     def test_repeated_text_returns_last_preceding_page(self):
-        raw = (
-            "--- Page 1 ---\nrepeated text.\n\n"
-            "--- Page 2 ---\nrepeated text again."
-        )
+        raw = "--- Page 1 ---\nrepeated text.\n\n--- Page 2 ---\nrepeated text again."
         # Quote at page-2 occurrence
         start = raw.rindex("repeated text")
         page = derive_page_number(raw, start, "pdf")

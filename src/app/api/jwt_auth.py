@@ -161,13 +161,13 @@ def _decode_bearer(raw_token: str, secret_key: str) -> CurrentUser:
         raise HTTPException(
             status_code=401,
             detail="Access token has expired",
-            headers={"WWW-Authenticate": "Bearer error=\"invalid_token\""},
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from exc
     except TokenInvalidError as exc:
         raise HTTPException(
             status_code=401,
             detail="Invalid access token",
-            headers={"WWW-Authenticate": "Bearer error=\"invalid_token\""},
+            headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from exc
 
     return CurrentUser(

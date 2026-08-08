@@ -38,23 +38,29 @@ def _make_channel(db: sqlite3.Connection, name: str = "Test Channel") -> tuple:
 
 
 def _make_run(db: sqlite3.Connection, channel_id: int, profile_version_id: int) -> DiscoveryRun:
-    return create_discovery_run(db, DiscoveryRun(
-        channel_id=channel_id,
-        profile_version_id=profile_version_id,
-        adapter_name=AdapterName.manual,
-        status=RunStatus.running,
-    ))
+    return create_discovery_run(
+        db,
+        DiscoveryRun(
+            channel_id=channel_id,
+            profile_version_id=profile_version_id,
+            adapter_name=AdapterName.manual,
+            status=RunStatus.running,
+        ),
+    )
 
 
 def _make_opp(
     db: sqlite3.Connection, channel_id: int, run_id: int, topic: str = "test topic"
 ) -> Opportunity:
-    return create_opportunity(db, Opportunity(
-        channel_id=channel_id,
-        discovery_run_id=run_id,
-        raw_topic=topic,
-        normalized_topic=topic,
-    ))
+    return create_opportunity(
+        db,
+        Opportunity(
+            channel_id=channel_id,
+            discovery_run_id=run_id,
+            raw_topic=topic,
+            normalized_topic=topic,
+        ),
+    )
 
 
 def _make_policy(

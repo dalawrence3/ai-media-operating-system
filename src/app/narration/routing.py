@@ -20,9 +20,7 @@ class RoutingRequest:
     """Describes a synthesis request that needs to be routed to a provider."""
 
     tts_request: TTSRequest
-    criteria: ProviderSelectionCriteria = field(
-        default_factory=ProviderSelectionCriteria
-    )
+    criteria: ProviderSelectionCriteria = field(default_factory=ProviderSelectionCriteria)
     attempt: int = 0
 
 

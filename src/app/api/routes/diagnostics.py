@@ -22,9 +22,7 @@ def get_diagnostics(
 ) -> dict[str, Any]:
     try:
         report = svc.get_diagnostics(
-            GetDiagnosticsQuery(
-                workspace_id=workspace_id, subject=subject, subject_id=subject_id
-            )
+            GetDiagnosticsQuery(workspace_id=workspace_id, subject=subject, subject_id=subject_id)
         )
         return report.model_dump()
     except PermissionError:

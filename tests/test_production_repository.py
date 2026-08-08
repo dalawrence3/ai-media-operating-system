@@ -441,9 +441,7 @@ def test_reject_does_not_touch_approved_plan(db: sqlite3.Connection) -> None:
     approve_production_plan(db, plan_approved.id)
     db.commit()
 
-    plan_draft = create_production_plan(
-        db, _make_draft(topic.id, script.id, input_hash="2" * 64)
-    )
+    plan_draft = create_production_plan(db, _make_draft(topic.id, script.id, input_hash="2" * 64))
     db.commit()
     reject_production_plan(db, plan_draft.id, reason_code="pacing")
     db.commit()
@@ -487,9 +485,7 @@ def test_reject_other_with_notes_succeeds(db: sqlite3.Connection) -> None:
     script = _script(db, topic.id)
     plan = create_production_plan(db, _make_draft(topic.id, script.id))
     db.commit()
-    rejected = reject_production_plan(
-        db, plan.id, reason_code="other", notes="Other reason text."
-    )
+    rejected = reject_production_plan(db, plan.id, reason_code="other", notes="Other reason text.")
     db.commit()
     assert rejected.status == "rejected"
     events = list_production_plan_review_events(db, plan.id)

@@ -142,7 +142,8 @@ def _check_concurrency(
 ) -> None:
     try:
         check_concurrency_limit(
-            conn, workspace_id,
+            conn,
+            workspace_id,
             channel_id=channel_id,
             platform_account_id=platform_account_id,
         )
@@ -158,9 +159,7 @@ def _check_concurrency(
 _HANDLERS: dict[type, Callable[..., Any]] = {}
 
 
-def register_handler(
-    cmd_type: type, handler: Callable[..., Any], *, replace: bool = False
-) -> None:
+def register_handler(cmd_type: type, handler: Callable[..., Any], *, replace: bool = False) -> None:
     """Register a safe handler for a command type.
 
     Pass replace=True to intentionally replace an existing registration.
@@ -168,8 +167,7 @@ def register_handler(
     """
     if cmd_type in _HANDLERS and not replace:
         raise RuntimeError(
-            f"Handler already registered for {cmd_type.__name__!r}; "
-            "pass replace=True to override"
+            f"Handler already registered for {cmd_type.__name__!r}; pass replace=True to override"
         )
     _HANDLERS[cmd_type] = handler
 
@@ -219,7 +217,8 @@ def dispatch(
     if isinstance(cmd, StartPipelineCommand):
         _check_budget(conn, workspace_id, channel_id=channel_id)
         _check_concurrency(
-            conn, workspace_id,
+            conn,
+            workspace_id,
             channel_id=channel_id,
             platform_account_id=platform_account_id,
         )
@@ -231,7 +230,10 @@ def dispatch(
     # Step 11: emit dispatch event.
     if workspace_id:
         _emit_event(
-            conn, "command.dispatched", workspace_id, actor,
+            conn,
+            "command.dispatched",
+            workspace_id,
+            actor,
             {
                 "command": cmd_type.__name__,
                 "result_type": type(result).__name__,
@@ -310,14 +312,24 @@ def register_default_handlers(conn_factory: Callable[[], Any] | None = None) -> 
 
     def _approve_review(conn: Any, cmd: ApproveReviewItemCommand, **kwargs: Any) -> Any:
         return review_svc.approve_review_item(
-            conn, cmd.item_type, cmd.item_id, cmd.workspace_id, cmd.actor,
-            notes=cmd.notes, registry=kwargs.get("registry"),
+            conn,
+            cmd.item_type,
+            cmd.item_id,
+            cmd.workspace_id,
+            cmd.actor,
+            notes=cmd.notes,
+            registry=kwargs.get("registry"),
         )
 
     def _reject_review(conn: Any, cmd: RejectReviewItemCommand, **kwargs: Any) -> Any:
         return review_svc.reject_review_item(
-            conn, cmd.item_type, cmd.item_id, cmd.workspace_id, cmd.actor,
-            reason=cmd.reason, registry=kwargs.get("registry"),
+            conn,
+            cmd.item_type,
+            cmd.item_id,
+            cmd.workspace_id,
+            cmd.actor,
+            reason=cmd.reason,
+            registry=kwargs.get("registry"),
         )
 
     def _create_schedule(conn: Any, cmd: CreateScheduleCommand, **_: Any) -> Any:

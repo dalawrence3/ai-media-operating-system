@@ -65,9 +65,7 @@ def pause_schedule(
 ) -> dict[str, Any]:
     try:
         view = svc.pause_schedule(
-            PauseScheduleCommand(
-                workspace_id=workspace_id, schedule_id=schedule_id, actor=actor
-            )
+            PauseScheduleCommand(workspace_id=workspace_id, schedule_id=schedule_id, actor=actor)
         )
         return view.model_dump()
     except PermissionError:
@@ -85,9 +83,7 @@ def resume_schedule(
 ) -> dict[str, Any]:
     try:
         view = svc.resume_schedule(
-            ResumeScheduleCommand(
-                workspace_id=workspace_id, schedule_id=schedule_id, actor=actor
-            )
+            ResumeScheduleCommand(workspace_id=workspace_id, schedule_id=schedule_id, actor=actor)
         )
         return view.model_dump()
     except PermissionError:
@@ -105,9 +101,7 @@ def delete_schedule(
 ) -> dict[str, Any]:
     try:
         svc.delete_schedule(
-            DeleteScheduleCommand(
-                workspace_id=workspace_id, schedule_id=schedule_id, actor=actor
-            )
+            DeleteScheduleCommand(workspace_id=workspace_id, schedule_id=schedule_id, actor=actor)
         )
         return {"deleted": True}
     except PermissionError:

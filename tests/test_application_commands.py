@@ -34,9 +34,16 @@ class TestPipelineStages:
 
     def test_canonical_order(self):
         expected = [
-            "research", "script_generation", "production_plan",
-            "narration", "captions", "visual_intelligence",
-            "rendering", "publishing", "analytics", "learning",
+            "research",
+            "script_generation",
+            "production_plan",
+            "narration",
+            "captions",
+            "visual_intelligence",
+            "rendering",
+            "publishing",
+            "analytics",
+            "learning",
         ]
         assert PIPELINE_STAGES == expected
 
@@ -110,31 +117,43 @@ class TestCommandContractVersion:
 class TestStartPipelineCommand:
     def test_frozen(self):
         cmd = StartPipelineCommand(
-            workspace_id="ws1", channel_id="ch1", topic_id=1,
-            actor="test", idempotency_key="key1",
+            workspace_id="ws1",
+            channel_id="ch1",
+            topic_id=1,
+            actor="test",
+            idempotency_key="key1",
         )
         with pytest.raises((AttributeError, TypeError)):
             cmd.actor = "other"  # type: ignore[misc]
 
     def test_default_stages(self):
         cmd = StartPipelineCommand(
-            workspace_id="ws", channel_id="ch", topic_id=1,
-            actor="a", idempotency_key="k",
+            workspace_id="ws",
+            channel_id="ch",
+            topic_id=1,
+            actor="a",
+            idempotency_key="k",
         )
         assert cmd.start_stage == "research"
         assert cmd.end_stage == "learning"
 
     def test_carries_contract_version(self):
         cmd = StartPipelineCommand(
-            workspace_id="ws", channel_id="ch", topic_id=1,
-            actor="a", idempotency_key="k",
+            workspace_id="ws",
+            channel_id="ch",
+            topic_id=1,
+            actor="a",
+            idempotency_key="k",
         )
         assert cmd.contract_version == COMMAND_CONTRACT_VERSION
 
     def test_all_optional_fields_default_none(self):
         cmd = StartPipelineCommand(
-            workspace_id="ws", channel_id="ch", topic_id=1,
-            actor="a", idempotency_key="k",
+            workspace_id="ws",
+            channel_id="ch",
+            topic_id=1,
+            actor="a",
+            idempotency_key="k",
         )
         assert cmd.platform_account_id is None
         assert cmd.experiment_id is None
@@ -144,23 +163,21 @@ class TestStartPipelineCommand:
 
 class TestPausePipelineCommand:
     def test_basic_construction(self):
-        cmd = PausePipelineCommand(
-            pipeline_id="p1", workspace_id="ws1", actor="admin"
-        )
+        cmd = PausePipelineCommand(pipeline_id="p1", workspace_id="ws1", actor="admin")
         assert cmd.pipeline_id == "p1"
         assert cmd.reason == ""
 
 
 class TestRecoverPipelineCommand:
     def test_from_stage_defaults_none(self):
-        cmd = RecoverPipelineCommand(
-            pipeline_id="p1", workspace_id="ws1", actor="admin"
-        )
+        cmd = RecoverPipelineCommand(pipeline_id="p1", workspace_id="ws1", actor="admin")
         assert cmd.from_stage is None
 
     def test_from_stage_can_be_set(self):
         cmd = RecoverPipelineCommand(
-            pipeline_id="p1", workspace_id="ws1", actor="admin",
+            pipeline_id="p1",
+            workspace_id="ws1",
+            actor="admin",
             from_stage="narration",
         )
         assert cmd.from_stage == "narration"
@@ -169,7 +186,8 @@ class TestRecoverPipelineCommand:
 class TestCreateScheduleCommand:
     def test_basic_construction(self):
         cmd = CreateScheduleCommand(
-            workspace_id="ws1", name="Daily",
+            workspace_id="ws1",
+            name="Daily",
             operation_type="publish",
             schedule_type="interval",
             schedule_config={"interval_seconds": 3600},

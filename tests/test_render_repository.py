@@ -292,7 +292,8 @@ class TestRejectRenderManifest:
         seed = _seed(db)
         m = create_render_manifest(db, _make_draft(seed))
         rejected = reject_render_manifest(
-            db, m.id,
+            db,
+            m.id,
             reason_code="visual_quality",
             severity=3,
             actor="bob",
@@ -349,9 +350,13 @@ class TestMarkRenderJobRendering:
         job = _make_job(db, m.id)
         mark_render_job_rendering(db, job.id)
         mark_render_job_completed(
-            db, job.id,
-            output_path="/out.mp4", output_sha256="sha",
-            duration_s=30.0, file_size_bytes=1000, render_time_s=5.0,
+            db,
+            job.id,
+            output_path="/out.mp4",
+            output_sha256="sha",
+            duration_s=30.0,
+            file_size_bytes=1000,
+            render_time_s=5.0,
             ffmpeg_cmd=["ffmpeg"],
         )
         with pytest.raises(IllegalRenderJobTransitionError):
@@ -365,7 +370,8 @@ class TestMarkRenderJobCompleted:
         job = _make_job(db, m.id)
         mark_render_job_rendering(db, job.id)
         completed = mark_render_job_completed(
-            db, job.id,
+            db,
+            job.id,
             output_path="/renders/out.mp4",
             output_sha256="deadbeef",
             duration_s=30.5,
@@ -399,8 +405,13 @@ class TestMarkRenderJobValidated:
         job = _make_job(db, m.id)
         mark_render_job_rendering(db, job.id)
         mark_render_job_completed(
-            db, job.id, output_path="/o.mp4", output_sha256="s",
-            duration_s=30.0, file_size_bytes=100, render_time_s=2.0,
+            db,
+            job.id,
+            output_path="/o.mp4",
+            output_sha256="s",
+            duration_s=30.0,
+            file_size_bytes=100,
+            render_time_s=2.0,
             ffmpeg_cmd=[],
         )
         meta = {"duration_s": 30.1, "has_video": True}
@@ -446,7 +457,8 @@ class TestRecordRenderReviewEvent:
         seed = _seed(db)
         m = create_render_manifest(db, _make_draft(seed))
         reject_render_manifest(
-            db, m.id,
+            db,
+            m.id,
             reason_code="visual_quality",
             severity=4,
             expected_correction="Re-render with better lighting",
@@ -537,8 +549,10 @@ class TestRenderManifestScenes:
         scene1 = _make_scene_draft(scene_index=1, scene_id=11, segment_id=21)
         scene2 = _make_scene_draft(scene_index=2, scene_id=12, segment_id=22)
         draft = _make_draft(
-            seed, scenes=[scene2, scene0, scene1],
-            total_scene_count=3, total_duration_ms=9000,
+            seed,
+            scenes=[scene2, scene0, scene1],
+            total_scene_count=3,
+            total_duration_ms=9000,
         )
         m = create_render_manifest(db, draft)
 
@@ -622,9 +636,13 @@ class TestResolvedAssets:
     def test_asset_fields_persisted(self, db):
         seed = _seed(db)
         asset = _make_resolved_asset(
-            asset_id=42, scene_id=10, segment_id=20,
-            local_path="/tmp/clip.jpg", local_sha256="deadbeef",
-            license_status="verified", commercial_safe=True,
+            asset_id=42,
+            scene_id=10,
+            segment_id=20,
+            local_path="/tmp/clip.jpg",
+            local_sha256="deadbeef",
+            license_status="verified",
+            commercial_safe=True,
         )
         scene = _make_scene_draft(primary_asset=asset)
         draft = _make_draft(seed, scenes=[scene], total_scene_count=1, total_duration_ms=3000)
@@ -798,18 +816,18 @@ class TestApprovalSafety:
         seed = _seed(db)
 
         # First manifest: fully resolved+verified, approve it.
-        asset_ok = _make_resolved_asset(
-            local_path="/tmp/img.jpg", license_status="verified"
-        )
+        asset_ok = _make_resolved_asset(local_path="/tmp/img.jpg", license_status="verified")
         m1 = self._manifest_with_scene(db, seed, asset_ok)
         approve_render_manifest(db, m1.id)
         db.commit()
 
         # Second manifest: has a placeholder scene — approval must fail.
         draft2 = _make_draft(
-            seed, input_hash="render_hash_002",
+            seed,
+            input_hash="render_hash_002",
             scenes=[_make_scene_draft(primary_asset=None)],
-            total_scene_count=1, total_duration_ms=3000,
+            total_scene_count=1,
+            total_duration_ms=3000,
         )
         m2 = create_render_manifest(db, draft2)
         with pytest.raises(PlaceholderApprovalError):
@@ -843,9 +861,13 @@ class TestGetApprovedRender:
         j = _make_job(db, m.id)
         mark_render_job_rendering(db, j.id)
         mark_render_job_completed(
-            db, j.id,
-            output_path="/out.mp4", output_sha256="sha",
-            duration_s=30.0, file_size_bytes=100, render_time_s=5.0,
+            db,
+            j.id,
+            output_path="/out.mp4",
+            output_sha256="sha",
+            duration_s=30.0,
+            file_size_bytes=100,
+            render_time_s=5.0,
             ffmpeg_cmd=[],
         )
         approve_render_manifest(db, m.id, render_job_id=j.id)

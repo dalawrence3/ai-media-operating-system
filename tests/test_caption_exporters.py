@@ -139,10 +139,19 @@ class TestJSONExporter:
         cues = [_make_cue(0)]
         doc = json.loads(render_json(cues, **_base_json_kwargs()))
         for key in (
-            "caption_run_id", "narration_run_id", "plan_id", "script_id",
-            "topic_id", "experiment_id", "caption_schema_version",
-            "segmentation_version", "timing_algorithm_version",
-            "style_version", "exporter_version", "language", "cues",
+            "caption_run_id",
+            "narration_run_id",
+            "plan_id",
+            "script_id",
+            "topic_id",
+            "experiment_id",
+            "caption_schema_version",
+            "segmentation_version",
+            "timing_algorithm_version",
+            "style_version",
+            "exporter_version",
+            "language",
+            "cues",
         ):
             assert key in doc, f"Missing key: {key}"
 
@@ -152,10 +161,20 @@ class TestJSONExporter:
         assert len(doc["cues"]) == 1
         cue_doc = doc["cues"][0]
         for key in (
-            "cue_index", "segment_id", "segment_cue_index", "narration_asset_id",
-            "narration_text_hash", "audio_sha256", "text", "lines",
-            "start_ms", "end_ms", "line_count", "char_count",
-            "timing_source", "warnings",
+            "cue_index",
+            "segment_id",
+            "segment_cue_index",
+            "narration_asset_id",
+            "narration_text_hash",
+            "audio_sha256",
+            "text",
+            "lines",
+            "start_ms",
+            "end_ms",
+            "line_count",
+            "char_count",
+            "timing_source",
+            "warnings",
         ):
             assert key in cue_doc, f"Missing cue key: {key}"
 

@@ -57,17 +57,11 @@ def complete_operation(
     operation_id: str,
     output_data: dict[str, Any] | None = None,
 ) -> OperationExecution:
-    return repo.update_operation_status(
-        conn, operation_id, "completed", output_data=output_data
-    )
+    return repo.update_operation_status(conn, operation_id, "completed", output_data=output_data)
 
 
-def fail_operation(
-    conn: Any, operation_id: str, error_message: str
-) -> OperationExecution:
-    return repo.update_operation_status(
-        conn, operation_id, "failed", error_message=error_message
-    )
+def fail_operation(conn: Any, operation_id: str, error_message: str) -> OperationExecution:
+    return repo.update_operation_status(conn, operation_id, "failed", error_message=error_message)
 
 
 def supersede_operation(conn: Any, operation_id: str) -> OperationExecution:

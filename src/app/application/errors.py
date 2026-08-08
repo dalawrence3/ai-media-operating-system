@@ -36,9 +36,7 @@ class CrossWorkspaceAccessError(ApplicationError):
         self.entity = entity
         self.entity_id = entity_id
         self.workspace_id = workspace_id
-        super().__init__(
-            f"{entity} '{entity_id}' does not belong to workspace '{workspace_id}'"
-        )
+        super().__init__(f"{entity} '{entity_id}' does not belong to workspace '{workspace_id}'")
 
 
 class WorkspacePausedError(ApplicationError):
@@ -71,8 +69,7 @@ class PipelineAlreadyExistsError(ApplicationError):
     def __init__(self, idempotency_key: str, existing_id: str) -> None:
         self.existing_id = existing_id
         super().__init__(
-            f"Pipeline with idempotency_key '{idempotency_key}' "
-            f"already exists: {existing_id}"
+            f"Pipeline with idempotency_key '{idempotency_key}' already exists: {existing_id}"
         )
 
 
@@ -85,9 +82,7 @@ class StagePrerequisiteError(ApplicationError):
     def __init__(self, stage: str, missing: list[str]) -> None:
         self.stage = stage
         self.missing = missing
-        super().__init__(
-            f"Stage '{stage}' prerequisites not complete: {missing}"
-        )
+        super().__init__(f"Stage '{stage}' prerequisites not complete: {missing}")
 
 
 class PipelineNotRecoverableError(ApplicationError):

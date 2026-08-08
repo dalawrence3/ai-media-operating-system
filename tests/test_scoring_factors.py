@@ -43,10 +43,12 @@ def _policy(**overrides) -> ScoringPolicy:
 
 def _opp(topic: str = "index fund basics", normalized: str | None = None) -> Opportunity:
     return Opportunity(
-        id=1, channel_id=1,
+        id=1,
+        channel_id=1,
         raw_topic=topic,
         normalized_topic=normalized or topic,
-        current_lifecycle_state=LifecycleState.new, discovery_run_id=1,
+        current_lifecycle_state=LifecycleState.new,
+        discovery_run_id=1,
     )
 
 
@@ -54,7 +56,9 @@ def _profile(
     primary: str = "personal finance", secondary: list[str] | None = None
 ) -> ChannelProfileVersion:
     return ChannelProfileVersion(
-        id=1, channel_id=1, version=1,
+        id=1,
+        channel_id=1,
+        version=1,
         primary_niche=primary,
         secondary_niches=secondary or [],
         audience_description="people learning about money",
@@ -65,8 +69,12 @@ def _obs(
     obs_id: int = 1, age: float | None = 20.0, adapter: str = "youtube_data_api", run_id: int = 1
 ) -> OpportunityObservation:
     return OpportunityObservation(
-        id=obs_id, opportunity_id=1, discovery_run_id=run_id,
-        adapter_name=adapter, raw_topic="test", normalized_topic="test",
+        id=obs_id,
+        opportunity_id=1,
+        discovery_run_id=run_id,
+        adapter_name=adapter,
+        raw_topic="test",
+        normalized_topic="test",
         source_quality_tier=SourceQualityTier.medium,
         signal_age_days=age,
     )
@@ -76,8 +84,13 @@ def _ev(
     ev_type: str, value: float | None = None, text: str | None = None, ev_id: int = 10
 ) -> OpportunitySourceEvidence:
     return OpportunitySourceEvidence(
-        id=ev_id, observation_id=1, evidence_type=ev_type,
-        evidence_value=value, evidence_text=text, source_label="test", opportunity_id=1,
+        id=ev_id,
+        observation_id=1,
+        evidence_type=ev_type,
+        evidence_value=value,
+        evidence_text=text,
+        source_label="test",
+        opportunity_id=1,
     )
 
 

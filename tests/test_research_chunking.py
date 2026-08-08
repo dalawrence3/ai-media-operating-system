@@ -28,7 +28,7 @@ def _verify_invariant(raw_text: str, chunks: list[Chunk]) -> None:
     for c in chunks:
         assert c.text == raw_text[c.char_start : c.char_end], (
             f"Chunk {c.index} text mismatch: "
-            f"expected {raw_text[c.char_start:c.char_end]!r}, got {c.text!r}"
+            f"expected {raw_text[c.char_start : c.char_end]!r}, got {c.text!r}"
         )
 
 

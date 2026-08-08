@@ -37,6 +37,7 @@ runner = CliRunner()
 def _reset_config():
     """Reset the config singleton before and after each test so ACE_DB_PATH is re-read."""
     from app.core.config import reset_config
+
     reset_config()
     yield
     reset_config()
@@ -52,23 +53,29 @@ def _make_channel(db: sqlite3.Connection, name: str = "CLI Test Channel"):
 
 
 def _make_run(db: sqlite3.Connection, channel_id: int, profile_version_id: int) -> DiscoveryRun:
-    return create_discovery_run(db, DiscoveryRun(
-        channel_id=channel_id,
-        profile_version_id=profile_version_id,
-        adapter_name=AdapterName.manual,
-        status=RunStatus.running,
-    ))
+    return create_discovery_run(
+        db,
+        DiscoveryRun(
+            channel_id=channel_id,
+            profile_version_id=profile_version_id,
+            adapter_name=AdapterName.manual,
+            status=RunStatus.running,
+        ),
+    )
 
 
 def _make_policy(db: sqlite3.Connection, channel_id: int, activate: bool = True) -> ScoringPolicy:
     existing = list_scoring_policies(db, channel_id)
     next_version = max((p.version for p in existing), default=0) + 1
-    policy = create_scoring_policy(db, ScoringPolicy(
-        channel_id=channel_id,
-        version=next_version,
-        label="test policy",
-        missing_competition=MissingDataPolicy.reweight_available,
-    ))
+    policy = create_scoring_policy(
+        db,
+        ScoringPolicy(
+            channel_id=channel_id,
+            version=next_version,
+            label="test policy",
+            missing_competition=MissingDataPolicy.reweight_available,
+        ),
+    )
     if activate:
         activate_scoring_policy(db, policy.id)
         db.commit()
@@ -77,12 +84,15 @@ def _make_policy(db: sqlite3.Connection, channel_id: int, activate: bool = True)
 
 def _make_opp(db: sqlite3.Connection, channel_id: int, profile_version_id: int) -> Opportunity:
     run = _make_run(db, channel_id, profile_version_id)
-    opp = create_opportunity(db, Opportunity(
-        channel_id=channel_id,
-        raw_topic="index fund basics",
-        normalized_topic="index fund basics",
-        discovery_run_id=run.id,
-    ))
+    opp = create_opportunity(
+        db,
+        Opportunity(
+            channel_id=channel_id,
+            raw_topic="index fund basics",
+            normalized_topic="index fund basics",
+            discovery_run_id=run.id,
+        ),
+    )
     db.commit()
     return opp
 
@@ -101,14 +111,18 @@ def _invoke(*args, db_path: str | None = None, env: dict | None = None):
 
 def test_policy_list_empty(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
     db.commit()
     db.close()
 
     result = _invoke(
-        "intelligence", "policy", "list",
-        "--channel", str(channel.id),
+        "intelligence",
+        "policy",
+        "list",
+        "--channel",
+        str(channel.id),
         db_path=str(tmp_path / "test.db"),
     )
     assert result.exit_code == 0
@@ -117,6 +131,7 @@ def test_policy_list_empty(tmp_path: Path) -> None:
 
 def test_policy_list_shows_policies(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
     _make_policy(db, channel.id, activate=True)
@@ -124,8 +139,11 @@ def test_policy_list_shows_policies(tmp_path: Path) -> None:
     db.close()
 
     result = _invoke(
-        "intelligence", "policy", "list",
-        "--channel", str(channel.id),
+        "intelligence",
+        "policy",
+        "list",
+        "--channel",
+        str(channel.id),
         db_path=str(tmp_path / "test.db"),
     )
     assert result.exit_code == 0
@@ -140,6 +158,7 @@ def test_policy_list_shows_policies(tmp_path: Path) -> None:
 
 def test_policy_show(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
     policy = _make_policy(db, channel.id)
@@ -147,7 +166,10 @@ def test_policy_show(tmp_path: Path) -> None:
     db.close()
 
     result = _invoke(
-        "intelligence", "policy", "show", str(policy.id),
+        "intelligence",
+        "policy",
+        "show",
+        str(policy.id),
         db_path=str(tmp_path / "test.db"),
     )
     assert result.exit_code == 0
@@ -162,15 +184,20 @@ def test_policy_show(tmp_path: Path) -> None:
 
 def test_policy_create(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
     db.commit()
     db.close()
 
     result = _invoke(
-        "intelligence", "policy", "create",
-        "--channel", str(channel.id),
-        "--label", "new policy",
+        "intelligence",
+        "policy",
+        "create",
+        "--channel",
+        str(channel.id),
+        "--label",
+        "new policy",
         db_path=str(tmp_path / "test.db"),
     )
     assert result.exit_code == 0
@@ -184,17 +211,26 @@ def test_policy_create(tmp_path: Path) -> None:
 
 def test_policy_activate_guard_without_confirm(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
-    policy = create_scoring_policy(db, ScoringPolicy(
-        channel_id=channel.id, version=1, label="p1",
-        missing_competition=MissingDataPolicy.reweight_available,
-    ))
+    policy = create_scoring_policy(
+        db,
+        ScoringPolicy(
+            channel_id=channel.id,
+            version=1,
+            label="p1",
+            missing_competition=MissingDataPolicy.reweight_available,
+        ),
+    )
     db.commit()
     db.close()
 
     result = _invoke(
-        "intelligence", "policy", "activate", str(policy.id),
+        "intelligence",
+        "policy",
+        "activate",
+        str(policy.id),
         db_path=str(tmp_path / "test.db"),
     )
     # Should print informational message and exit 0 (guard, not error)
@@ -204,17 +240,27 @@ def test_policy_activate_guard_without_confirm(tmp_path: Path) -> None:
 
 def test_policy_activate_with_confirm(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
-    policy = create_scoring_policy(db, ScoringPolicy(
-        channel_id=channel.id, version=1, label="p1",
-        missing_competition=MissingDataPolicy.reweight_available,
-    ))
+    policy = create_scoring_policy(
+        db,
+        ScoringPolicy(
+            channel_id=channel.id,
+            version=1,
+            label="p1",
+            missing_competition=MissingDataPolicy.reweight_available,
+        ),
+    )
     db.commit()
     db.close()
 
     result = _invoke(
-        "intelligence", "policy", "activate", str(policy.id), "--confirm",
+        "intelligence",
+        "policy",
+        "activate",
+        str(policy.id),
+        "--confirm",
         db_path=str(tmp_path / "test.db"),
     )
     assert result.exit_code == 0
@@ -228,6 +274,7 @@ def test_policy_activate_with_confirm(tmp_path: Path) -> None:
 
 def test_policy_clone(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
     policy = _make_policy(db, channel.id)
@@ -235,8 +282,12 @@ def test_policy_clone(tmp_path: Path) -> None:
     db.close()
 
     result = _invoke(
-        "intelligence", "policy", "clone", str(policy.id),
-        "--label", "cloned policy",
+        "intelligence",
+        "policy",
+        "clone",
+        str(policy.id),
+        "--label",
+        "cloned policy",
         db_path=str(tmp_path / "test.db"),
     )
     assert result.exit_code == 0
@@ -250,18 +301,28 @@ def test_policy_clone(tmp_path: Path) -> None:
 
 def test_policy_update_label(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
-    policy = create_scoring_policy(db, ScoringPolicy(
-        channel_id=channel.id, version=1, label="old",
-        missing_competition=MissingDataPolicy.reweight_available,
-    ))
+    policy = create_scoring_policy(
+        db,
+        ScoringPolicy(
+            channel_id=channel.id,
+            version=1,
+            label="old",
+            missing_competition=MissingDataPolicy.reweight_available,
+        ),
+    )
     db.commit()
     db.close()
 
     result = _invoke(
-        "intelligence", "policy", "update", str(policy.id),
-        "--label", "updated label",
+        "intelligence",
+        "policy",
+        "update",
+        str(policy.id),
+        "--label",
+        "updated label",
         db_path=str(tmp_path / "test.db"),
     )
     assert result.exit_code == 0
@@ -275,20 +336,29 @@ def test_policy_update_label(tmp_path: Path) -> None:
 
 def test_policy_archive_non_default(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
     p1 = _make_policy(db, channel.id)
-    p2 = create_scoring_policy(db, ScoringPolicy(
-        channel_id=channel.id, version=2, label="p2",
-        missing_competition=MissingDataPolicy.reweight_available,
-    ))
+    p2 = create_scoring_policy(
+        db,
+        ScoringPolicy(
+            channel_id=channel.id,
+            version=2,
+            label="p2",
+            missing_competition=MissingDataPolicy.reweight_available,
+        ),
+    )
     activate_scoring_policy(db, p2.id)
     activate_scoring_policy(db, p1.id)  # p1 is now default again
     db.commit()
     db.close()
 
     result = _invoke(
-        "intelligence", "policy", "archive", str(p2.id),
+        "intelligence",
+        "policy",
+        "archive",
+        str(p2.id),
         db_path=str(tmp_path / "test.db"),
     )
     assert result.exit_code == 0
@@ -302,6 +372,7 @@ def test_policy_archive_non_default(tmp_path: Path) -> None:
 
 def test_intelligence_score_missing_opportunity_exits_1(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, _, _, _ = _make_channel(db)
     _make_policy(db, channel.id)
@@ -319,23 +390,30 @@ def test_intelligence_score_missing_opportunity_exits_1(tmp_path: Path) -> None:
 
 def test_intelligence_score_outputs_composite(tmp_path: Path) -> None:
     from app.core.database import open_db
+
     db = open_db(tmp_path / "test.db")
     channel, profile, _, _ = _make_channel(db)
     _make_policy(db, channel.id)
     opp = _make_opp(db, channel.id, profile.id)
     run = _make_run(db, channel.id, profile.id)
-    create_observation(db, OpportunityObservation(
-        opportunity_id=opp.id,
-        discovery_run_id=run.id,
-        adapter_name=AdapterName.youtube_data_api,
-        source_quality_tier=SourceQualityTier.medium,
-        signal_age_days=20.0,
-    ))
+    create_observation(
+        db,
+        OpportunityObservation(
+            opportunity_id=opp.id,
+            discovery_run_id=run.id,
+            adapter_name=AdapterName.youtube_data_api,
+            source_quality_tier=SourceQualityTier.medium,
+            signal_age_days=20.0,
+        ),
+    )
     db.commit()
     db.close()
 
     result = _invoke(
-        "intelligence", "score", "--opportunity", str(opp.id),
+        "intelligence",
+        "score",
+        "--opportunity",
+        str(opp.id),
         db_path=str(tmp_path / "test.db"),
     )
     assert result.exit_code == 0

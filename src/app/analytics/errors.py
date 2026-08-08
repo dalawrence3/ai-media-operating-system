@@ -86,9 +86,7 @@ class PublicationIneligibleError(AnalyticsError):
     """
 
     def __init__(self, publication_id: int, reason: str) -> None:
-        super().__init__(
-            f"Publication {publication_id} is ineligible for analytics: {reason}"
-        )
+        super().__init__(f"Publication {publication_id} is ineligible for analytics: {reason}")
         self.publication_id = publication_id
         self.reason = reason
 
@@ -101,9 +99,7 @@ class CurrencyMismatchError(AnalyticsError):
 
     def __init__(self, currencies: set[str]) -> None:
         sorted_currencies = sorted(currencies)
-        super().__init__(
-            f"Cannot aggregate revenue across mixed currencies: {sorted_currencies}"
-        )
+        super().__init__(f"Cannot aggregate revenue across mixed currencies: {sorted_currencies}")
         self.currencies = currencies
 
 

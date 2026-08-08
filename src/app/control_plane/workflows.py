@@ -23,9 +23,7 @@ def _validate_conditions(conditions: list[dict[str, Any]]) -> None:
     for cond in conditions:
         op = cond.get("operator")
         if op not in WORKFLOW_CONDITION_OPERATORS:
-            raise InvalidWorkflowConditionError(
-                f"Unsupported condition operator: {op!r}"
-            )
+            raise InvalidWorkflowConditionError(f"Unsupported condition operator: {op!r}")
         if "field" not in cond:
             raise InvalidWorkflowConditionError("Condition missing 'field'")
 
@@ -34,9 +32,7 @@ def _validate_actions(actions: list[dict[str, Any]]) -> None:
     for act in actions:
         action_type = act.get("action_type")
         if action_type not in WORKFLOW_ACTION_TYPES:
-            raise InvalidWorkflowActionError(
-                f"Unsupported action type: {action_type!r}"
-            )
+            raise InvalidWorkflowActionError(f"Unsupported action type: {action_type!r}")
 
 
 def create_workflow(
@@ -72,7 +68,5 @@ def pause_workflow(conn: Any, workflow_id: str, actor: str) -> Workflow:
     return repo.update_workflow_status(conn, workflow_id, "paused", actor)
 
 
-def start_workflow_run(
-    conn: Any, workflow_id: str, trigger_event_id: str
-) -> WorkflowRun:
+def start_workflow_run(conn: Any, workflow_id: str, trigger_event_id: str) -> WorkflowRun:
     return repo.create_workflow_run(conn, str(uuid.uuid4()), workflow_id, trigger_event_id)

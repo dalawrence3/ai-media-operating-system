@@ -26,19 +26,36 @@ def db(tmp_path: Path) -> sqlite3.Connection:
 def _snap(conn, h="s1"):
     return create_snapshot(
         conn,
-        publication_id=1, publishing_plan_id=1, publishing_job_id=1,
-        render_manifest_id=1, scene_manifest_id=1, production_plan_id=1,
-        script_id=1, topic_id=1, narration_run_id=1, caption_run_id=1,
-        experiment_id=None, provider="fake", provider_version="1.0.0",
-        adapter_version="1.0.0", raw_metrics={}, input_hash=h,
+        publication_id=1,
+        publishing_plan_id=1,
+        publishing_job_id=1,
+        render_manifest_id=1,
+        scene_manifest_id=1,
+        production_plan_id=1,
+        script_id=1,
+        topic_id=1,
+        narration_run_id=1,
+        caption_run_id=1,
+        experiment_id=None,
+        provider="fake",
+        provider_version="1.0.0",
+        adapter_version="1.0.0",
+        raw_metrics={},
+        input_hash=h,
     )
 
 
 def _metric(conn, snap_id, name, value, period_start=None, hash_="mh"):
     return create_metric(
-        conn, snapshot_id=snap_id, publication_id=1, topic_id=1, provider="fake",
-        metric_name=name, metric_value=value,
-        period_start=period_start, period_end=None,
+        conn,
+        snapshot_id=snap_id,
+        publication_id=1,
+        topic_id=1,
+        provider="fake",
+        metric_name=name,
+        metric_value=value,
+        period_start=period_start,
+        period_end=None,
         input_hash=hash_,
     )
 
@@ -48,7 +65,10 @@ class TestAggregatePublication:
         snap = _snap(db)
         _metric(db, snap.id, "views", 100.0, hash_="mh1")
         result = aggregate_publication(
-            db, publication_id=1, topic_id=1, provider="fake",
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
             period_type=PERIOD_LIFETIME,
         )
         assert isinstance(result, AggregationResult)
@@ -57,7 +77,10 @@ class TestAggregatePublication:
     def test_invalid_period_raises(self, db):
         with pytest.raises(UnknownPeriodTypeError):
             aggregate_publication(
-                db, publication_id=1, topic_id=1, provider="fake",
+                db,
+                publication_id=1,
+                topic_id=1,
+                provider="fake",
                 period_type="quarterly",
             )
 
@@ -68,7 +91,10 @@ class TestAggregatePublication:
         _metric(db, s1.id, "views", 100.0, period_start="2026-08-01T00:00:00", hash_="m1")
         _metric(db, s2.id, "views", 200.0, period_start="2026-08-02T00:00:00", hash_="m2")
         result = aggregate_publication(
-            db, publication_id=1, topic_id=1, provider="fake",
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
             period_type=PERIOD_LIFETIME,
         )
         views_agg = next(a for a in result.aggregates if a.metric_name == "views")
@@ -81,7 +107,10 @@ class TestAggregatePublication:
         _metric(db, s1.id, "ctr", 0.10, hash_="m1")
         _metric(db, s2.id, "ctr", 0.20, hash_="m2")
         result = aggregate_publication(
-            db, publication_id=1, topic_id=1, provider="fake",
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
             period_type=PERIOD_LIFETIME,
         )
         ctr_agg = next(a for a in result.aggregates if a.metric_name == "ctr")
@@ -94,7 +123,10 @@ class TestAggregatePublication:
         _metric(db, s1.id, "likes", 50.0, hash_="m1")
         _metric(db, s2.id, "likes", 45.0, hash_="m2")  # correction down
         result = aggregate_publication(
-            db, publication_id=1, topic_id=1, provider="fake",
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
             period_type=PERIOD_LIFETIME,
         )
         likes_agg = next(a for a in result.aggregates if a.metric_name == "likes")
@@ -107,7 +139,10 @@ class TestAggregatePublication:
         _metric(db, s1.id, "views", 100.0, period_start="2026-08-01T00:00:00", hash_="m1")
         _metric(db, s2.id, "views", 150.0, period_start="2026-08-01T00:00:00", hash_="m2")
         result = aggregate_publication(
-            db, publication_id=1, topic_id=1, provider="fake",
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
             period_type=PERIOD_DAILY,
         )
         views_agg = next(a for a in result.aggregates if a.metric_name == "views")
@@ -120,7 +155,10 @@ class TestAggregatePublication:
         _metric(db, s1.id, "views", 100.0, hash_="m1")
         _metric(db, s2.id, "views", 100.0, hash_="m2")
         result = aggregate_publication(
-            db, publication_id=1, topic_id=1, provider="fake",
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
             period_type=PERIOD_LIFETIME,
         )
         views_agg = next(a for a in result.aggregates if a.metric_name == "views")
@@ -128,7 +166,10 @@ class TestAggregatePublication:
 
     def test_no_metrics_returns_empty_aggregates(self, db):
         result = aggregate_publication(
-            db, publication_id=99, topic_id=1, provider="fake",
+            db,
+            publication_id=99,
+            topic_id=1,
+            provider="fake",
             period_type=PERIOD_LIFETIME,
         )
         assert result.aggregates == []
@@ -139,7 +180,10 @@ class TestAggregatePublication:
         _metric(db, s1.id, "views", 50.0, period_start="2026-08-01T00:00:00", hash_="m1")
         _metric(db, s2.id, "views", 70.0, period_start="2026-08-02T00:00:00", hash_="m2")
         result = aggregate_publication(
-            db, publication_id=1, topic_id=1, provider="fake",
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
             period_type=PERIOD_DAILY,
         )
         keys = {a.period_key for a in result.aggregates if a.metric_name == "views"}
@@ -148,28 +192,73 @@ class TestAggregatePublication:
 
     def test_provider_isolation(self, db):
         s_fake = create_snapshot(
-            db, publication_id=1, publishing_plan_id=1, publishing_job_id=1,
-            render_manifest_id=1, scene_manifest_id=1, production_plan_id=1,
-            script_id=1, topic_id=1, narration_run_id=1, caption_run_id=1,
-            experiment_id=None, provider="fake", provider_version="1.0.0",
-            adapter_version="1.0.0", raw_metrics={}, input_hash="sfake",
+            db,
+            publication_id=1,
+            publishing_plan_id=1,
+            publishing_job_id=1,
+            render_manifest_id=1,
+            scene_manifest_id=1,
+            production_plan_id=1,
+            script_id=1,
+            topic_id=1,
+            narration_run_id=1,
+            caption_run_id=1,
+            experiment_id=None,
+            provider="fake",
+            provider_version="1.0.0",
+            adapter_version="1.0.0",
+            raw_metrics={},
+            input_hash="sfake",
         )
         s_yt = create_snapshot(
-            db, publication_id=1, publishing_plan_id=1, publishing_job_id=1,
-            render_manifest_id=1, scene_manifest_id=1, production_plan_id=1,
-            script_id=1, topic_id=1, narration_run_id=1, caption_run_id=1,
-            experiment_id=None, provider="youtube", provider_version="1.0.0",
-            adapter_version="1.0.0", raw_metrics={}, input_hash="syt",
+            db,
+            publication_id=1,
+            publishing_plan_id=1,
+            publishing_job_id=1,
+            render_manifest_id=1,
+            scene_manifest_id=1,
+            production_plan_id=1,
+            script_id=1,
+            topic_id=1,
+            narration_run_id=1,
+            caption_run_id=1,
+            experiment_id=None,
+            provider="youtube",
+            provider_version="1.0.0",
+            adapter_version="1.0.0",
+            raw_metrics={},
+            input_hash="syt",
         )
-        create_metric(db, snapshot_id=s_fake.id, publication_id=1, topic_id=1,
-                      provider="fake", metric_name="views", metric_value=100.0,
-                      period_start=None, period_end=None, input_hash="mf1")
-        create_metric(db, snapshot_id=s_yt.id, publication_id=1, topic_id=1,
-                      provider="youtube", metric_name="views", metric_value=999.0,
-                      period_start=None, period_end=None, input_hash="my1")
+        create_metric(
+            db,
+            snapshot_id=s_fake.id,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
+            metric_name="views",
+            metric_value=100.0,
+            period_start=None,
+            period_end=None,
+            input_hash="mf1",
+        )
+        create_metric(
+            db,
+            snapshot_id=s_yt.id,
+            publication_id=1,
+            topic_id=1,
+            provider="youtube",
+            metric_name="views",
+            metric_value=999.0,
+            period_start=None,
+            period_end=None,
+            input_hash="my1",
+        )
 
         result = aggregate_publication(
-            db, publication_id=1, topic_id=1, provider="fake",
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
             period_type=PERIOD_LIFETIME,
         )
         views_agg = next(a for a in result.aggregates if a.metric_name == "views")
@@ -180,9 +269,7 @@ class TestAggregateAllPeriods:
     def test_returns_four_results(self, db):
         snap = _snap(db)
         _metric(db, snap.id, "views", 1000.0, period_start="2026-08-01T00:00:00", hash_="m1")
-        results = aggregate_all_periods(
-            db, publication_id=1, topic_id=1, provider="fake"
-        )
+        results = aggregate_all_periods(db, publication_id=1, topic_id=1, provider="fake")
         assert len(results) == 4
         period_types = {r.period_type for r in results}
         assert period_types == {"daily", "weekly", "monthly", "lifetime"}

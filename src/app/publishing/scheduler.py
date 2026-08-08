@@ -58,9 +58,7 @@ def _validate_future(value: str) -> None:
             dt = dt.replace(tzinfo=UTC)
         now = datetime.now(UTC)
         if dt <= now:
-            raise PublishingValidationError(
-                f"scheduled_at {value!r} must be in the future."
-            )
+            raise PublishingValidationError(f"scheduled_at {value!r} must be in the future.")
     except PublishingValidationError:
         raise
     except ValueError:

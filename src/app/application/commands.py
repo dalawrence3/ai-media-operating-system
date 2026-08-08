@@ -65,9 +65,7 @@ REVIEW_ITEM_TYPES: frozenset[str] = frozenset(
 )
 
 # Schedule types.
-SCHEDULE_TYPES: frozenset[str] = frozenset(
-    {"cron", "interval", "once", "after_event"}
-)
+SCHEDULE_TYPES: frozenset[str] = frozenset({"cron", "interval", "once", "after_event"})
 
 
 # ---------------------------------------------------------------------------

@@ -87,9 +87,7 @@ class PipelineStageExecutor(Protocol):
     executor_key: str
     executor_version: str
 
-    def execute(
-        self, conn: Any, req: StageExecutionRequest
-    ) -> StageExecutionResult: ...
+    def execute(self, conn: Any, req: StageExecutionRequest) -> StageExecutionResult: ...
 
 
 # ---------------------------------------------------------------------------
@@ -139,9 +137,7 @@ class StageExecutorRegistry:
                     f"v{existing.executor.executor_version}); "
                     "pass replace=True to override with a different executor"
                 )
-        self._entries[stage] = StageExecutorEntry(
-            stage=stage, executor=executor, enabled=enabled
-        )
+        self._entries[stage] = StageExecutorEntry(stage=stage, executor=executor, enabled=enabled)
 
     def get(self, stage: str) -> PipelineStageExecutor:
         entry = self._entries.get(stage)
@@ -494,8 +490,7 @@ def register_default_executors(registry: StageExecutorRegistry, *, replace: bool
         "analytics",
         ExternalProviderRequiredExecutor(
             "analytics",
-            "Requires a live analytics provider. "
-            "Phase 15 cloud infrastructure provides these.",
+            "Requires a live analytics provider. Phase 15 cloud infrastructure provides these.",
         ),
         replace=replace,
     )

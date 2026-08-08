@@ -39,9 +39,7 @@ class TestQualityScoring:
         assert result.factors["recency"] == 1.0
 
     def test_old_publication_gives_low_recency(self):
-        sc = _make_sc(
-            published_at=(datetime.now(UTC) - timedelta(days=800)).strftime("%Y-%m-%d")
-        )
+        sc = _make_sc(published_at=(datetime.now(UTC) - timedelta(days=800)).strftime("%Y-%m-%d"))
         result = score_quality(sc)
         assert result.factors["recency"] <= 0.15
 
@@ -126,6 +124,7 @@ class TestQualityScoring:
 
     def test_scorer_version_set(self):
         from app.research.constants import QUALITY_SCORER_VERSION
+
         result = score_quality(_make_sc())
         assert result.scorer_version == QUALITY_SCORER_VERSION
 

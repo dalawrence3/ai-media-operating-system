@@ -50,16 +50,16 @@ def org(conn):
 @pytest.fixture
 def ws_a(conn, org):
     return cp_repo.create_workspace(
-        conn, WorkspaceDraft(id=_uid(), name="WSA", slug="ws-a", actor="cli",
-                             organization_id=org.id)
+        conn,
+        WorkspaceDraft(id=_uid(), name="WSA", slug="ws-a", actor="cli", organization_id=org.id),
     )
 
 
 @pytest.fixture
 def ws_b(conn, org):
     return cp_repo.create_workspace(
-        conn, WorkspaceDraft(id=_uid(), name="WSB", slug="ws-b", actor="cli",
-                             organization_id=org.id)
+        conn,
+        WorkspaceDraft(id=_uid(), name="WSB", slug="ws-b", actor="cli", organization_id=org.id),
     )
 
 
@@ -158,6 +158,7 @@ class TestSchedulerIsolation:
             actor="admin",
         )
         from app.application.errors import ScheduleNotFoundError
+
         with pytest.raises(ScheduleNotFoundError):
             sched.pause_schedule(conn, sv.id, ws_b.id)
 
@@ -172,5 +173,6 @@ class TestSchedulerIsolation:
             actor="admin",
         )
         from app.application.errors import ScheduleNotFoundError
+
         with pytest.raises(ScheduleNotFoundError):
             sched.delete_schedule(conn, sv.id, ws_b.id)

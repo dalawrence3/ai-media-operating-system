@@ -40,9 +40,7 @@ def _table_names(conn: sqlite3.Connection) -> set[str]:
 
 
 def _index_names(conn: sqlite3.Connection) -> set[str]:
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='index'"
-    ).fetchall()
+    rows = conn.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     return {r[0] for r in rows}
 
 
@@ -88,11 +86,23 @@ class TestAppTablesExist:
 
 class TestPipelineExecutionsSchema:
     EXPECTED_COLS = {
-        "id", "workspace_id", "channel_id", "platform_account_id",
-        "topic_id", "correlation_id", "idempotency_key", "status",
-        "current_stage", "end_stage", "experiment_id", "actor",
-        "policy_snapshot_json", "error_message", "blocked_reason",
-        "created_at", "updated_at",
+        "id",
+        "workspace_id",
+        "channel_id",
+        "platform_account_id",
+        "topic_id",
+        "correlation_id",
+        "idempotency_key",
+        "status",
+        "current_stage",
+        "end_stage",
+        "experiment_id",
+        "actor",
+        "policy_snapshot_json",
+        "error_message",
+        "blocked_reason",
+        "created_at",
+        "updated_at",
     }
 
     def test_all_columns_present(self, db_conn):
@@ -145,9 +155,7 @@ class TestPipelineExecutionsSchema:
             "end_stage, actor, created_at, updated_at) "
             "VALUES ('pd','ws','corr-d','idem-d','learning','cli','n','n')"
         )
-        row = nofk.execute(
-            "SELECT status FROM app_pipeline_executions WHERE id='pd'"
-        ).fetchone()
+        row = nofk.execute("SELECT status FROM app_pipeline_executions WHERE id='pd'").fetchone()
         assert row[0] == "pending"
 
 
@@ -158,9 +166,17 @@ class TestPipelineExecutionsSchema:
 
 class TestPipelineStageLogSchema:
     EXPECTED_COLS = {
-        "id", "pipeline_id", "stage", "status",
-        "artifact_id", "artifact_type", "error_message",
-        "duration_ms", "started_at", "completed_at", "created_at",
+        "id",
+        "pipeline_id",
+        "stage",
+        "status",
+        "artifact_id",
+        "artifact_type",
+        "error_message",
+        "duration_ms",
+        "started_at",
+        "completed_at",
+        "created_at",
     }
 
     def test_all_columns_present(self, db_conn):
@@ -209,9 +225,7 @@ class TestPipelineStageLogSchema:
             "INSERT INTO app_pipeline_stage_log "
             "(id, pipeline_id, stage, created_at) VALUES ('s4','pp3','narration','n')"
         )
-        row = nofk.execute(
-            "SELECT status FROM app_pipeline_stage_log WHERE id='s4'"
-        ).fetchone()
+        row = nofk.execute("SELECT status FROM app_pipeline_stage_log WHERE id='s4'").fetchone()
         assert row[0] == "pending"
 
 
@@ -222,10 +236,20 @@ class TestPipelineStageLogSchema:
 
 class TestScheduleDefinitionsSchema:
     EXPECTED_COLS = {
-        "id", "workspace_id", "channel_id", "name", "operation_type",
-        "schedule_type", "schedule_config_json", "timezone",
-        "is_active", "last_run_at", "next_run_at", "actor",
-        "created_at", "updated_at",
+        "id",
+        "workspace_id",
+        "channel_id",
+        "name",
+        "operation_type",
+        "schedule_type",
+        "schedule_config_json",
+        "timezone",
+        "is_active",
+        "last_run_at",
+        "next_run_at",
+        "actor",
+        "created_at",
+        "updated_at",
     }
 
     def test_all_columns_present(self, db_conn):
@@ -290,11 +314,20 @@ class TestAppIndexes:
 
 class TestPhase12TablesPreserved:
     P12 = {
-        "cp_organizations", "cp_workspaces", "cp_channels",
-        "cp_platforms", "cp_credential_profiles", "cp_platform_accounts",
-        "cp_automation_policies", "cp_events", "cp_event_processing",
-        "cp_operation_executions", "cp_cost_records", "cp_budget_policies",
-        "cp_health_records", "cp_provider_registry",
+        "cp_organizations",
+        "cp_workspaces",
+        "cp_channels",
+        "cp_platforms",
+        "cp_credential_profiles",
+        "cp_platform_accounts",
+        "cp_automation_policies",
+        "cp_events",
+        "cp_event_processing",
+        "cp_operation_executions",
+        "cp_cost_records",
+        "cp_budget_policies",
+        "cp_health_records",
+        "cp_provider_registry",
     }
 
     def test_all_phase12_tables_still_exist(self, db_conn):
@@ -338,11 +371,24 @@ class TestIncrementalMigration:
         conn = sqlite3.connect(str(path))
         conn.row_factory = sqlite3.Row
         for ddl in [
-            _DDL_V1, _DDL_V2, _DDL_V3, _DDL_V4_NEW_TABLES, _DDL_V5_SCORING,
-            _DDL_V6_PROMOTE, _DDL_V7_RESEARCH, _DDL_V8_CLAIMS, _DDL_V9_SCRIPTS,
-            _DDL_V10_PRODUCTION, _DDL_V11_NARRATION, _DDL_V12_CAPTIONS,
-            _DDL_V13_SCENES, _DDL_V14_RENDERS, _DDL_V15_PUBLISHING,
-            _DDL_V16_ANALYTICS, _DDL_V17_LEARNING, _DDL_V18_CONTROL_PLANE,
+            _DDL_V1,
+            _DDL_V2,
+            _DDL_V3,
+            _DDL_V4_NEW_TABLES,
+            _DDL_V5_SCORING,
+            _DDL_V6_PROMOTE,
+            _DDL_V7_RESEARCH,
+            _DDL_V8_CLAIMS,
+            _DDL_V9_SCRIPTS,
+            _DDL_V10_PRODUCTION,
+            _DDL_V11_NARRATION,
+            _DDL_V12_CAPTIONS,
+            _DDL_V13_SCENES,
+            _DDL_V14_RENDERS,
+            _DDL_V15_PUBLISHING,
+            _DDL_V16_ANALYTICS,
+            _DDL_V17_LEARNING,
+            _DDL_V18_CONTROL_PLANE,
         ]:
             conn.executescript(ddl)
         _set_version(conn, 18)
@@ -353,9 +399,8 @@ class TestIncrementalMigration:
         ver = conn.execute("SELECT version FROM schema_version").fetchone()[0]
         assert ver == 20
         tables = {
-            r[0] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "app_pipeline_executions" in tables
         assert "app_pipeline_stage_log" in tables

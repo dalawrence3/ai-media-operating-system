@@ -45,8 +45,11 @@ def workspace(conn):
     ws = cp_repo.create_workspace(
         conn,
         WorkspaceDraft(
-            id=_uid(), name="Test WS", slug="test-ws",
-            actor="cli", organization_id=org.id,
+            id=_uid(),
+            name="Test WS",
+            slug="test-ws",
+            actor="cli",
+            organization_id=org.id,
         ),
     )
     return ws
@@ -61,8 +64,10 @@ class TestSystemDefaults:
 
     def test_all_required_keys_present(self):
         required = {
-            "max_concurrent_operations", "pipeline_timeout_seconds",
-            "retry_max_attempts", "default_automation_level",
+            "max_concurrent_operations",
+            "pipeline_timeout_seconds",
+            "retry_max_attempts",
+            "default_automation_level",
         }
         assert required <= set(SYSTEM_DEFAULTS)
 
@@ -98,14 +103,16 @@ class TestResolveConfig:
 
     def test_overrides_win_over_defaults(self, conn, workspace):
         cfg = resolve_config(
-            conn, workspace.id,
+            conn,
+            workspace.id,
             overrides={"max_concurrent_operations": 99},
         )
         assert cfg["max_concurrent_operations"] == 99
 
     def test_secrets_filtered_from_overrides(self, conn, workspace):
         cfg = resolve_config(
-            conn, workspace.id,
+            conn,
+            workspace.id,
             overrides={"api_key": "SECRET", "safe_key": "ok"},
         )
         assert "api_key" not in cfg

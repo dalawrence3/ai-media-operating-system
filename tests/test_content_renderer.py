@@ -115,7 +115,9 @@ class TestRenderBody:
                 sections=[
                     {"section_type": "hook", "text": "H", "cited_claim_ids": []},
                     {"section_type": stype, "text": "S", "cited_claim_ids": []},
-                ] if stype != "hook" else [
+                ]
+                if stype != "hook"
+                else [
                     {"section_type": "hook", "text": "H", "cited_claim_ids": []},
                 ],
             )

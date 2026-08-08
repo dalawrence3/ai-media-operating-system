@@ -166,7 +166,6 @@ class TestFFmpegRenderBackend:
         assert "-f" in cmd
         assert "lavfi" in cmd
 
-
     @patch("app.media.backend.shutil.which", return_value="/usr/bin/ffmpeg")
     @patch("app.media.backend.subprocess.run")
     def test_raises_asset_hash_mismatch(self, mock_run, mock_which, tmp_path):
@@ -221,6 +220,7 @@ class TestFFmpegRenderBackend:
         asset_file.write_bytes(b"real image bytes")
 
         import hashlib
+
         expected_sha = hashlib.sha256(b"real image bytes").hexdigest()
 
         asset = ResolvedAsset(

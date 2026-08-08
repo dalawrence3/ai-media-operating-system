@@ -36,6 +36,7 @@ from app.control_plane.services import (
 @pytest.fixture()
 def db(tmp_path):
     from app.core.database import open_db
+
     return open_db(tmp_path / "orch.db")
 
 
@@ -53,9 +54,7 @@ class TestOrchestrator:
 
     def test_provision_channel(self, db):
         ws = provision_workspace(db, name="Corp", slug="corp", actor="cli")
-        ch = provision_channel(
-            db, workspace_id=ws.id, name="Tech", slug="tech", actor="cli"
-        )
+        ch = provision_channel(db, workspace_id=ws.id, name="Tech", slug="tech", actor="cli")
         assert ch.workspace_id == ws.id
         events = repo.list_events_by_workspace(db, ws.id)
         assert any(e.event_type == "channel.created" for e in events)
@@ -97,8 +96,12 @@ class TestServices:
         ch = provision_channel(db, workspace_id=ws.id, name="C", slug="c", actor="cli")
         repo.ensure_platform(db, "plt-1", "youtube", "YouTube")
         connect_platform_account(
-            db, channel_id=ch.id, platform_key="youtube",
-            external_account_id="UC-1", display_name="YT1", actor="cli"
+            db,
+            channel_id=ch.id,
+            platform_key="youtube",
+            external_account_id="UC-1",
+            display_name="YT1",
+            actor="cli",
         )
         items = list_platform_accounts(db, ch.id)
         assert len(items) == 1
@@ -137,18 +140,17 @@ class TestJobControl:
 
     def test_idempotent_start_operation(self, db):
         ws = provision_workspace(db, name="WI", slug="wi", actor="cli")
-        op1 = start_operation(
-            db, operation_type="ingest", workspace_id=ws.id, actor="cli"
-        )
-        op2 = start_operation(
-            db, operation_type="ingest", workspace_id=ws.id, actor="cli"
-        )
+        op1 = start_operation(db, operation_type="ingest", workspace_id=ws.id, actor="cli")
+        op2 = start_operation(db, operation_type="ingest", workspace_id=ws.id, actor="cli")
         assert op1.id == op2.id
 
     def test_fail_operation(self, db):
         ws = provision_workspace(db, name="WF", slug="wf", actor="cli")
         op = start_operation(
-            db, operation_type="publish", workspace_id=ws.id, actor="cli",
+            db,
+            operation_type="publish",
+            workspace_id=ws.id,
+            actor="cli",
             input_data={"video_id": "v-2"},
         )
         failed = fail_operation(db, op.id, "Connection timeout")
@@ -158,7 +160,10 @@ class TestJobControl:
     def test_supersede_operation(self, db):
         ws = provision_workspace(db, name="WS", slug="ws", actor="cli")
         op = start_operation(
-            db, operation_type="render", workspace_id=ws.id, actor="cli",
+            db,
+            operation_type="render",
+            workspace_id=ws.id,
+            actor="cli",
             input_data={"script_id": "s-1"},
         )
         sup = supersede_operation(db, op.id)
@@ -167,12 +172,18 @@ class TestJobControl:
     def test_custom_idempotency_key(self, db):
         ws = provision_workspace(db, name="WK", slug="wk", actor="cli")
         op1 = start_operation(
-            db, operation_type="export", workspace_id=ws.id, actor="cli",
-            idempotency_key="export-2026-08-07-001"
+            db,
+            operation_type="export",
+            workspace_id=ws.id,
+            actor="cli",
+            idempotency_key="export-2026-08-07-001",
         )
         op2 = start_operation(
-            db, operation_type="export", workspace_id=ws.id, actor="cli",
-            idempotency_key="export-2026-08-07-001"
+            db,
+            operation_type="export",
+            workspace_id=ws.id,
+            actor="cli",
+            idempotency_key="export-2026-08-07-001",
         )
         assert op1.id == op2.id
 
@@ -210,9 +221,13 @@ class TestReviewQueue:
     def test_review_queue_returns_list(self, db):
         ws = provision_workspace(db, name="WR2", slug="wr2", actor="cli")
         from app.control_plane.health import record_health
+
         record_health(
-            db, entity_type="platform_account", entity_id="acc-fail",
-            status="failed", recorded_by="monitor"
+            db,
+            entity_type="platform_account",
+            entity_id="acc-fail",
+            status="failed",
+            recorded_by="monitor",
         )
         items = build_review_queue(db, ws.id)
         assert isinstance(items, list)

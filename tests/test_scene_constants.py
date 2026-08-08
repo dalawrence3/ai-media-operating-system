@@ -1,6 +1,5 @@
 """Tests for Phase 7 scene-planning constants."""
 
-
 from app.scenes.constants import (
     ASSET_CATEGORIES,
     ASSET_PRIORITIES,
