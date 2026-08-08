@@ -99,6 +99,7 @@ def test_demo_shows_usage_id() -> None:
 
 def test_demo_live_without_key_fails_safely(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ACE_ANTHROPIC_API_KEY", "")
+    monkeypatch.delenv("ACE_DRY_RUN", raising=False)  # dry_run bypasses the key check
     reset_config()
     result = runner.invoke(app, ["ai", "demo", "--live"])
     assert result.exit_code != 0
