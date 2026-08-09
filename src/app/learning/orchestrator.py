@@ -242,13 +242,9 @@ def analyze_publication(
 
     # Determine final run status from generator outcomes.
     succeeded = sum(
-        1 for gr in results.generator_results
-        if gr.status == GENERATOR_STATUS_SUCCEEDED
+        1 for gr in results.generator_results if gr.status == GENERATOR_STATUS_SUCCEEDED
     )
-    failed = sum(
-        1 for gr in results.generator_results
-        if gr.status == GENERATOR_STATUS_FAILED
-    )
+    failed = sum(1 for gr in results.generator_results if gr.status == GENERATOR_STATUS_FAILED)
     if failed == 0:
         final_status = RUN_STATUS_COMPLETED
     elif succeeded == 0:
@@ -434,7 +430,7 @@ def build_reviewed_handoff(
 
     accepted = [_build_item(r) for r in run_recs if r.status == "accepted"]
     rejected = [_build_item(r) for r in run_recs if r.status == "rejected"]
-    pending  = [_build_item(r) for r in run_recs if r.status == "pending"]
+    pending = [_build_item(r) for r in run_recs if r.status == "pending"]
 
     return ReviewedOptimizationHandoff(
         learning_run_id=run_id,

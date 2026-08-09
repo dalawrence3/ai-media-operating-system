@@ -150,13 +150,26 @@ def test_claim_extraction_tables_exist(db: sqlite3.Connection) -> None:
 def test_claim_extraction_runs_columns(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(claim_extraction_runs)").fetchall()}
     required = {
-        "id", "source_content_id", "status", "input_hash",
-        "total_chunk_count", "completed_chunk_count", "failed_chunk_count",
-        "accepted_claim_count", "was_truncated",
-        "prompt_name", "prompt_version", "model", "provider",
-        "extraction_algo_version", "error_message",
-        "superseded_at", "superseded_by_run_id",
-        "started_at", "completed_at", "created_at",
+        "id",
+        "source_content_id",
+        "status",
+        "input_hash",
+        "total_chunk_count",
+        "completed_chunk_count",
+        "failed_chunk_count",
+        "accepted_claim_count",
+        "was_truncated",
+        "prompt_name",
+        "prompt_version",
+        "model",
+        "provider",
+        "extraction_algo_version",
+        "error_message",
+        "superseded_at",
+        "superseded_by_run_id",
+        "started_at",
+        "completed_at",
+        "created_at",
     }
     assert required <= cols
 
@@ -166,9 +179,20 @@ def test_claim_extraction_run_calls_columns(db: sqlite3.Connection) -> None:
         row[1] for row in db.execute("PRAGMA table_info(claim_extraction_run_calls)").fetchall()
     }
     required = {
-        "id", "claim_extraction_run_id", "ai_call_id", "chunk_index", "chunk_hash",
-        "input_char_start", "input_char_end", "status", "retry_count",
-        "accepted_claim_count", "error_message", "started_at", "completed_at", "created_at",
+        "id",
+        "claim_extraction_run_id",
+        "ai_call_id",
+        "chunk_index",
+        "chunk_hash",
+        "input_char_start",
+        "input_char_end",
+        "status",
+        "retry_count",
+        "accepted_claim_count",
+        "error_message",
+        "started_at",
+        "completed_at",
+        "created_at",
     }
     assert required <= cols
 
@@ -176,9 +200,18 @@ def test_claim_extraction_run_calls_columns(db: sqlite3.Connection) -> None:
 def test_claims_columns(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(claims)").fetchall()}
     required = {
-        "id", "extraction_run_id", "chunk_index", "claim_text", "claim_type",
-        "supporting_quote", "quote_support_status", "quote_start", "quote_end",
-        "page_number", "requires_date_review", "created_at",
+        "id",
+        "extraction_run_id",
+        "chunk_index",
+        "claim_text",
+        "claim_type",
+        "supporting_quote",
+        "quote_support_status",
+        "quote_start",
+        "quote_end",
+        "page_number",
+        "requires_date_review",
+        "created_at",
     }
     assert required <= cols
     assert "source_content_id" not in cols
@@ -191,8 +224,7 @@ def test_claims_no_source_content_id_column(db: sqlite3.Connection) -> None:
 
 def test_v8_indexes_exist(db: sqlite3.Connection) -> None:
     indexes = {
-        r[0]
-        for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+        r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     }
     assert "idx_cer_source_content" in indexes
     assert "idx_cer_input_hash" in indexes
@@ -282,22 +314,37 @@ def test_source_contents_table_exists(db: sqlite3.Connection) -> None:
 def test_source_contents_columns(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(source_contents)").fetchall()}
     required = {
-        "id", "source_id", "fetch_status", "extraction_status",
-        "http_status", "canonical_url", "mime_type", "fetched_at",
-        "raw_text", "retrieval_hash", "normalized_text_hash", "hash_algorithm",
-        "word_count", "title", "author", "published_at",
-        "domain_type", "extraction_method", "extraction_error", "suspected_truncation",
-        "quality_score", "quality_factors_json", "quality_scorer_version", "created_at",
+        "id",
+        "source_id",
+        "fetch_status",
+        "extraction_status",
+        "http_status",
+        "canonical_url",
+        "mime_type",
+        "fetched_at",
+        "raw_text",
+        "retrieval_hash",
+        "normalized_text_hash",
+        "hash_algorithm",
+        "word_count",
+        "title",
+        "author",
+        "published_at",
+        "domain_type",
+        "extraction_method",
+        "extraction_error",
+        "suspected_truncation",
+        "quality_score",
+        "quality_factors_json",
+        "quality_scorer_version",
+        "created_at",
     }
     assert required <= cols
 
 
 def test_source_contents_indexes_exist(db: sqlite3.Connection) -> None:
     indexes = {
-        r[0]
-        for r in db.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
-        ).fetchall()
+        r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     }
     assert "sc_source_id" in indexes
     assert "sc_normalized_text_hash" in indexes
@@ -346,10 +393,7 @@ def test_migration_v6_to_v7(tmp_path: Path) -> None:
 
 
 def test_topics_promoted_opportunity_id_column_exists(db) -> None:
-    cols = {
-        row[1]
-        for row in db.execute("PRAGMA table_info(topics)").fetchall()
-    }
+    cols = {row[1] for row in db.execute("PRAGMA table_info(topics)").fetchall()}
     assert "promoted_opportunity_id" in cols
 
 
@@ -473,12 +517,32 @@ def test_v9_scripts_columns(db: sqlite3.Connection) -> None:
 def test_v9_script_generation_runs_columns(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(script_generation_runs)").fetchall()}
     required = {
-        "id", "topic_id", "script_id", "status", "input_hash", "evidence_hash",
-        "prompt_hash", "prompt_name", "prompt_version", "model", "temperature",
-        "max_tokens", "tone", "audience", "target_duration_s",
-        "computed_word_count", "computed_duration_s", "warnings_json",
-        "requires_evidence_review", "ai_call_id", "error_message",
-        "superseded_at", "superseded_by_run_id", "started_at", "completed_at", "created_at",
+        "id",
+        "topic_id",
+        "script_id",
+        "status",
+        "input_hash",
+        "evidence_hash",
+        "prompt_hash",
+        "prompt_name",
+        "prompt_version",
+        "model",
+        "temperature",
+        "max_tokens",
+        "tone",
+        "audience",
+        "target_duration_s",
+        "computed_word_count",
+        "computed_duration_s",
+        "warnings_json",
+        "requires_evidence_review",
+        "ai_call_id",
+        "error_message",
+        "superseded_at",
+        "superseded_by_run_id",
+        "started_at",
+        "completed_at",
+        "created_at",
     }
     assert required <= cols
 
@@ -490,8 +554,7 @@ def test_v9_script_citations_columns(db: sqlite3.Connection) -> None:
 
 def test_v9_no_partial_unique_approval_index(db: sqlite3.Connection) -> None:
     indexes = {
-        r[0]
-        for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+        r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     }
     assert not any("approved" in n for n in indexes)
 
@@ -524,8 +587,7 @@ def test_v9_multiple_approved_scripts_per_topic_allowed(db: sqlite3.Connection) 
 
 def test_v9_indexes_exist(db: sqlite3.Connection) -> None:
     indexes = {
-        r[0]
-        for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+        r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     }
     assert "idx_sgr_topic" in indexes
     assert "idx_sgr_input_hash" in indexes
@@ -554,59 +616,104 @@ def test_v10_production_tables_exist(db: sqlite3.Connection) -> None:
 def test_v10_production_plans_columns(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(production_plans)").fetchall()}
     required = {
-        "id", "topic_id", "script_id", "script_version",
-        "input_hash", "script_body_hash", "plan_schema_version",
-        "renderer_version", "duration_algorithm_version",
-        "title", "format", "total_estimated_duration_s", "total_word_count",
-        "warnings_json", "requires_evidence_review", "evidence_hash",
-        "generation_run_id", "experiment_id",
-        "status", "approved_at", "superseded_at", "rejected_at",
-        "created_at", "updated_at",
+        "id",
+        "topic_id",
+        "script_id",
+        "script_version",
+        "input_hash",
+        "script_body_hash",
+        "plan_schema_version",
+        "renderer_version",
+        "duration_algorithm_version",
+        "title",
+        "format",
+        "total_estimated_duration_s",
+        "total_word_count",
+        "warnings_json",
+        "requires_evidence_review",
+        "evidence_hash",
+        "generation_run_id",
+        "experiment_id",
+        "status",
+        "approved_at",
+        "superseded_at",
+        "rejected_at",
+        "created_at",
+        "updated_at",
     }
     assert required <= cols
     # Speculative columns must NOT exist
-    for banned in ("visual_intent", "shot_type", "music_direction", "transition",
-                   "asset_path", "narration_path", "caption"):
+    for banned in (
+        "visual_intent",
+        "shot_type",
+        "music_direction",
+        "transition",
+        "asset_path",
+        "narration_path",
+        "caption",
+    ):
         assert banned not in cols, f"speculative column {banned!r} must not exist"
 
 
 def test_v10_production_segments_columns(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(production_segments)").fetchall()}
     required = {
-        "id", "plan_id", "segment_index", "section_index", "section_type",
-        "narration_text", "estimated_duration_s", "estimated_word_count", "created_at",
+        "id",
+        "plan_id",
+        "segment_index",
+        "section_index",
+        "section_type",
+        "narration_text",
+        "estimated_duration_s",
+        "estimated_word_count",
+        "created_at",
     }
     assert required <= cols
-    for banned in ("visual_intent", "shot_type", "music_direction", "transition",
-                   "asset_path", "narration_path", "caption", "citation_ids_json"):
+    for banned in (
+        "visual_intent",
+        "shot_type",
+        "music_direction",
+        "transition",
+        "asset_path",
+        "narration_path",
+        "caption",
+        "citation_ids_json",
+    ):
         assert banned not in cols, f"speculative column {banned!r} must not exist"
 
 
 def test_v10_production_segment_citations_columns(db: sqlite3.Connection) -> None:
     cols = {
-        row[1]
-        for row in db.execute("PRAGMA table_info(production_segment_citations)").fetchall()
+        row[1] for row in db.execute("PRAGMA table_info(production_segment_citations)").fetchall()
     }
     assert {"id", "segment_id", "claim_id", "citation_order", "created_at"} <= cols
 
 
 def test_v10_production_plan_review_events_columns(db: sqlite3.Connection) -> None:
     cols = {
-        row[1]
-        for row in db.execute("PRAGMA table_info(production_plan_review_events)").fetchall()
+        row[1] for row in db.execute("PRAGMA table_info(production_plan_review_events)").fetchall()
     }
     required = {
-        "id", "plan_id", "topic_id", "script_id",
-        "evidence_hash", "model", "prompt_hash", "experiment_id",
-        "decision", "reason_code", "notes", "actor", "created_at",
+        "id",
+        "plan_id",
+        "topic_id",
+        "script_id",
+        "evidence_hash",
+        "model",
+        "prompt_hash",
+        "experiment_id",
+        "decision",
+        "reason_code",
+        "notes",
+        "actor",
+        "created_at",
     }
     assert required <= cols
 
 
 def test_v10_indexes_exist(db: sqlite3.Connection) -> None:
     indexes = {
-        r[0]
-        for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
+        r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'").fetchall()
     }
     assert "idx_pp_one_active_normal" in indexes
     assert "idx_pp_one_active_experiment" in indexes
@@ -832,13 +939,35 @@ def test_v12_caption_tables_exist(db: sqlite3.Connection) -> None:
 def test_v12_caption_runs_columns(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(caption_runs)").fetchall()}
     required = {
-        "id", "narration_run_id", "plan_id", "script_id", "topic_id", "experiment_id",
-        "input_hash", "caption_schema_version", "segmentation_version",
-        "timing_algorithm_version", "style_version", "exporter_version", "language",
-        "status", "total_cue_count", "total_duration_ms", "failure_reason",
-        "srt_path", "vtt_path", "json_path", "srt_sha256", "vtt_sha256", "json_sha256",
-        "approved_at", "rejected_at", "superseded_at", "superseded_by_run_id",
-        "created_at", "updated_at",
+        "id",
+        "narration_run_id",
+        "plan_id",
+        "script_id",
+        "topic_id",
+        "experiment_id",
+        "input_hash",
+        "caption_schema_version",
+        "segmentation_version",
+        "timing_algorithm_version",
+        "style_version",
+        "exporter_version",
+        "language",
+        "status",
+        "total_cue_count",
+        "total_duration_ms",
+        "failure_reason",
+        "srt_path",
+        "vtt_path",
+        "json_path",
+        "srt_sha256",
+        "vtt_sha256",
+        "json_sha256",
+        "approved_at",
+        "rejected_at",
+        "superseded_at",
+        "superseded_by_run_id",
+        "created_at",
+        "updated_at",
     }
     assert required <= cols, f"Missing columns: {required - cols}"
 
@@ -846,11 +975,23 @@ def test_v12_caption_runs_columns(db: sqlite3.Connection) -> None:
 def test_v12_caption_cues_columns(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(caption_cues)").fetchall()}
     required = {
-        "id", "run_id", "segment_id", "narration_asset_id",
-        "narration_text_hash", "audio_sha256",
-        "cue_index", "segment_cue_index", "text", "start_ms", "end_ms",
-        "line_count", "char_count", "timing_source", "warnings_json",
-        "superseded_at", "created_at",
+        "id",
+        "run_id",
+        "segment_id",
+        "narration_asset_id",
+        "narration_text_hash",
+        "audio_sha256",
+        "cue_index",
+        "segment_cue_index",
+        "text",
+        "start_ms",
+        "end_ms",
+        "line_count",
+        "char_count",
+        "timing_source",
+        "warnings_json",
+        "superseded_at",
+        "created_at",
     }
     assert required <= cols, f"Missing columns: {required - cols}"
 
@@ -858,12 +999,31 @@ def test_v12_caption_cues_columns(db: sqlite3.Connection) -> None:
 def test_v12_caption_review_events_columns(db: sqlite3.Connection) -> None:
     cols = {row[1] for row in db.execute("PRAGMA table_info(caption_review_events)").fetchall()}
     required = {
-        "id", "run_id", "cue_id", "segment_id", "narration_asset_id", "narration_run_id",
-        "plan_id", "script_id", "topic_id", "voice_profile_id",
-        "provider", "model", "voice_id", "experiment_id",
-        "caption_schema_version", "segmentation_version", "timing_algorithm_version",
-        "style_version", "exporter_version",
-        "event_type", "reason_code", "severity", "expected_correction", "notes", "actor",
+        "id",
+        "run_id",
+        "cue_id",
+        "segment_id",
+        "narration_asset_id",
+        "narration_run_id",
+        "plan_id",
+        "script_id",
+        "topic_id",
+        "voice_profile_id",
+        "provider",
+        "model",
+        "voice_id",
+        "experiment_id",
+        "caption_schema_version",
+        "segmentation_version",
+        "timing_algorithm_version",
+        "style_version",
+        "exporter_version",
+        "event_type",
+        "reason_code",
+        "severity",
+        "expected_correction",
+        "notes",
+        "actor",
         "created_at",
     }
     assert required <= cols, f"Missing columns: {required - cols}"
@@ -883,6 +1043,7 @@ def test_v12_caption_runs_unique_input_hash(db: sqlite3.Connection) -> None:
     )
     db.commit()
     import pytest as _pytest
+
     with _pytest.raises(sqlite3.IntegrityError):
         db.execute(
             "INSERT INTO caption_runs"
@@ -918,6 +1079,7 @@ def test_v12_caption_cues_unique_cue_index_per_run(db: sqlite3.Connection) -> No
     )
     db.commit()
     import pytest as _pytest
+
     with _pytest.raises(sqlite3.IntegrityError):
         db.execute(
             "INSERT INTO caption_cues"
@@ -934,6 +1096,7 @@ def test_v12_caption_cues_event_type_check(db: sqlite3.Connection) -> None:
     """event_type CHECK constraint rejects unknown event types on caption_review_events."""
     db.execute("PRAGMA foreign_keys=OFF")
     import pytest as _pytest
+
     with _pytest.raises(sqlite3.IntegrityError):
         db.execute(
             "INSERT INTO caption_review_events"
@@ -995,12 +1158,30 @@ def test_v14_render_tables_exist(db: sqlite3.Connection) -> None:
 def test_v14_render_manifests_columns(db: sqlite3.Connection) -> None:
     cols = {r[1] for r in db.execute("PRAGMA table_info(render_manifests)").fetchall()}
     expected = {
-        "id", "scene_manifest_id", "narration_run_id", "caption_run_id",
-        "topic_id", "plan_id", "script_id", "experiment_id",
-        "input_hash", "render_schema_version", "compositor_version",
-        "total_scene_count", "total_duration_ms", "width", "height", "fps",
-        "caption_burn_in", "status", "approved_at", "rejected_at",
-        "superseded_at", "superseded_by_id", "created_at", "updated_at",
+        "id",
+        "scene_manifest_id",
+        "narration_run_id",
+        "caption_run_id",
+        "topic_id",
+        "plan_id",
+        "script_id",
+        "experiment_id",
+        "input_hash",
+        "render_schema_version",
+        "compositor_version",
+        "total_scene_count",
+        "total_duration_ms",
+        "width",
+        "height",
+        "fps",
+        "caption_burn_in",
+        "status",
+        "approved_at",
+        "rejected_at",
+        "superseded_at",
+        "superseded_by_id",
+        "created_at",
+        "updated_at",
     }
     assert expected.issubset(cols)
 
@@ -1008,12 +1189,32 @@ def test_v14_render_manifests_columns(db: sqlite3.Connection) -> None:
 def test_v14_render_jobs_columns(db: sqlite3.Connection) -> None:
     cols = {r[1] for r in db.execute("PRAGMA table_info(render_jobs)").fetchall()}
     expected = {
-        "id", "render_manifest_id", "backend", "backend_version",
-        "output_path", "output_sha256", "duration_s", "file_size_bytes",
-        "render_time_s", "width", "height", "fps", "video_codec", "audio_codec",
-        "crf", "audio_bitrate", "caption_burn_in", "ffmpeg_cmd_json", "status",
-        "error_message", "validated", "validation_metadata_json",
-        "started_at", "completed_at", "created_at", "updated_at",
+        "id",
+        "render_manifest_id",
+        "backend",
+        "backend_version",
+        "output_path",
+        "output_sha256",
+        "duration_s",
+        "file_size_bytes",
+        "render_time_s",
+        "width",
+        "height",
+        "fps",
+        "video_codec",
+        "audio_codec",
+        "crf",
+        "audio_bitrate",
+        "caption_burn_in",
+        "ffmpeg_cmd_json",
+        "status",
+        "error_message",
+        "validated",
+        "validation_metadata_json",
+        "started_at",
+        "completed_at",
+        "created_at",
+        "updated_at",
     }
     assert expected.issubset(cols)
 
@@ -1021,11 +1222,22 @@ def test_v14_render_jobs_columns(db: sqlite3.Connection) -> None:
 def test_v14_render_review_events_columns(db: sqlite3.Connection) -> None:
     cols = {r[1] for r in db.execute("PRAGMA table_info(render_review_events)").fetchall()}
     expected = {
-        "id", "render_manifest_id", "render_job_id",
-        "topic_id", "plan_id", "script_id", "scene_manifest_id",
-        "experiment_id", "render_schema_version",
-        "event_type", "reason_code", "severity", "expected_correction",
-        "notes", "actor", "created_at",
+        "id",
+        "render_manifest_id",
+        "render_job_id",
+        "topic_id",
+        "plan_id",
+        "script_id",
+        "scene_manifest_id",
+        "experiment_id",
+        "render_schema_version",
+        "event_type",
+        "reason_code",
+        "severity",
+        "expected_correction",
+        "notes",
+        "actor",
+        "created_at",
     }
     assert expected.issubset(cols)
 
@@ -1033,10 +1245,23 @@ def test_v14_render_review_events_columns(db: sqlite3.Connection) -> None:
 def test_v14_render_manifest_scenes_columns(db: sqlite3.Connection) -> None:
     cols = {r[1] for r in db.execute("PRAGMA table_info(render_manifest_scenes)").fetchall()}
     expected = {
-        "id", "render_manifest_id", "scene_index", "scene_id", "segment_id",
-        "audio_path", "audio_sha256", "start_ms", "end_ms", "duration_ms",
-        "shot_type", "camera_movement", "visual_objective", "caption_cue_ids_json",
-        "primary_asset_id", "has_placeholder", "created_at",
+        "id",
+        "render_manifest_id",
+        "scene_index",
+        "scene_id",
+        "segment_id",
+        "audio_path",
+        "audio_sha256",
+        "start_ms",
+        "end_ms",
+        "duration_ms",
+        "shot_type",
+        "camera_movement",
+        "visual_objective",
+        "caption_cue_ids_json",
+        "primary_asset_id",
+        "has_placeholder",
+        "created_at",
     }
     assert expected.issubset(cols)
 
@@ -1044,9 +1269,20 @@ def test_v14_render_manifest_scenes_columns(db: sqlite3.Connection) -> None:
 def test_v14_resolved_assets_columns(db: sqlite3.Connection) -> None:
     cols = {r[1] for r in db.execute("PRAGMA table_info(resolved_assets)").fetchall()}
     expected = {
-        "id", "planned_asset_id", "scene_id", "segment_id", "render_manifest_id",
-        "local_path", "sha256", "license_status", "commercial_use_verified",
-        "warnings_json", "superseded_at", "superseded_by_id", "created_at", "updated_at",
+        "id",
+        "planned_asset_id",
+        "scene_id",
+        "segment_id",
+        "render_manifest_id",
+        "local_path",
+        "sha256",
+        "license_status",
+        "commercial_use_verified",
+        "warnings_json",
+        "superseded_at",
+        "superseded_by_id",
+        "created_at",
+        "updated_at",
     }
     assert expected.issubset(cols)
 
@@ -1119,8 +1355,11 @@ def test_migration_v13_to_v14(tmp_path: Path) -> None:
 
     conn = open_db(tmp_path / "v13.db")
     for tbl in (
-        "resolved_assets", "render_manifest_scenes",
-        "render_review_events", "render_jobs", "render_manifests",
+        "resolved_assets",
+        "render_manifest_scenes",
+        "render_review_events",
+        "render_jobs",
+        "render_manifests",
     ):
         conn.execute(f"DROP TABLE IF EXISTS {tbl}")
     _set_version(conn, 13)

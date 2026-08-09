@@ -30,19 +30,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency manifest first (layer-cache friendly)
+# Copy source before installing; editable installs require src/ to exist.
+# Non-editable install is correct for production images.
 COPY pyproject.toml ./
+COPY src/ ./src/
 
 # Create a virtual environment in the image layer
 RUN python -m venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Install runtime dependencies only (no dev extras)
-RUN pip install --upgrade pip && \
-    pip install -e ".[dev]" 2>/dev/null || pip install -e "."
-
-# Copy application source
-COPY src/ ./src/
+# Install runtime dependencies (non-editable, production-correct)
+RUN pip install --upgrade pip && pip install "."
 
 # ── Stage 2: runtime ────────────────────────────────────────────────────────
 FROM python:3.13-slim AS runtime

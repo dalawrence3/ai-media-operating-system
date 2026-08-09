@@ -53,8 +53,9 @@ def _insert_snapshot(conn, publication_id: int = 1) -> int:
     return cursor.lastrowid
 
 
-def _insert_aggregate(conn, publication_id: int, metric_name: str, value: float,
-                       snapshot_ids: list | None = None) -> None:
+def _insert_aggregate(
+    conn, publication_id: int, metric_name: str, value: float, snapshot_ids: list | None = None
+) -> None:
     conn.execute(
         """
         INSERT INTO analytics_aggregates
@@ -148,6 +149,7 @@ class TestAcceptRecommendation:
 
     def test_accept_creates_review_event(self, db):
         from app.learning.repository import list_review_events
+
         rec_id = self._setup(db)
         accept_recommendation(db, rec_id, reviewer="operator", notes="Looks good")
         events = list_review_events(db, recommendation_id=rec_id)
@@ -157,6 +159,7 @@ class TestAcceptRecommendation:
 
     def test_accept_without_reviewer_raises(self, db):
         from app.learning.errors import ReviewerRequiredError
+
         rec_id = self._setup(db)
         with pytest.raises(ReviewerRequiredError):
             accept_recommendation(db, rec_id, reviewer="")
@@ -164,6 +167,7 @@ class TestAcceptRecommendation:
     def test_accept_superseded_recommendation_raises(self, db):
         from app.learning.errors import RecommendationNotReviewableError
         from app.learning.repository import supersede_recommendation
+
         rec_id = self._setup(db)
         # Supersede the recommendation first
         supersede_recommendation(db, rec_id, rec_id)
@@ -188,12 +192,14 @@ class TestRejectRecommendation:
 
     def test_reject_without_notes_raises(self, db):
         from app.learning.errors import NotesRequiredError
+
         rec_id = self._setup(db)
         with pytest.raises(NotesRequiredError):
             reject_recommendation(db, rec_id, reviewer="operator", notes="")
 
     def test_reject_creates_review_event(self, db):
         from app.learning.repository import list_review_events
+
         rec_id = self._setup(db)
         reject_recommendation(db, rec_id, reviewer="operator", notes="Too vague")
         events = list_review_events(db, recommendation_id=rec_id)

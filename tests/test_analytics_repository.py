@@ -38,11 +38,21 @@ def db(tmp_path: Path) -> sqlite3.Connection:
 
 def _snap(conn, input_hash: str = "h1", **kw):
     defaults = dict(
-        publication_id=1, publishing_plan_id=1, publishing_job_id=1,
-        render_manifest_id=1, scene_manifest_id=1, production_plan_id=1,
-        script_id=1, topic_id=1, narration_run_id=1, caption_run_id=1,
-        experiment_id=None, provider="fake", provider_version="1.0.0",
-        adapter_version="1.0.0", raw_metrics={"views": 100},
+        publication_id=1,
+        publishing_plan_id=1,
+        publishing_job_id=1,
+        render_manifest_id=1,
+        scene_manifest_id=1,
+        production_plan_id=1,
+        script_id=1,
+        topic_id=1,
+        narration_run_id=1,
+        caption_run_id=1,
+        experiment_id=None,
+        provider="fake",
+        provider_version="1.0.0",
+        adapter_version="1.0.0",
+        raw_metrics={"views": 100},
         input_hash=input_hash,
     )
     defaults.update(kw)
@@ -50,13 +60,24 @@ def _snap(conn, input_hash: str = "h1", **kw):
 
 
 def _metric(
-    conn, snap_id: int, name: str = "views", value: float = 100.0,
-    hash_: str = "mh1", publication_id: int = 1,
+    conn,
+    snap_id: int,
+    name: str = "views",
+    value: float = 100.0,
+    hash_: str = "mh1",
+    publication_id: int = 1,
 ):
     return create_metric(
-        conn, snapshot_id=snap_id, publication_id=publication_id, topic_id=1, provider="fake",
-        metric_name=name, metric_value=value,
-        period_start=None, period_end=None, input_hash=hash_,
+        conn,
+        snapshot_id=snap_id,
+        publication_id=publication_id,
+        topic_id=1,
+        provider="fake",
+        metric_name=name,
+        metric_value=value,
+        period_start=None,
+        period_end=None,
+        input_hash=hash_,
     )
 
 
@@ -187,50 +208,85 @@ class TestMetrics:
 class TestAggregates:
     def test_upsert_creates(self, db):
         agg = upsert_aggregate(
-            db, publication_id=1, topic_id=1, provider="fake",
-            period_type="lifetime", period_key="all",
-            metric_name="views", metric_value=1000.0,
-            snapshot_count=2, input_hash="ah1",
-            calculation_method="sum", source_snapshot_ids=[1, 2],
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
+            period_type="lifetime",
+            period_key="all",
+            metric_name="views",
+            metric_value=1000.0,
+            snapshot_count=2,
+            input_hash="ah1",
+            calculation_method="sum",
+            source_snapshot_ids=[1, 2],
         )
         assert agg.metric_value == 1000.0
         assert agg.calculation_method == "sum"
 
     def test_upsert_updates_on_conflict(self, db):
         upsert_aggregate(
-            db, publication_id=1, topic_id=1, provider="fake",
-            period_type="lifetime", period_key="all",
-            metric_name="views", metric_value=1000.0,
-            snapshot_count=1, input_hash="ah1",
-            calculation_method="sum", source_snapshot_ids=[1],
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
+            period_type="lifetime",
+            period_key="all",
+            metric_name="views",
+            metric_value=1000.0,
+            snapshot_count=1,
+            input_hash="ah1",
+            calculation_method="sum",
+            source_snapshot_ids=[1],
         )
         agg = upsert_aggregate(
-            db, publication_id=1, topic_id=1, provider="fake",
-            period_type="lifetime", period_key="all",
-            metric_name="views", metric_value=2000.0,
-            snapshot_count=2, input_hash="ah2",
-            calculation_method="sum", source_snapshot_ids=[1, 2],
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
+            period_type="lifetime",
+            period_key="all",
+            metric_name="views",
+            metric_value=2000.0,
+            snapshot_count=2,
+            input_hash="ah2",
+            calculation_method="sum",
+            source_snapshot_ids=[1, 2],
         )
         assert agg.metric_value == 2000.0
 
     def test_list_aggregates_no_filters(self, db):
         upsert_aggregate(
-            db, publication_id=1, topic_id=1, provider="fake",
-            period_type="daily", period_key="2026-08-01",
-            metric_name="views", metric_value=500.0,
-            snapshot_count=1, input_hash="ah1",
-            calculation_method="sum", source_snapshot_ids=[1],
+            db,
+            publication_id=1,
+            topic_id=1,
+            provider="fake",
+            period_type="daily",
+            period_key="2026-08-01",
+            metric_name="views",
+            metric_value=500.0,
+            snapshot_count=1,
+            input_hash="ah1",
+            calculation_method="sum",
+            source_snapshot_ids=[1],
         )
         result = list_aggregates(db)
         assert len(result) >= 1
 
     def test_list_aggregates_filters(self, db):
         upsert_aggregate(
-            db, publication_id=10, topic_id=1, provider="fake",
-            period_type="monthly", period_key="2026-08",
-            metric_name="views", metric_value=100.0,
-            snapshot_count=1, input_hash="ah1",
-            calculation_method="sum", source_snapshot_ids=[1],
+            db,
+            publication_id=10,
+            topic_id=1,
+            provider="fake",
+            period_type="monthly",
+            period_key="2026-08",
+            metric_name="views",
+            metric_value=100.0,
+            snapshot_count=1,
+            input_hash="ah1",
+            calculation_method="sum",
+            source_snapshot_ids=[1],
         )
         result = list_aggregates(db, publication_id=10, metric_name="views")
         assert all(a.publication_id == 10 for a in result)
@@ -240,8 +296,12 @@ class TestReviewEvents:
     def test_create_event(self, db):
         snap = _snap(db)
         ev = create_review_event(
-            db, snapshot_id=snap.id, severity="info",
-            notes="all good", reviewer="alice", input_hash="rh1",
+            db,
+            snapshot_id=snap.id,
+            severity="info",
+            notes="all good",
+            reviewer="alice",
+            input_hash="rh1",
         )
         assert ev.severity == "info"
         assert ev.reviewer == "alice"
@@ -253,12 +313,20 @@ class TestReviewEvents:
     def test_list_events_for_snapshot(self, db):
         snap = _snap(db)
         create_review_event(
-            db, snapshot_id=snap.id, severity="warning",
-            notes="check this", reviewer="bob", input_hash="rh1",
+            db,
+            snapshot_id=snap.id,
+            severity="warning",
+            notes="check this",
+            reviewer="bob",
+            input_hash="rh1",
         )
         create_review_event(
-            db, snapshot_id=snap.id, severity="info",
-            notes="", reviewer="", input_hash="rh2",
+            db,
+            snapshot_id=snap.id,
+            severity="info",
+            notes="",
+            reviewer="",
+            input_hash="rh2",
         )
         events = list_review_events(db, snapshot_id=snap.id)
         assert len(events) == 2
@@ -266,12 +334,20 @@ class TestReviewEvents:
     def test_list_events_by_severity(self, db):
         snap = _snap(db)
         create_review_event(
-            db, snapshot_id=snap.id, severity="error",
-            notes="bad", reviewer="", input_hash="rh1",
+            db,
+            snapshot_id=snap.id,
+            severity="error",
+            notes="bad",
+            reviewer="",
+            input_hash="rh1",
         )
         create_review_event(
-            db, snapshot_id=snap.id, severity="info",
-            notes="", reviewer="", input_hash="rh2",
+            db,
+            snapshot_id=snap.id,
+            severity="info",
+            notes="",
+            reviewer="",
+            input_hash="rh2",
         )
         errors = list_review_events(db, severity="error")
         assert all(e.severity == "error" for e in errors)

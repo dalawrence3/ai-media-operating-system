@@ -17,9 +17,7 @@ def _registry() -> ProviderRegistry:
     return r
 
 
-def _select(
-    registry: ProviderRegistry | None = None, **criteria_kwargs
-) -> str:
+def _select(registry: ProviderRegistry | None = None, **criteria_kwargs) -> str:
     reg = registry if registry is not None else _registry()
     selector = DefaultProviderSelector()
     return selector.select(reg, ProviderSelectionCriteria(**criteria_kwargs))
@@ -121,6 +119,7 @@ def test_required_sample_rate_no_match_raises() -> None:
 
 def test_required_feature_present_matches() -> None:
     from app.narration.constants import PROVIDER_FEATURE_SPEAKING_RATE
+
     result = _select(required_features=frozenset({PROVIDER_FEATURE_SPEAKING_RATE}))
     assert result == FAKE_PROVIDER_NAME
 

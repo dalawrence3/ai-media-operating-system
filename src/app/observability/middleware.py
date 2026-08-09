@@ -32,9 +32,7 @@ from app.observability.metrics import METRICS
 logger = structlog.get_logger(__name__)
 
 # Collapse UUIDs and numeric IDs in path to {id} to reduce cardinality.
-_UUID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
-)
+_UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 _INT_RE = re.compile(r"/\d+(?=/|$)")
 
 
@@ -79,11 +77,7 @@ class MetricsMiddleware(BaseHTTPMiddleware):
         method = request.method
         status = str(response.status_code)
 
-        METRICS["http_requests_total"].labels(
-            method=method, path=path, status=status
-        ).inc()
-        METRICS["http_request_duration_seconds"].labels(
-            method=method, path=path
-        ).observe(duration)
+        METRICS["http_requests_total"].labels(method=method, path=path, status=status).inc()
+        METRICS["http_request_duration_seconds"].labels(method=method, path=path).observe(duration)
 
         return response

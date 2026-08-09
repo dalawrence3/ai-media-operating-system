@@ -41,18 +41,12 @@ def dispatch_event(conn: Any, event: ControlEvent) -> list[EventProcessing]:
         if row:
             proc = repo._row_to_event_processing(row)
         else:
-            proc = repo.create_event_processing(
-                conn, str(uuid.uuid4()), event.id, handler_key
-            )
+            proc = repo.create_event_processing(conn, str(uuid.uuid4()), event.id, handler_key)
 
-        proc = repo.update_event_processing_status(
-            conn, proc.id, PROCESSING_STATUS_PROCESSING
-        )
+        proc = repo.update_event_processing_status(conn, proc.id, PROCESSING_STATUS_PROCESSING)
         try:
             fn(conn, event)
-            proc = repo.update_event_processing_status(
-                conn, proc.id, PROCESSING_STATUS_COMPLETED
-            )
+            proc = repo.update_event_processing_status(conn, proc.id, PROCESSING_STATUS_COMPLETED)
         except Exception as exc:
             row2 = conn.execute(
                 "SELECT attempt_count FROM cp_event_processing WHERE id = ?", (proc.id,)

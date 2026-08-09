@@ -42,15 +42,25 @@ class TestWorkspace:
 
     def test_metadata_property_empty(self):
         ws = Workspace(
-            id="ws-1", name="Acme", slug="acme", status="active",
-            actor="cli", created_at=_DT, updated_at=_DT,
+            id="ws-1",
+            name="Acme",
+            slug="acme",
+            status="active",
+            actor="cli",
+            created_at=_DT,
+            updated_at=_DT,
         )
         assert ws.metadata == {}
 
     def test_metadata_property_parsed(self):
         ws = Workspace(
-            id="ws-1", name="Acme", slug="acme", status="active",
-            actor="cli", created_at=_DT, updated_at=_DT,
+            id="ws-1",
+            name="Acme",
+            slug="acme",
+            status="active",
+            actor="cli",
+            created_at=_DT,
+            updated_at=_DT,
             metadata_json='{"key": "value"}',
         )
         assert ws.metadata == {"key": "value"}
@@ -59,8 +69,14 @@ class TestWorkspace:
 class TestChannel:
     def test_frozen(self):
         ch = Channel(
-            id="ch-1", workspace_id="ws-1", name="Tech", slug="tech",
-            status="active", actor="cli", created_at=_DT, updated_at=_DT,
+            id="ch-1",
+            workspace_id="ws-1",
+            name="Tech",
+            slug="tech",
+            status="active",
+            actor="cli",
+            created_at=_DT,
+            updated_at=_DT,
         )
         with pytest.raises((TypeError, ValidationError)):
             ch.name = "Other"  # type: ignore[misc]
@@ -138,9 +154,7 @@ class TestWorkspaceDraft:
 
 class TestChannelDraft:
     def test_fields(self):
-        draft = ChannelDraft(
-            id="ch-1", workspace_id="ws-1", name="Tech", slug="tech", actor="cli"
-        )
+        draft = ChannelDraft(id="ch-1", workspace_id="ws-1", name="Tech", slug="tech", actor="cli")
         assert draft.workspace_id == "ws-1"
         assert draft.status == "active"
 

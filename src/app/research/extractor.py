@@ -125,9 +125,7 @@ def _process_chunk(
             support_status, q_start, q_end = classify_quote_support(
                 ec.supporting_quote, source.raw_text or ""
             )
-            page_num = derive_page_number(
-                source.raw_text or "", q_start, source.extraction_method
-            )
+            page_num = derive_page_number(source.raw_text or "", q_start, source.extraction_method)
             claim_type = ClaimType(ec.claim_type)
             requires_review = compute_requires_date_review(ec.claim_text, claim_type, source)
             claims_out.append(
@@ -205,9 +203,7 @@ def extract_claims(
 
     chunks, was_truncated = chunk_text(source.raw_text)
     if not chunks:
-        raise ClaimExtractionError(
-            f"source_content_id={source.id} raw_text produced no chunks"
-        )
+        raise ClaimExtractionError(f"source_content_id={source.id} raw_text produced no chunks")
 
     registry = registry or PromptRegistry()
     prompt = registry.get(prompt_name, prompt_version)
@@ -215,9 +211,11 @@ def extract_claims(
     # Build a single representative hash for the whole content run.
     import unicodedata
 
-    nfc_hash = __import__("hashlib").sha256(
-        unicodedata.normalize("NFC", source.raw_text).encode()
-    ).hexdigest()
+    nfc_hash = (
+        __import__("hashlib")
+        .sha256(unicodedata.normalize("NFC", source.raw_text).encode())
+        .hexdigest()
+    )
 
     input_hash = compute_input_hash(
         normalized_text_hash=nfc_hash,

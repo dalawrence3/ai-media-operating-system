@@ -31,9 +31,7 @@ def conn():
     with tempfile.TemporaryDirectory() as d:
         db = open_db(pathlib.Path(d) / "test.db")
         # Insert a topic so FK constraints pass
-        db.execute(
-            "INSERT INTO topics (title, angle) VALUES ('Test Topic', 'test angle')"
-        )
+        db.execute("INSERT INTO topics (title, angle) VALUES ('Test Topic', 'test angle')")
         db.commit()
         yield db
 
@@ -230,8 +228,12 @@ class TestRecommendationCRUD:
     def test_list_recommendations_filter_by_domain(self, conn):
         run_id = create_learning_run(conn, topic_id=1, publication_id=None, input_hash="h1")
         create_recommendation(conn, _make_draft(run_id, domain="scripts", input_hash="a"))
-        create_recommendation(conn, _make_draft(run_id, domain="publishing", input_hash="b",
-                                                subsystem="title_effectiveness"))
+        create_recommendation(
+            conn,
+            _make_draft(
+                run_id, domain="publishing", input_hash="b", subsystem="title_effectiveness"
+            ),
+        )
         conn.commit()
         scripts = list_recommendations(conn, domain="scripts")
         publishing = list_recommendations(conn, domain="publishing")

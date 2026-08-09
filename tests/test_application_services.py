@@ -99,6 +99,7 @@ class TestStartPipeline:
             idempotency_key=key,
         )
         from app.application.errors import PipelineAlreadyExistsError
+
         svc.start_pipeline(cmd)
         with pytest.raises(PipelineAlreadyExistsError):
             svc.start_pipeline(cmd)
@@ -148,6 +149,7 @@ class TestGetChannelSummary:
 class TestGetSystemHealth:
     def test_returns_health_view(self, svc, workspace):
         from app.application.contracts import HealthView
+
         result = svc.get_system_health(GetSystemHealthQuery(workspace_id=workspace.id))
         assert isinstance(result, HealthView)
 
@@ -231,9 +233,7 @@ class TestServiceAuthorizationContract:
         ).fetchall()
         assert len(rows) == 0
 
-    def test_trusted_system_actor_always_permitted_without_hook(
-        self, conn, workspace, channel
-    ):
+    def test_trusted_system_actor_always_permitted_without_hook(self, conn, workspace, channel):
         svc_strict = build_application_service(conn)  # default fail-closed hook
         cmd = StartPipelineCommand(
             workspace_id=workspace.id,
@@ -254,7 +254,10 @@ class TestServiceAuthorizationContract:
         ws2 = cp_repo.create_workspace(
             conn,
             WorkspaceDraft(
-                id=_uid(), name="WS2", slug="ws2", actor="cli",
+                id=_uid(),
+                name="WS2",
+                slug="ws2",
+                actor="cli",
                 organization_id=org2.id,
             ),
         )
@@ -268,6 +271,7 @@ class TestServiceAuthorizationContract:
         pv = svc_strict.start_pipeline(cmd)
 
         from app.application.queries import GetPipelineStatusQuery
+
         with pytest.raises(CrossWorkspaceAccessError):
             svc_strict.get_pipeline_status(
                 GetPipelineStatusQuery(pipeline_id=pv.id, workspace_id=ws2.id)

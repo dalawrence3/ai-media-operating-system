@@ -104,9 +104,19 @@ def create_schedule(
         "created_at, updated_at) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            sched_id, workspace_id, channel_id, name, operation_type,
-            schedule_type, json.dumps(schedule_config), timezone_name,
-            1, next_run_iso, actor, now_iso, now_iso,
+            sched_id,
+            workspace_id,
+            channel_id,
+            name,
+            operation_type,
+            schedule_type,
+            json.dumps(schedule_config),
+            timezone_name,
+            1,
+            next_run_iso,
+            actor,
+            now_iso,
+            now_iso,
         ),
     )
     conn.commit()
@@ -193,8 +203,7 @@ def record_run(conn: Any, schedule_id: str) -> ScheduleView:
     config = json.loads(row["schedule_config_json"])
     next_run = _compute_next_run(row["schedule_type"], config, row["timezone"], now)
     conn.execute(
-        "UPDATE app_schedule_definitions "
-        "SET last_run_at=?, next_run_at=?, updated_at=? WHERE id=?",
+        "UPDATE app_schedule_definitions SET last_run_at=?, next_run_at=?, updated_at=? WHERE id=?",
         (now.isoformat(), next_run.isoformat() if next_run else None, now.isoformat(), schedule_id),
     )
     conn.commit()

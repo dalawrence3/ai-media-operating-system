@@ -68,26 +68,30 @@ def _fake_script_json(
     hook: str = "This is the hook.",
     body: str = "This is the body.",
 ) -> str:
-    return json.dumps({
-        "title": title,
-        "sections": [
-            {"section_type": "hook", "text": hook, "cited_claim_ids": []},
-            {"section_type": "body", "text": body, "cited_claim_ids": []},
-        ],
-    })
+    return json.dumps(
+        {
+            "title": title,
+            "sections": [
+                {"section_type": "hook", "text": hook, "cited_claim_ids": []},
+                {"section_type": "body", "text": body, "cited_claim_ids": []},
+            ],
+        }
+    )
 
 
 def _fake_script_with_citation(claim_id: int) -> str:
-    return json.dumps({
-        "title": "Citing Script",
-        "sections": [
-            {
-                "section_type": "hook",
-                "text": f"Fact [claim:{claim_id}] is true.",
-                "cited_claim_ids": [claim_id],
-            },
-        ],
-    })
+    return json.dumps(
+        {
+            "title": "Citing Script",
+            "sections": [
+                {
+                    "section_type": "hook",
+                    "text": f"Fact [claim:{claim_id}] is true.",
+                    "cited_claim_ids": [claim_id],
+                },
+            ],
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -253,8 +257,13 @@ class TestReplaceSemantics:
 
         p2 = FakeProvider(_fake_script_json("Second"))
         generate_script(
-            db, p2, t, evidence=[], allow_no_evidence=True,
-            replace_run_id=r1.run_id, tone="formal",
+            db,
+            p2,
+            t,
+            evidence=[],
+            allow_no_evidence=True,
+            replace_run_id=r1.run_id,
+            tone="formal",
         )
         run1_row = db.execute(
             "SELECT superseded_at FROM script_generation_runs WHERE id=?", (r1.run_id,)
@@ -279,16 +288,18 @@ class TestZeroEvidenceConstraints:
 
     def test_zero_evidence_script_with_markers_raises(self, db: sqlite3.Connection) -> None:
         t = _topic(db)
-        bad_output = json.dumps({
-            "title": "Bad",
-            "sections": [
-                {
-                    "section_type": "hook",
-                    "text": "Fact [claim:1] claimed.",
-                    "cited_claim_ids": [1],
-                },
-            ],
-        })
+        bad_output = json.dumps(
+            {
+                "title": "Bad",
+                "sections": [
+                    {
+                        "section_type": "hook",
+                        "text": "Fact [claim:1] claimed.",
+                        "cited_claim_ids": [1],
+                    },
+                ],
+            }
+        )
         provider = FakeProvider(bad_output)
         with pytest.raises(ScriptGenerationError):
             generate_script(db, provider, t, evidence=[], allow_no_evidence=True)

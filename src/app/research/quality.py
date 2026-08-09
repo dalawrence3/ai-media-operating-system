@@ -75,9 +75,7 @@ def score_quality(sc: SourceContent) -> QualityResult:
 
     # Primary source (government or academic)
     factors["primary_source"] = (
-        1.0
-        if sc.domain_type in (DomainType.government, DomainType.academic)
-        else 0.0
+        1.0 if sc.domain_type in (DomainType.government, DomainType.academic) else 0.0
     )
 
     # Author attribution

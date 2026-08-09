@@ -106,9 +106,7 @@ class TestExtractClaimsHappyPath:
 
     def test_no_quote_classified_as_no_quote(self, db: sqlite3.Connection):
         sc = _make_source_content(db)
-        provider = FakeProvider(
-            output=_fake_claim_output([_claim_dict(supporting_quote=None)])
-        )
+        provider = FakeProvider(output=_fake_claim_output([_claim_dict(supporting_quote=None)]))
         run = extract_claims(db, sc, provider=provider)
         claims = list_claims(db, run.id, include_unsupported=True)
         assert claims[0].quote_support_status.value == "no_quote"
@@ -125,8 +123,7 @@ class TestExtractClaimsHappyPath:
         provider = FakeProvider(output=_fake_claim_output([_claim_dict()]))
         run = extract_claims(db, sc, provider=provider)
         sql = (
-            "SELECT COUNT(*) as n FROM claim_extraction_run_calls"
-            " WHERE claim_extraction_run_id = ?"
+            "SELECT COUNT(*) as n FROM claim_extraction_run_calls WHERE claim_extraction_run_id = ?"
         )
         row = db.execute(sql, (run.id,)).fetchone()
         assert row["n"] >= 1
@@ -173,6 +170,7 @@ class TestSupersession:
         sc = _make_source_content(db)
         provider = FakeProvider(output=_fake_claim_output([_claim_dict()]))
         run1 = extract_claims(db, sc, provider=provider)
+
         # To force a new hash, change provider name by using a custom subclass.
         class OtherProvider(FakeProvider):
             name = "other"
@@ -265,9 +263,7 @@ class TestActiveEvidence:
             normalized_text_hash="h",
             extraction_method="html_parser",
         )
-        provider = FakeProvider(
-            output=_fake_claim_output([_claim_dict(supporting_quote=None)])
-        )
+        provider = FakeProvider(output=_fake_claim_output([_claim_dict(supporting_quote=None)]))
         extract_claims(db, sc, provider=provider)
         evidence = list_active_evidence_for_topic(db, topic.id)
         assert evidence == []

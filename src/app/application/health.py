@@ -23,8 +23,7 @@ def get_workspace_health(conn: Any, workspace_id: str) -> HealthView:
     dead_letters = find_dead_lettered_events(conn)
     # Filter to workspace scope.
     ws_dead = [
-        e for e in dead_letters
-        if _event_belongs_to_workspace(conn, e.event_id, workspace_id)
+        e for e in dead_letters if _event_belongs_to_workspace(conn, e.event_id, workspace_id)
     ]
 
     stuck_ops = find_stuck_operations(conn)

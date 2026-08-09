@@ -1477,17 +1477,32 @@ def update_scoring_policy(conn: sqlite3.Connection, policy_id: int, **kwargs: ob
         )
 
     _UPDATABLE = {
-        "label", "description",
-        "weight_trend_strength", "weight_audience_demand", "weight_competition",
-        "weight_evergreen_value", "weight_audience_fit", "weight_content_novelty",
-        "missing_trend_strength", "missing_audience_demand", "missing_competition",
-        "missing_evergreen_value", "missing_audience_fit", "missing_content_novelty",
-        "min_confidence_threshold", "freshness_decay_days",
-        "max_corroboration_bonus", "corroboration_bonus_per_source",
+        "label",
+        "description",
+        "weight_trend_strength",
+        "weight_audience_demand",
+        "weight_competition",
+        "weight_evergreen_value",
+        "weight_audience_fit",
+        "weight_content_novelty",
+        "missing_trend_strength",
+        "missing_audience_demand",
+        "missing_competition",
+        "missing_evergreen_value",
+        "missing_audience_fit",
+        "missing_content_novelty",
+        "min_confidence_threshold",
+        "freshness_decay_days",
+        "max_corroboration_bonus",
+        "corroboration_bonus_per_source",
     }
     _MISSING_FIELDS = {
-        "missing_trend_strength", "missing_audience_demand", "missing_competition",
-        "missing_evergreen_value", "missing_audience_fit", "missing_content_novelty",
+        "missing_trend_strength",
+        "missing_audience_demand",
+        "missing_competition",
+        "missing_evergreen_value",
+        "missing_audience_fit",
+        "missing_content_novelty",
     }
 
     unknown = set(kwargs) - _UPDATABLE
@@ -1504,8 +1519,12 @@ def update_scoring_policy(conn: sqlite3.Connection, policy_id: int, **kwargs: ob
 
     # Re-validate weight sum if any weight changed
     weight_keys = {
-        "weight_trend_strength", "weight_audience_demand", "weight_competition",
-        "weight_evergreen_value", "weight_audience_fit", "weight_content_novelty",
+        "weight_trend_strength",
+        "weight_audience_demand",
+        "weight_competition",
+        "weight_evergreen_value",
+        "weight_audience_fit",
+        "weight_content_novelty",
     }
     if weight_keys & set(params):
         current = get_scoring_policy(conn, policy_id)
@@ -1559,9 +1578,7 @@ def activate_scoring_policy(conn: sqlite3.Connection, policy_id: int) -> None:
     )
 
 
-def clone_scoring_policy(
-    conn: sqlite3.Connection, policy_id: int, label: str
-) -> ScoringPolicy:
+def clone_scoring_policy(conn: sqlite3.Connection, policy_id: int, label: str) -> ScoringPolicy:
     """Clone any non-archived policy into a new draft at the next version number."""
     source = get_scoring_policy(conn, policy_id)
     if source is None:
@@ -1659,9 +1676,7 @@ def _row_to_opportunity_score(row: sqlite3.Row) -> OpportunityScore:
     )
 
 
-def create_opportunity_score(
-    conn: sqlite3.Connection, score: OpportunityScore
-) -> OpportunityScore:
+def create_opportunity_score(conn: sqlite3.Connection, score: OpportunityScore) -> OpportunityScore:
     """Append-only insert. Never updates an existing row."""
     now = _now()
     cur = conn.execute(
@@ -1729,9 +1744,7 @@ def create_opportunity_score(
 
 
 def get_opportunity_score(conn: sqlite3.Connection, score_id: int) -> OpportunityScore | None:
-    row = conn.execute(
-        "SELECT * FROM opportunity_scores WHERE id = ?", (score_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM opportunity_scores WHERE id = ?", (score_id,)).fetchone()
     return _row_to_opportunity_score(row) if row else None
 
 

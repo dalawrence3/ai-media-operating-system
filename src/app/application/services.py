@@ -179,9 +179,7 @@ class ApplicationService:
 
     def delete_schedule(self, cmd: DeleteScheduleCommand) -> None:
         with self._obs.span("delete_schedule"):
-            dispatcher.dispatch(
-                self._conn, cmd, registry=self._registry, auth_hook=self._auth_hook
-            )
+            dispatcher.dispatch(self._conn, cmd, registry=self._registry, auth_hook=self._auth_hook)
 
     def execute_pipeline_stage(self, cmd: ExecutePipelineStageCommand) -> PipelineView:
         with self._obs.span("execute_stage"):
@@ -189,12 +187,11 @@ class ApplicationService:
                 self._conn, cmd, registry=self._registry, auth_hook=self._auth_hook
             )
 
-    def get_stage_history(
-        self, pipeline_id: str, stage: str, workspace_id: str
-    ) -> list[Any]:
+    def get_stage_history(self, pipeline_id: str, stage: str, workspace_id: str) -> list[Any]:
         pv = pipeline_state.get_pipeline(self._conn, pipeline_id)
         if pv.workspace_id != workspace_id:
             from app.application.errors import CrossWorkspaceAccessError
+
             raise CrossWorkspaceAccessError("Pipeline", pipeline_id, workspace_id)
         return pipeline_state.get_stage_history(self._conn, pipeline_id, stage)
 
@@ -241,6 +238,7 @@ class ApplicationService:
             ch = cp_repo.get_channel(self._conn, q.channel_id)
             if ch.workspace_id != q.workspace_id:
                 from app.application.errors import CrossWorkspaceAccessError
+
                 raise CrossWorkspaceAccessError("Channel", q.channel_id, q.workspace_id)
             accounts = cp_repo.list_platform_accounts_by_channel(self._conn, q.channel_id)
             active = self._conn.execute(
@@ -248,9 +246,7 @@ class ApplicationService:
                 "WHERE channel_id=? AND status IN ('running','waiting_for_review')",
                 (q.channel_id,),
             ).fetchone()[0]
-            level = cp_services.get_effective_policy(
-                self._conn, q.workspace_id, q.channel_id
-            )
+            level = cp_services.get_effective_policy(self._conn, q.workspace_id, q.channel_id)
             return ChannelView(
                 id=ch.id,
                 workspace_id=ch.workspace_id,
@@ -269,6 +265,7 @@ class ApplicationService:
             ch = cp_repo.get_channel(self._conn, acc.channel_id)
             if ch.workspace_id != q.workspace_id:
                 from app.application.errors import CrossWorkspaceAccessError
+
                 raise CrossWorkspaceAccessError("Account", q.account_id, q.workspace_id)
             level = cp_services.get_effective_policy(
                 self._conn, q.workspace_id, acc.channel_id, q.account_id
@@ -288,21 +285,23 @@ class ApplicationService:
             pv = pipeline_state.get_pipeline(self._conn, q.pipeline_id)
             if pv.workspace_id != q.workspace_id:
                 from app.application.errors import CrossWorkspaceAccessError
+
                 raise CrossWorkspaceAccessError("Pipeline", q.pipeline_id, q.workspace_id)
             return pv
 
     def list_pipelines(self, q: ListPipelinesQuery) -> list[PipelineView]:
         with self._obs.span("list_pipelines"):
             return pipeline_state.list_pipelines(
-                self._conn, q.workspace_id,
-                status=q.status, channel_id=q.channel_id, limit=q.limit,
+                self._conn,
+                q.workspace_id,
+                status=q.status,
+                channel_id=q.channel_id,
+                limit=q.limit,
             )
 
     def list_operations(self, q: ListOperationsQuery) -> list[OperationView]:
         with self._obs.span("list_operations"):
-            sql = (
-                "SELECT * FROM cp_operation_executions WHERE workspace_id=?"
-            )
+            sql = "SELECT * FROM cp_operation_executions WHERE workspace_id=?"
             params: list[Any] = [q.workspace_id]
             if q.status:
                 sql += " AND status=?"
@@ -360,9 +359,7 @@ class ApplicationService:
 
     def list_schedules(self, q: ListSchedulesQuery) -> list[ScheduleView]:
         with self._obs.span("list_schedules"):
-            return sched_svc.list_schedules(
-                self._conn, q.workspace_id, is_active=q.is_active
-            )
+            return sched_svc.list_schedules(self._conn, q.workspace_id, is_active=q.is_active)
 
     def get_audit_timeline(self, q: GetAuditTimelineQuery) -> list[AuditView]:
         with self._obs.span("get_audit_timeline"):
@@ -372,7 +369,8 @@ class ApplicationService:
     def get_effective_config(self, q: GetEffectiveConfigQuery) -> dict[str, Any]:
         with self._obs.span("get_effective_config"):
             return resolve_config(
-                self._conn, q.workspace_id,
+                self._conn,
+                q.workspace_id,
                 channel_id=q.channel_id,
                 platform_account_id=q.platform_account_id,
             )
@@ -424,9 +422,18 @@ def _audit_row_to_view(row: dict[str, Any]) -> AuditView:
         correlation_id=row.get("correlation_id"),
         description=event_type,
         metadata={
-            k: v for k, v in row.items()
-            if k not in ("event_type", "operation_type", "actor", "ts", "created_at",
-                         "correlation_id", "kind")
+            k: v
+            for k, v in row.items()
+            if k
+            not in (
+                "event_type",
+                "operation_type",
+                "actor",
+                "ts",
+                "created_at",
+                "correlation_id",
+                "kind",
+            )
         },
     )
 

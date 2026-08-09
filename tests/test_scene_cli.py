@@ -241,6 +241,7 @@ def test_scenes_approve_already_rejected(isolated_db):
     draft = _make_minimal_draft(isolated_db, ids)
     manifest = create_scene_manifest(isolated_db, draft)
     from app.scenes.repository import reject_scene_manifest
+
     reject_scene_manifest(isolated_db, manifest.id, reason_code="test")
     isolated_db.commit()
     result = runner.invoke(app, ["scenes", "approve", str(manifest.id)])
@@ -277,13 +278,20 @@ def test_scenes_reject_scene_success(isolated_db):
     draft = _make_minimal_draft(isolated_db, ids)
     manifest = create_scene_manifest(isolated_db, draft)
     from app.scenes.repository import get_scene_manifest_scenes
+
     scenes = get_scene_manifest_scenes(isolated_db, manifest.id)
     isolated_db.commit()
     result = runner.invoke(
         app,
         [
-            "scenes", "reject-scene", str(manifest.id), str(scenes[0].id),
-            "--reason-code", "wrong_shot", "--actor", "director",
+            "scenes",
+            "reject-scene",
+            str(manifest.id),
+            str(scenes[0].id),
+            "--reason-code",
+            "wrong_shot",
+            "--actor",
+            "director",
         ],
     )
     assert result.exit_code == 0

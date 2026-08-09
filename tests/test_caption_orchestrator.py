@@ -76,18 +76,14 @@ def _seed_full_approved_narration(conn: sqlite3.Connection) -> None:
 
 
 class TestGenerateCaptions:
-    def test_generates_completed_run(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_generates_completed_run(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         _seed_full_approved_narration(db)
         run = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         assert run.status == "completed"
         assert run.total_cue_count > 0
         assert run.total_duration_ms > 0
 
-    def test_export_files_created(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_export_files_created(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         _seed_full_approved_narration(db)
         run = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         assert run.srt_path is not None
@@ -100,58 +96,44 @@ class TestGenerateCaptions:
         assert vtt_dest.exists()
         assert json_dest.exists()
 
-    def test_srt_content_is_valid(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_srt_content_is_valid(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         _seed_full_approved_narration(db)
         run = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         srt = (tmp_path / run.srt_path).read_text(encoding="utf-8")
         assert "1\n" in srt
         assert "-->" in srt
 
-    def test_vtt_starts_with_webvtt(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_vtt_starts_with_webvtt(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         _seed_full_approved_narration(db)
         run = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         vtt = (tmp_path / run.vtt_path).read_text(encoding="utf-8")
         assert vtt.startswith("WEBVTT")
 
-    def test_json_is_valid(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_json_is_valid(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         _seed_full_approved_narration(db)
         run = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         doc = json.loads((tmp_path / run.json_path).read_text(encoding="utf-8"))
         assert "cues" in doc
         assert len(doc["cues"]) == run.total_cue_count
 
-    def test_export_hashes_stored(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_export_hashes_stored(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         _seed_full_approved_narration(db)
         run = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         assert run.srt_sha256 is not None and len(run.srt_sha256) == 64
         assert run.vtt_sha256 is not None and len(run.vtt_sha256) == 64
         assert run.json_sha256 is not None and len(run.json_sha256) == 64
 
-    def test_idempotent_returns_same_run(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_idempotent_returns_same_run(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         _seed_full_approved_narration(db)
         run1 = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         run2 = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         assert run1.id == run2.id
 
-    def test_no_approved_narration_run_raises(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_no_approved_narration_run_raises(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         with pytest.raises(NoApprovedNarrationRunError):
             generate_captions(db, plan_id=999, artifacts_path=tmp_path)
 
-    def test_missing_segments_raises(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_missing_segments_raises(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         _seed_full_approved_narration(db)
         # Remove the asset so segments tuple is empty
         db.execute("PRAGMA foreign_keys=OFF")
@@ -160,20 +142,18 @@ class TestGenerateCaptions:
         with pytest.raises(MissingNarrationSegmentAssetError):
             generate_captions(db, plan_id=1, artifacts_path=tmp_path)
 
-    def test_cues_persisted_to_db(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_cues_persisted_to_db(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         from app.captions.repository import get_caption_cues
+
         _seed_full_approved_narration(db)
         run = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         cues = get_caption_cues(db, run.id)
         assert len(cues) == run.total_cue_count
         assert cues[0].cue_index == 0
 
-    def test_cue_timestamps_valid(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_cue_timestamps_valid(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         from app.captions.repository import get_caption_cues
+
         _seed_full_approved_narration(db)
         run = generate_captions(db, plan_id=1, artifacts_path=tmp_path)
         cues = get_caption_cues(db, run.id)
@@ -183,9 +163,7 @@ class TestGenerateCaptions:
         # Last cue ends at segment duration (4000ms)
         assert cues[-1].end_ms == 4000
 
-    def test_failed_run_raises_on_retry(
-        self, db: sqlite3.Connection, tmp_path: Path
-    ) -> None:
+    def test_failed_run_raises_on_retry(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         from app.captions.constants import (
             CAPTION_EXPORTER_VERSION,
             CAPTION_SCHEMA_VERSION,
@@ -205,29 +183,38 @@ class TestGenerateCaptions:
         handoff = get_approved_narration_run_full(db, 1)
         seg_inputs = [
             NarrationSegmentHashInput(
-                segment_id=s.segment_id, asset_id=s.asset_id,
-                audio_sha256=s.audio_sha256, narration_text_hash=s.narration_text_hash,
+                segment_id=s.segment_id,
+                asset_id=s.asset_id,
+                audio_sha256=s.audio_sha256,
+                narration_text_hash=s.narration_text_hash,
                 duration_ms=s.duration_ms,
             )
             for s in handoff.segments
         ]
         h = compute_caption_input_hash(
-            narration_run_id=handoff.run_id, narration_run_input_hash=handoff.input_hash,
+            narration_run_id=handoff.run_id,
+            narration_run_input_hash=handoff.input_hash,
             segments=seg_inputs,
             caption_schema_version=CAPTION_SCHEMA_VERSION,
             segmentation_version=CAPTION_SEGMENTATION_VERSION,
             timing_algorithm_version=CAPTION_TIMING_ALGORITHM_VERSION,
-            style_version=CAPTION_STYLE_VERSION, exporter_version=CAPTION_EXPORTER_VERSION,
-            language="en-US", experiment_id=None,
+            style_version=CAPTION_STYLE_VERSION,
+            exporter_version=CAPTION_EXPORTER_VERSION,
+            language="en-US",
+            experiment_id=None,
         )
         draft = CaptionRunDraft(
-            narration_run_id=handoff.run_id, plan_id=handoff.plan_id,
-            script_id=handoff.script_id, topic_id=handoff.topic_id,
-            experiment_id=None, input_hash=h,
+            narration_run_id=handoff.run_id,
+            plan_id=handoff.plan_id,
+            script_id=handoff.script_id,
+            topic_id=handoff.topic_id,
+            experiment_id=None,
+            input_hash=h,
             caption_schema_version=CAPTION_SCHEMA_VERSION,
             segmentation_version=CAPTION_SEGMENTATION_VERSION,
             timing_algorithm_version=CAPTION_TIMING_ALGORITHM_VERSION,
-            style_version=CAPTION_STYLE_VERSION, exporter_version=CAPTION_EXPORTER_VERSION,
+            style_version=CAPTION_STYLE_VERSION,
+            exporter_version=CAPTION_EXPORTER_VERSION,
             language="en-US",
         )
         run = create_caption_run(db, draft)

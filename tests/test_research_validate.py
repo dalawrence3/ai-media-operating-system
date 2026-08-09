@@ -16,22 +16,28 @@ from app.research.validate import is_blocked_address, validate_file_path, valida
 
 
 class TestIsBlockedAddress:
-    @pytest.mark.parametrize("addr", [
-        "10.0.0.1",
-        "10.255.255.255",
-        "172.16.0.1",
-        "172.31.255.255",
-        "192.168.0.1",
-        "192.168.255.255",
-    ])
+    @pytest.mark.parametrize(
+        "addr",
+        [
+            "10.0.0.1",
+            "10.255.255.255",
+            "172.16.0.1",
+            "172.31.255.255",
+            "192.168.0.1",
+            "192.168.255.255",
+        ],
+    )
     def test_rfc1918_blocked(self, addr: str):
         assert is_blocked_address(addr) is True
 
-    @pytest.mark.parametrize("addr", [
-        "127.0.0.1",
-        "127.0.0.2",
-        "127.255.255.255",
-    ])
+    @pytest.mark.parametrize(
+        "addr",
+        [
+            "127.0.0.1",
+            "127.0.0.2",
+            "127.255.255.255",
+        ],
+    )
     def test_loopback_blocked(self, addr: str):
         assert is_blocked_address(addr) is True
 
@@ -44,9 +50,9 @@ class TestIsBlockedAddress:
         assert is_blocked_address("239.255.255.255") is True
 
     def test_documentation_ranges_blocked(self):
-        assert is_blocked_address("192.0.2.1") is True       # TEST-NET-1
-        assert is_blocked_address("198.51.100.1") is True    # TEST-NET-2
-        assert is_blocked_address("203.0.113.1") is True     # TEST-NET-3
+        assert is_blocked_address("192.0.2.1") is True  # TEST-NET-1
+        assert is_blocked_address("198.51.100.1") is True  # TEST-NET-2
+        assert is_blocked_address("203.0.113.1") is True  # TEST-NET-3
 
     def test_shared_address_space_blocked(self):
         assert is_blocked_address("100.64.0.1") is True
@@ -78,12 +84,15 @@ class TestIsBlockedAddress:
     def test_ipv6_documentation_blocked(self):
         assert is_blocked_address("2001:db8::1") is True
 
-    @pytest.mark.parametrize("addr", [
-        "1.1.1.1",
-        "8.8.8.8",
-        "93.184.216.34",
-        "151.101.1.140",
-    ])
+    @pytest.mark.parametrize(
+        "addr",
+        [
+            "1.1.1.1",
+            "8.8.8.8",
+            "93.184.216.34",
+            "151.101.1.140",
+        ],
+    )
     def test_public_addresses_allowed(self, addr: str):
         assert is_blocked_address(addr) is False
 
@@ -141,6 +150,7 @@ class TestValidateUrl:
 
     def test_dns_resolution_failure_rejected(self):
         import socket
+
         with patch(
             "app.research.validate.socket.getaddrinfo",
             side_effect=socket.gaierror("NXDOMAIN"),

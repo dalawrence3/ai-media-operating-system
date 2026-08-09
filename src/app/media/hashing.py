@@ -22,8 +22,8 @@ class RenderHashInput:
     topic_id: int
     plan_id: int
     script_id: int
-    scene_manifest_input_hash: str   # from ApprovedSceneManifest.input_hash
-    narration_input_hash: str        # from ApprovedNarrationRun.input_hash
+    scene_manifest_input_hash: str  # from ApprovedSceneManifest.input_hash
+    narration_input_hash: str  # from ApprovedNarrationRun.input_hash
     render_schema_version: str
     compositor_version: str
     width: int

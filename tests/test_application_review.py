@@ -78,6 +78,7 @@ class TestGetReviewQueue:
         # Advance script_generation — it's a review-required stage → parks at waiting.
         from app.application import pipeline as pc
         from app.application.commands import AdvancePipelineStageCommand
+
         updated = pc.advance_pipeline(
             conn,
             AdvancePipelineStageCommand(
@@ -97,8 +98,8 @@ class TestGetReviewQueue:
             conn, OrganizationDraft(id=_uid(), name="O2", slug="o2", actor="cli")
         )
         ws2 = cp_repo.create_workspace(
-            conn, WorkspaceDraft(id=_uid(), name="W2", slug="w2", actor="cli",
-                                 organization_id=org.id)
+            conn,
+            WorkspaceDraft(id=_uid(), name="W2", slug="w2", actor="cli", organization_id=org.id),
         )
         queue_ws1 = review_mod.get_review_queue(conn, workspace.id)
         queue_ws2 = review_mod.get_review_queue(conn, ws2.id)
@@ -129,6 +130,7 @@ class TestApproveReviewItem:
 
     def test_approve_unknown_item_type_raises(self, conn, workspace):
         from app.application.errors import UnknownCommandError
+
         registry = ExtensionRegistry()
         with pytest.raises(UnknownCommandError):
             review_mod.approve_review_item(

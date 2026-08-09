@@ -133,9 +133,7 @@ class ProviderNotReadyError(ProviderInfrastructureError):
     """Raised when a provider's lifecycle state is not READY."""
 
     def __init__(self, provider_name: str, state: str) -> None:
-        super().__init__(
-            f"Provider {provider_name!r} is not ready (state={state!r})"
-        )
+        super().__init__(f"Provider {provider_name!r} is not ready (state={state!r})")
         self.provider_name = provider_name
         self.state = state
 
@@ -156,9 +154,7 @@ class ProviderVersionIncompatibleError(ProviderInfrastructureError):
     """Raised when a provider version is incompatible with the current schema."""
 
     def __init__(self, provider_name: str, reason: str) -> None:
-        super().__init__(
-            f"Provider {provider_name!r} version incompatible: {reason}"
-        )
+        super().__init__(f"Provider {provider_name!r} version incompatible: {reason}")
         self.provider_name = provider_name
 
 
@@ -175,8 +171,6 @@ class ProviderRateLimitError(ProviderInfrastructureError):
     """Raised when the provider returns HTTP 429 and all retries are exhausted."""
 
     def __init__(self, provider_name: str, attempts: int) -> None:
-        super().__init__(
-            f"Provider {provider_name!r} rate-limited after {attempts} attempt(s)"
-        )
+        super().__init__(f"Provider {provider_name!r} rate-limited after {attempts} attempt(s)")
         self.provider_name = provider_name
         self.attempts = attempts

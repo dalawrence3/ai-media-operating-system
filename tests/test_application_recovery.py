@@ -109,9 +109,7 @@ class TestRecoverPipeline:
     def test_recover_from_specific_stage(self, conn, workspace, channel):
         pv = _start(conn, workspace, channel, start="research", end="script_generation")
         _fail(conn, pv, "research", workspace)
-        recovered = rec.recover_pipeline(
-            conn, pv.id, workspace.id, "admin", from_stage="research"
-        )
+        recovered = rec.recover_pipeline(conn, pv.id, workspace.id, "admin", from_stage="research")
         assert recovered.current_stage == "research"
         assert recovered.status == "running"
 

@@ -84,6 +84,7 @@ def get_or_create_source(
         if row:
             conn.execute("RELEASE SAVEPOINT sp_source_upsert")
             from app.core.models import SourceKind as SK
+
             src = Source(
                 id=row["id"],
                 topic_id=row["topic_id"],
@@ -211,12 +212,8 @@ def create_source_content(
         raise
 
 
-def get_source_content(
-    conn: sqlite3.Connection, content_id: int
-) -> SourceContent | None:
-    row = conn.execute(
-        "SELECT * FROM source_contents WHERE id = ?", (content_id,)
-    ).fetchone()
+def get_source_content(conn: sqlite3.Connection, content_id: int) -> SourceContent | None:
+    row = conn.execute("SELECT * FROM source_contents WHERE id = ?", (content_id,)).fetchone()
     return _row_to_source_content(row) if row else None
 
 
@@ -395,12 +392,8 @@ def create_claim_extraction_run(
         raise
 
 
-def get_claim_extraction_run(
-    conn: sqlite3.Connection, run_id: int
-) -> ClaimExtractionRun | None:
-    row = conn.execute(
-        "SELECT * FROM claim_extraction_runs WHERE id = ?", (run_id,)
-    ).fetchone()
+def get_claim_extraction_run(conn: sqlite3.Connection, run_id: int) -> ClaimExtractionRun | None:
+    row = conn.execute("SELECT * FROM claim_extraction_runs WHERE id = ?", (run_id,)).fetchone()
     return _row_to_run(row) if row else None
 
 

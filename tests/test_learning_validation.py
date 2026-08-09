@@ -129,6 +129,7 @@ class TestValidateReviewEventType:
 class TestValidateReviewEligible:
     def _make_rec(self, status: str):
         from unittest.mock import MagicMock
+
         rec = MagicMock()
         rec.id = 1
         rec.status = status

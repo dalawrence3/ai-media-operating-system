@@ -45,7 +45,7 @@ class PublishResult:
 
     provider_video_id: str
     provider_url: str | None
-    status: str                        # 'published' | 'scheduled' | 'failed'
+    status: str  # 'published' | 'scheduled' | 'failed'
     published_at: str | None = None
     scheduled_at: str | None = None
     provider_response: dict = field(default_factory=dict)

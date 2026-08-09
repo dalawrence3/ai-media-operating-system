@@ -45,8 +45,7 @@ def compute_confidence(
     # Component 2: source quality
     if observations:
         quality_scores = [
-            SOURCE_QUALITY_NUMERIC.get(obs.source_quality_tier.value, 0.25)
-            for obs in observations
+            SOURCE_QUALITY_NUMERIC.get(obs.source_quality_tier.value, 0.25) for obs in observations
         ]
         source_quality = sum(quality_scores) / len(quality_scores)
     else:

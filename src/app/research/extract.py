@@ -53,6 +53,7 @@ def _infer_domain_type(url: str | None) -> DomainType:
 # HTML extraction
 # ---------------------------------------------------------------------------
 
+
 def extract_html(html_bytes: bytes, url: str | None = None) -> ExtractResult:
     """Extract text and metadata from HTML bytes using stdlib html.parser."""
     from bs4 import BeautifulSoup
@@ -135,6 +136,7 @@ def extract_html(html_bytes: bytes, url: str | None = None) -> ExtractResult:
 # ---------------------------------------------------------------------------
 # PDF extraction
 # ---------------------------------------------------------------------------
+
 
 def extract_pdf(pdf_bytes: bytes) -> ExtractResult:
     """Extract text from PDF bytes using pypdf."""
@@ -251,6 +253,7 @@ def extract_pdf(pdf_bytes: bytes) -> ExtractResult:
 # ---------------------------------------------------------------------------
 # Plaintext and Markdown
 # ---------------------------------------------------------------------------
+
 
 def extract_text(content: bytes, *, encoding: str = "utf-8") -> ExtractResult:
     """Extract text from a plain-text file."""

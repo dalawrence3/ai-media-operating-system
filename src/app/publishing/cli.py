@@ -45,14 +45,13 @@ def _default_provider():
 
 # ── prepare ───────────────────────────────────────────────────────────────────
 
+
 @publish_app.command("prepare")
 def publish_prepare(
     render_manifest_id: Annotated[int, typer.Argument(help="Render manifest ID.")],
     title: Annotated[str, typer.Option("--title", "-t", help="Video title.")],
     description: Annotated[str, typer.Option("--description", "-d", help="Description.")] = "",
-    tags: Annotated[
-        str, typer.Option("--tags", help="Comma-separated tags.")
-    ] = "",
+    tags: Annotated[str, typer.Option("--tags", help="Comma-separated tags.")] = "",
     visibility: Annotated[
         str, typer.Option("--visibility", "-v", help="private | unlisted | public.")
     ] = "private",
@@ -103,6 +102,7 @@ def publish_prepare(
     schedule_type = "scheduled" if schedule_at else "immediate"
 
     from app.media.repository import get_approved_render, get_render_manifest
+
     manifest = get_render_manifest(conn, render_manifest_id)
     if manifest is None:
         typer.echo(f"Error: Render manifest {render_manifest_id} not found.", err=True)
@@ -110,9 +110,7 @@ def publish_prepare(
 
     approved_render = get_approved_render(conn, manifest.scene_manifest_id)
     if approved_render is None:
-        typer.echo(
-            f"Error: No approved render for manifest {render_manifest_id}.", err=True
-        )
+        typer.echo(f"Error: No approved render for manifest {render_manifest_id}.", err=True)
         raise typer.Exit(1)
 
     metadata = build_metadata_draft(
@@ -133,8 +131,12 @@ def publish_prepare(
 
     try:
         plan, created = prepare_publishing_plan(
-            conn, render_manifest_id, metadata, schedule,
-            provider=provider, supersede_existing=supersede
+            conn,
+            render_manifest_id,
+            metadata,
+            schedule,
+            provider=provider,
+            supersede_existing=supersede,
         )
         conn.commit()
     except (
@@ -149,9 +151,7 @@ def publish_prepare(
     if created:
         typer.echo(f"Created publishing plan id={plan.id} for manifest {render_manifest_id}.")
     else:
-        typer.echo(
-            f"Idempotent: existing publishing plan id={plan.id} returned (same input_hash)."
-        )
+        typer.echo(f"Idempotent: existing publishing plan id={plan.id} returned (same input_hash).")
     typer.echo(
         f"  provider={plan.provider}  visibility={plan.visibility}"
         f"  schedule={plan.schedule_type}  status={plan.status}"
@@ -160,14 +160,16 @@ def publish_prepare(
 
 # ── start ─────────────────────────────────────────────────────────────────────
 
+
 @publish_app.command("start")
 def publish_start(
     plan_id: Annotated[int, typer.Argument(help="Publishing plan ID.")],
-    dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="Validate without uploading.")
-    ] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Validate without uploading.")] = False,
     execute: Annotated[
-        bool, typer.Option("--execute", help="Confirm live publishing intent (required for non-fake providers).")  # noqa: E501
+        bool,
+        typer.Option(
+            "--execute", help="Confirm live publishing intent (required for non-fake providers)."
+        ),  # noqa: E501
     ] = False,
     provider_name: Annotated[
         str, typer.Option("--provider", help="Provider name (default: fake).")
@@ -202,6 +204,7 @@ def publish_start(
 
     if provider_name != "fake":
         from app.core.config import get_config
+
         cfg = get_config()
         if not cfg.publishing_live_enabled:
             typer.echo(
@@ -223,10 +226,9 @@ def publish_start(
         provider = FakePublishingProvider()
 
     from app.media.repository import get_approved_render, get_render_manifest
+
     manifest = get_render_manifest(conn, plan.render_manifest_id)
-    approved_render = (
-        get_approved_render(conn, manifest.scene_manifest_id) if manifest else None
-    )
+    approved_render = get_approved_render(conn, manifest.scene_manifest_id) if manifest else None
     if approved_render is None:
         typer.echo("Error: Approved render not found.", err=True)
         raise typer.Exit(1)
@@ -248,10 +250,7 @@ def publish_start(
         conn.commit()
         raise typer.Exit(1) from None
 
-    typer.echo(
-        f"Job id={job.id} attempt={job.attempt_number}"
-        f"  status={job.status}"
-    )
+    typer.echo(f"Job id={job.id} attempt={job.attempt_number}  status={job.status}")
     if publication:
         typer.echo(
             f"  publication id={publication.id}"
@@ -263,13 +262,12 @@ def publish_start(
 
 # ── schedule ──────────────────────────────────────────────────────────────────
 
+
 @publish_app.command("schedule")
 def publish_schedule(
     plan_id: Annotated[int, typer.Argument(help="Publishing plan ID.")],
     at: Annotated[str, typer.Option("--at", help="ISO 8601 UTC datetime.")],
-    timezone: Annotated[
-        str | None, typer.Option("--timezone", help="IANA timezone name.")
-    ] = None,
+    timezone: Annotated[str | None, typer.Option("--timezone", help="IANA timezone name.")] = None,
     actor: Annotated[str | None, typer.Option("--actor", help="Operator name.")] = None,
 ) -> None:
     """Set or update the scheduled publication time for a draft plan."""
@@ -286,9 +284,7 @@ def publish_schedule(
         update_plan_schedule(
             conn,
             plan_id,
-            PublishingScheduleDraft(
-                schedule_type="scheduled", scheduled_at=at, timezone=timezone
-            ),
+            PublishingScheduleDraft(schedule_type="scheduled", scheduled_at=at, timezone=timezone),
             actor=actor,
         )
         conn.commit()
@@ -300,25 +296,19 @@ def publish_schedule(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from None
 
-    typer.echo(
-        f"Plan {plan_id} scheduled for {at}"
-        + (f" ({timezone})" if timezone else "")
-    )
+    typer.echo(f"Plan {plan_id} scheduled for {at}" + (f" ({timezone})" if timezone else ""))
 
 
 # ── list ──────────────────────────────────────────────────────────────────────
+
 
 @publish_app.command("list")
 def publish_list(
     render_manifest_id: Annotated[
         int | None, typer.Option("--manifest-id", "-m", help="Filter by render manifest.")
     ] = None,
-    topic_id: Annotated[
-        int | None, typer.Option("--topic-id", help="Filter by topic.")
-    ] = None,
-    status: Annotated[
-        str | None, typer.Option("--status", "-s", help="Filter by status.")
-    ] = None,
+    topic_id: Annotated[int | None, typer.Option("--topic-id", help="Filter by topic.")] = None,
+    status: Annotated[str | None, typer.Option("--status", "-s", help="Filter by status.")] = None,
     include_superseded: Annotated[
         bool, typer.Option("--include-superseded", help="Include superseded plans.")
     ] = False,
@@ -351,6 +341,7 @@ def publish_list(
 
 
 # ── show ──────────────────────────────────────────────────────────────────────
+
 
 @publish_app.command("show")
 def publish_show(
@@ -425,6 +416,7 @@ def publish_show(
 
 # ── approve ───────────────────────────────────────────────────────────────────
 
+
 @publish_app.command("approve")
 def publish_approve(
     plan_id: Annotated[int, typer.Argument(help="Publishing plan ID.")],
@@ -449,23 +441,17 @@ def publish_approve(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from None
 
-    typer.echo(
-        f"Publishing plan {plan_id} approved."
-        + (f" (actor={actor})" if actor else "")
-    )
+    typer.echo(f"Publishing plan {plan_id} approved." + (f" (actor={actor})" if actor else ""))
 
 
 # ── reject ────────────────────────────────────────────────────────────────────
 
+
 @publish_app.command("reject")
 def publish_reject(
     plan_id: Annotated[int, typer.Argument(help="Publishing plan ID.")],
-    reason: Annotated[
-        str | None, typer.Option("--reason", help="Reason code.")
-    ] = None,
-    severity: Annotated[
-        int | None, typer.Option("--severity", help="1-5 severity.")
-    ] = None,
+    reason: Annotated[str | None, typer.Option("--reason", help="Reason code.")] = None,
+    severity: Annotated[int | None, typer.Option("--severity", help="1-5 severity.")] = None,
     notes: Annotated[str | None, typer.Option("--notes", help="Additional notes.")] = None,
     actor: Annotated[str | None, typer.Option("--actor", help="Reviewer name.")] = None,
     correction: Annotated[
@@ -504,11 +490,15 @@ def publish_reject(
 
 # ── retry ─────────────────────────────────────────────────────────────────────
 
+
 @publish_app.command("retry")
 def publish_retry(
     plan_id: Annotated[int, typer.Argument(help="Publishing plan ID.")],
     execute: Annotated[
-        bool, typer.Option("--execute", help="Confirm live publishing intent (required for non-fake providers).")  # noqa: E501
+        bool,
+        typer.Option(
+            "--execute", help="Confirm live publishing intent (required for non-fake providers)."
+        ),  # noqa: E501
     ] = False,
     provider_name: Annotated[
         str, typer.Option("--provider", help="Provider name (default: fake).")
@@ -528,6 +518,7 @@ def publish_retry(
     conn = _get_db()
 
     from app.publishing.repository import get_publishing_plan
+
     plan = get_publishing_plan(conn, plan_id)
     if plan is None:
         typer.echo(f"Error: Publishing plan {plan_id} not found.", err=True)
@@ -535,6 +526,7 @@ def publish_retry(
 
     if provider_name != "fake":
         from app.core.config import get_config
+
         cfg = get_config()
         if not cfg.publishing_live_enabled:
             typer.echo(
@@ -556,10 +548,9 @@ def publish_retry(
         provider = FakePublishingProvider()
 
     from app.media.repository import get_approved_render, get_render_manifest
+
     manifest = get_render_manifest(conn, plan.render_manifest_id)
-    approved_render = (
-        get_approved_render(conn, manifest.scene_manifest_id) if manifest else None
-    )
+    approved_render = get_approved_render(conn, manifest.scene_manifest_id) if manifest else None
     if approved_render is None:
         typer.echo("Error: Approved render not found.", err=True)
         raise typer.Exit(1)
@@ -581,12 +572,11 @@ def publish_retry(
         conn.commit()
         raise typer.Exit(1) from None
 
-    typer.echo(
-        f"Retry job id={job.id} attempt={job.attempt_number} status={job.status}"
-    )
+    typer.echo(f"Retry job id={job.id} attempt={job.attempt_number} status={job.status}")
 
 
 # ── cancel ────────────────────────────────────────────────────────────────────
+
 
 @publish_app.command("cancel")
 def publish_cancel(
@@ -614,6 +604,7 @@ def publish_cancel(
 
 # ── events ────────────────────────────────────────────────────────────────────
 
+
 @publish_app.command("events")
 def publish_events(
     plan_id: Annotated[int, typer.Argument(help="Publishing plan ID.")],
@@ -638,12 +629,11 @@ def publish_events(
         actor_s = f"  actor={ev.actor}" if ev.actor else ""
         reason_s = f"  reason={ev.reason_code}" if ev.reason_code else ""
         notes_s = f"  notes={ev.notes!r}" if ev.notes else ""
-        typer.echo(
-            f"[{ev.id}] {ev.event_type}{actor_s}{reason_s}{notes_s}  {ev.created_at}"
-        )
+        typer.echo(f"[{ev.id}] {ev.event_type}{actor_s}{reason_s}{notes_s}  {ev.created_at}")
 
 
 # ── doctor ────────────────────────────────────────────────────────────────────
+
 
 @publish_app.command("doctor")
 def publish_doctor(

@@ -60,9 +60,11 @@ def resolve_config(
     try:
         strategy = cp_services.get_channel_strategy(conn, channel_id) if channel_id else None
         if strategy and strategy.config_json:
-            strategy_cfg = json.loads(strategy.config_json) if isinstance(
-                strategy.config_json, str
-            ) else strategy.config_json
+            strategy_cfg = (
+                json.loads(strategy.config_json)
+                if isinstance(strategy.config_json, str)
+                else strategy.config_json
+            )
             result.update({k: v for k, v in strategy_cfg.items() if not _is_secret_key(k)})
     except Exception:
         pass
@@ -130,7 +132,14 @@ def snapshot_policy_refs(
 def _is_secret_key(key: str) -> bool:
     lowered = key.lower()
     secret_markers = (
-        "secret", "token", "password", "credential", "api_key", "apikey",
-        "private", "cert", "auth_header",
+        "secret",
+        "token",
+        "password",
+        "credential",
+        "api_key",
+        "apikey",
+        "private",
+        "cert",
+        "auth_header",
     )
     return any(m in lowered for m in secret_markers)

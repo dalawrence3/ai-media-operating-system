@@ -99,6 +99,7 @@ def _get_lifetime_aggregate(
         return None, []
 
     import json
+
     try:
         snap_ids = json.loads(row["source_snapshot_ids_json"]) or []
     except (json.JSONDecodeError, TypeError):
@@ -131,9 +132,7 @@ def _classify_strength(
     Both thresholds are versioned constants.  All other recommendations are
     EXPLORATORY — hypothesis-level signals that must not be auto-applied.
     """
-    unique_snapshot_count = len(
-        {sid for ev in evidence for sid in ev.snapshot_ids}
-    )
+    unique_snapshot_count = len({sid for ev in evidence for sid in ev.snapshot_ids})
     if (
         confidence_score >= MIN_CONFIDENCE_ACTIONABLE
         and unique_snapshot_count >= MIN_UNIQUE_SNAPSHOTS_ACTIONABLE
@@ -159,9 +158,7 @@ def _make_draft(
     evidence_classification: str = EVIDENCE_OBSERVATIONAL,
 ) -> RecommendationDraft:
     affected, entity_type, entity_id = resolve_attribution(domain, handoff)
-    all_snapshot_ids: list[int] = sorted(
-        {sid for ev in evidence for sid in ev.snapshot_ids}
-    )
+    all_snapshot_ids: list[int] = sorted({sid for ev in evidence for sid in ev.snapshot_ids})
     strength = _classify_strength(confidence_score, evidence)
     effective_classification = _classify_evidence(handoff)
 
@@ -238,78 +235,84 @@ def generate_ctr_recommendations(
 
     if ctr_value < CTR_LOW_THRESHOLD:
         score, _ = compute_confidence([ev], ctr_value, CTR_LOW_THRESHOLD, "below")
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_PUBLISHING,
-            subsystem=SUBSYSTEM_TITLE_EFFECTIVENESS,
-            measure=METRIC_CTR,
-            title="Low click-through rate — review title and thumbnail",
-            explanation=(
-                f"Lifetime CTR of {ctr_value:.2%} is below the {CTR_LOW_THRESHOLD:.0%} "
-                "signal threshold. Impressions are being shown but viewers are not clicking. "
-                "This is the strongest early signal that the title or thumbnail is not "
-                "compelling enough to differentiate from competing content."
-            ),
-            expected_improvement=(
-                "Improving title specificity, adding a number or concrete outcome, and "
-                "ensuring the thumbnail clearly illustrates the video's core promise "
-                "are all associated with CTR improvements in short-form content."
-            ),
-            evidence=[ev],
-            confidence_score=score,
-            handoff=handoff,
-        ))
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_PUBLISHING,
+                subsystem=SUBSYSTEM_TITLE_EFFECTIVENESS,
+                measure=METRIC_CTR,
+                title="Low click-through rate — review title and thumbnail",
+                explanation=(
+                    f"Lifetime CTR of {ctr_value:.2%} is below the {CTR_LOW_THRESHOLD:.0%} "
+                    "signal threshold. Impressions are being shown but viewers are not clicking. "
+                    "This is the strongest early signal that the title or thumbnail is not "
+                    "compelling enough to differentiate from competing content."
+                ),
+                expected_improvement=(
+                    "Improving title specificity, adding a number or concrete outcome, and "
+                    "ensuring the thumbnail clearly illustrates the video's core promise "
+                    "are all associated with CTR improvements in short-form content."
+                ),
+                evidence=[ev],
+                confidence_score=score,
+                handoff=handoff,
+            )
+        )
         score2, _ = compute_confidence([ev], ctr_value, CTR_LOW_THRESHOLD, "below")
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_SCRIPTS,
-            subsystem=SUBSYSTEM_HOOK_EFFECTIVENESS,
-            measure=METRIC_CTR,
-            title="Low click-through rate — review opening hook",
-            explanation=(
-                f"Lifetime CTR of {ctr_value:.2%} is below the {CTR_LOW_THRESHOLD:.0%} "
-                "signal threshold. On Shorts the hook (first 2–3 seconds) often "
-                "determines whether viewers watch past the thumbnail. A weak hook "
-                "compounds the low-CTR problem even when titles are strong."
-            ),
-            expected_improvement=(
-                "Rewriting the opening hook to immediately address the viewer's question "
-                "or create curiosity is associated with lower swipe-away rates and warrants "
-                "testing to determine whether effective CTR responds positively."
-            ),
-            evidence=[ev],
-            confidence_score=score2,
-            handoff=handoff,
-        ))
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_SCRIPTS,
+                subsystem=SUBSYSTEM_HOOK_EFFECTIVENESS,
+                measure=METRIC_CTR,
+                title="Low click-through rate — review opening hook",
+                explanation=(
+                    f"Lifetime CTR of {ctr_value:.2%} is below the {CTR_LOW_THRESHOLD:.0%} "
+                    "signal threshold. On Shorts the hook (first 2–3 seconds) often "
+                    "determines whether viewers watch past the thumbnail. A weak hook "
+                    "compounds the low-CTR problem even when titles are strong."
+                ),
+                expected_improvement=(
+                    "Rewriting the opening hook to immediately address the viewer's question "
+                    "or create curiosity is associated with lower swipe-away rates and warrants "
+                    "testing to determine whether effective CTR responds positively."
+                ),
+                evidence=[ev],
+                confidence_score=score2,
+                handoff=handoff,
+            )
+        )
 
     elif ctr_value >= CTR_HIGH_THRESHOLD:
         score, _ = compute_confidence([ev], ctr_value, CTR_HIGH_THRESHOLD, "above")
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_ANALYTICS,
-            subsystem=SUBSYSTEM_CTR_TRENDS,
-            measure=METRIC_CTR,
-            title="Strong click-through rate — replicate title and thumbnail approach",
-            explanation=(
-                f"Lifetime CTR of {ctr_value:.2%} is above the {CTR_HIGH_THRESHOLD:.0%} "
-                "strong-signal threshold. The current title and thumbnail approach is "
-                "performing well and should be used as a reference pattern for future content."
-            ),
-            expected_improvement=(
-                "Documenting what makes this title/thumbnail effective and applying "
-                "the same structural pattern to future videos warrants testing to "
-                "determine whether the channel's average CTR responds positively."
-            ),
-            evidence=[ev],
-            confidence_score=score,
-            handoff=handoff,
-        ))
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_ANALYTICS,
+                subsystem=SUBSYSTEM_CTR_TRENDS,
+                measure=METRIC_CTR,
+                title="Strong click-through rate — replicate title and thumbnail approach",
+                explanation=(
+                    f"Lifetime CTR of {ctr_value:.2%} is above the {CTR_HIGH_THRESHOLD:.0%} "
+                    "strong-signal threshold. The current title and thumbnail approach is "
+                    "performing well and should be used as a reference pattern for future content."
+                ),
+                expected_improvement=(
+                    "Documenting what makes this title/thumbnail effective and applying "
+                    "the same structural pattern to future videos warrants testing to "
+                    "determine whether the channel's average CTR responds positively."
+                ),
+                evidence=[ev],
+                confidence_score=score,
+                handoff=handoff,
+            )
+        )
 
     return drafts
 
@@ -348,83 +351,85 @@ def generate_retention_recommendations(
     )
 
     if avd_value < RETENTION_LOW_THRESHOLD_S:
-        score, _ = compute_confidence(
-            [ev], avd_value, RETENTION_LOW_THRESHOLD_S, "below"
+        score, _ = compute_confidence([ev], avd_value, RETENTION_LOW_THRESHOLD_S, "below")
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_SCRIPTS,
+                subsystem=SUBSYSTEM_SCRIPT_PACING,
+                measure=METRIC_AVERAGE_VIEW_DURATION,
+                title="Low retention — review script pacing and segment structure",
+                explanation=(
+                    f"Average view duration of {avd_value:.1f}s is below the "
+                    f"{RETENTION_LOW_THRESHOLD_S:.0f}s low-retention threshold. "
+                    "Viewers are leaving before the video's core content is delivered. "
+                    "This typically indicates the opening does not match the viewer's "
+                    "expectation set by the title, or the pacing is too slow for the format."
+                ),
+                expected_improvement=(
+                    "Front-loading the value delivery, tightening segment transitions, "
+                    "and reducing filler content between the hook and the first key claim "
+                    "are associated with higher retention in similar Shorts-format content."
+                ),
+                evidence=[ev],
+                confidence_score=score,
+                handoff=handoff,
+            )
         )
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_SCRIPTS,
-            subsystem=SUBSYSTEM_SCRIPT_PACING,
-            measure=METRIC_AVERAGE_VIEW_DURATION,
-            title="Low retention — review script pacing and segment structure",
-            explanation=(
-                f"Average view duration of {avd_value:.1f}s is below the "
-                f"{RETENTION_LOW_THRESHOLD_S:.0f}s low-retention threshold. "
-                "Viewers are leaving before the video's core content is delivered. "
-                "This typically indicates the opening does not match the viewer's "
-                "expectation set by the title, or the pacing is too slow for the format."
-            ),
-            expected_improvement=(
-                "Front-loading the value delivery, tightening segment transitions, "
-                "and reducing filler content between the hook and the first key claim "
-                "are associated with higher retention in similar Shorts-format content."
-            ),
-            evidence=[ev],
-            confidence_score=score,
-            handoff=handoff,
-        ))
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_NARRATION,
-            subsystem=SUBSYSTEM_NARRATION_PACE,
-            measure=METRIC_AVERAGE_VIEW_DURATION,
-            title="Low retention — review narration pace",
-            explanation=(
-                f"Average view duration of {avd_value:.1f}s suggests viewers "
-                "drop off early. Slow narration pace compounds pacing issues at "
-                "the script level by adding dead time between claims."
-            ),
-            expected_improvement=(
-                "Increasing narration pace (words per second) and removing "
-                "inter-segment pauses is associated with lower early drop-off in "
-                "short-form content where the script itself is already well-structured."
-            ),
-            evidence=[ev],
-            confidence_score=score,
-            handoff=handoff,
-        ))
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_NARRATION,
+                subsystem=SUBSYSTEM_NARRATION_PACE,
+                measure=METRIC_AVERAGE_VIEW_DURATION,
+                title="Low retention — review narration pace",
+                explanation=(
+                    f"Average view duration of {avd_value:.1f}s suggests viewers "
+                    "drop off early. Slow narration pace compounds pacing issues at "
+                    "the script level by adding dead time between claims."
+                ),
+                expected_improvement=(
+                    "Increasing narration pace (words per second) and removing "
+                    "inter-segment pauses is associated with lower early drop-off in "
+                    "short-form content where the script itself is already well-structured."
+                ),
+                evidence=[ev],
+                confidence_score=score,
+                handoff=handoff,
+            )
+        )
 
     elif avd_value >= RETENTION_HIGH_THRESHOLD_S:
-        score, _ = compute_confidence(
-            [ev], avd_value, RETENTION_HIGH_THRESHOLD_S, "above"
+        score, _ = compute_confidence([ev], avd_value, RETENTION_HIGH_THRESHOLD_S, "above")
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_ANALYTICS,
+                subsystem=SUBSYSTEM_RETENTION_TRENDS,
+                measure=METRIC_AVERAGE_VIEW_DURATION,
+                title="Strong retention — replicate script and narration approach",
+                explanation=(
+                    f"Average view duration of {avd_value:.1f}s is above the "
+                    f"{RETENTION_HIGH_THRESHOLD_S:.0f}s strong-signal threshold. "
+                    "Viewers are watching most or all of the content. This validates "
+                    "the current script pacing and narration approach."
+                ),
+                expected_improvement=(
+                    "Applying the same structural approach (hook style, segment length, "
+                    "narration pace) to future videos on similar topics is associated with "
+                    "maintaining the retention baseline observed here."
+                ),
+                evidence=[ev],
+                confidence_score=score,
+                handoff=handoff,
+            )
         )
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_ANALYTICS,
-            subsystem=SUBSYSTEM_RETENTION_TRENDS,
-            measure=METRIC_AVERAGE_VIEW_DURATION,
-            title="Strong retention — replicate script and narration approach",
-            explanation=(
-                f"Average view duration of {avd_value:.1f}s is above the "
-                f"{RETENTION_HIGH_THRESHOLD_S:.0f}s strong-signal threshold. "
-                "Viewers are watching most or all of the content. This validates "
-                "the current script pacing and narration approach."
-            ),
-            expected_improvement=(
-                "Applying the same structural approach (hook style, segment length, "
-                "narration pace) to future videos on similar topics is associated with "
-                "maintaining the retention baseline observed here."
-            ),
-            evidence=[ev],
-            confidence_score=score,
-            handoff=handoff,
-        ))
 
     return drafts
 
@@ -465,34 +470,34 @@ def generate_engagement_recommendations(
     )
 
     if engagement_rate < ENGAGEMENT_LOW_THRESHOLD:
-        score, _ = compute_confidence(
-            [ev], engagement_rate, ENGAGEMENT_LOW_THRESHOLD, "below"
+        score, _ = compute_confidence([ev], engagement_rate, ENGAGEMENT_LOW_THRESHOLD, "below")
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_ANALYTICS,
+                subsystem=SUBSYSTEM_ENGAGEMENT_TRENDS,
+                measure=METRIC_LIKES,
+                title="Low engagement rate — review content relevance and call to action",
+                explanation=(
+                    f"Engagement rate of {engagement_rate:.2%} is below the "
+                    f"{ENGAGEMENT_LOW_THRESHOLD:.0%} signal threshold. "
+                    "Viewers are watching but not interacting. This can indicate "
+                    "the content satisfies curiosity without creating enough value "
+                    "to prompt a like, or there is no clear call to action."
+                ),
+                expected_improvement=(
+                    "Adding a clear call to action in the final segment, addressing "
+                    "a more specific audience need, or improving content relevance "
+                    "to the stated title — content that more precisely addresses audience "
+                    "needs is historically associated with higher engagement rates."
+                ),
+                evidence=[ev],
+                confidence_score=score,
+                handoff=handoff,
+            )
         )
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_ANALYTICS,
-            subsystem=SUBSYSTEM_ENGAGEMENT_TRENDS,
-            measure=METRIC_LIKES,
-            title="Low engagement rate — review content relevance and call to action",
-            explanation=(
-                f"Engagement rate of {engagement_rate:.2%} is below the "
-                f"{ENGAGEMENT_LOW_THRESHOLD:.0%} signal threshold. "
-                "Viewers are watching but not interacting. This can indicate "
-                "the content satisfies curiosity without creating enough value "
-                "to prompt a like, or there is no clear call to action."
-            ),
-            expected_improvement=(
-                "Adding a clear call to action in the final segment, addressing "
-                "a more specific audience need, or improving content relevance "
-                "to the stated title — content that more precisely addresses audience "
-                "needs is historically associated with higher engagement rates."
-            ),
-            evidence=[ev],
-            confidence_score=score,
-            handoff=handoff,
-        ))
 
     return drafts
 
@@ -511,12 +516,8 @@ def generate_watch_time_recommendations(
     drafts: list[RecommendationDraft] = []
 
     views_value, _ = _get_lifetime_aggregate(conn, publication_id, METRIC_VIEWS)
-    wt_value, wt_snap_ids = _get_lifetime_aggregate(
-        conn, publication_id, METRIC_WATCH_TIME_SECONDS
-    )
-    avd_value, _ = _get_lifetime_aggregate(
-        conn, publication_id, METRIC_AVERAGE_VIEW_DURATION
-    )
+    wt_value, wt_snap_ids = _get_lifetime_aggregate(conn, publication_id, METRIC_WATCH_TIME_SECONDS)
+    avd_value, _ = _get_lifetime_aggregate(conn, publication_id, METRIC_AVERAGE_VIEW_DURATION)
 
     if views_value is None or wt_value is None or views_value == 0:
         return drafts
@@ -545,34 +546,34 @@ def generate_watch_time_recommendations(
     )
 
     if watch_ratio < 0.5:
-        score, _ = compute_confidence(
-            [ev], watch_ratio, 0.5, "below"
+        score, _ = compute_confidence([ev], watch_ratio, 0.5, "below")
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_ANALYTICS,
+                subsystem=SUBSYSTEM_WATCH_TIME_TRENDS,
+                measure=METRIC_WATCH_TIME_SECONDS,
+                title="Low total watch time relative to view count",
+                explanation=(
+                    f"Total watch time of {wt_value:.0f}s is {watch_ratio:.0%} of the "
+                    "expected amount based on view count and average view duration. "
+                    "This can indicate that aggregated metrics are inconsistent between "
+                    "providers, or that a large fraction of views come from impressions "
+                    "that do not translate to meaningful watch sessions."
+                ),
+                expected_improvement=(
+                    "Reviewing the analytics data quality, re-ingesting with the latest "
+                    "provider snapshot, and verifying the view-to-watch-time ratio matches "
+                    "platform reports can help identify whether this is a data quality "
+                    "issue or a genuine distribution problem."
+                ),
+                evidence=[ev],
+                confidence_score=score,
+                handoff=handoff,
+            )
         )
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_ANALYTICS,
-            subsystem=SUBSYSTEM_WATCH_TIME_TRENDS,
-            measure=METRIC_WATCH_TIME_SECONDS,
-            title="Low total watch time relative to view count",
-            explanation=(
-                f"Total watch time of {wt_value:.0f}s is {watch_ratio:.0%} of the "
-                "expected amount based on view count and average view duration. "
-                "This can indicate that aggregated metrics are inconsistent between "
-                "providers, or that a large fraction of views come from impressions "
-                "that do not translate to meaningful watch sessions."
-            ),
-            expected_improvement=(
-                "Reviewing the analytics data quality, re-ingesting with the latest "
-                "provider snapshot, and verifying the view-to-watch-time ratio matches "
-                "platform reports can help identify whether this is a data quality "
-                "issue or a genuine distribution problem."
-            ),
-            evidence=[ev],
-            confidence_score=score,
-            handoff=handoff,
-        ))
 
     return drafts
 
@@ -618,55 +619,59 @@ def generate_subscriber_recommendations(
 
     if net <= SUBSCRIBER_LOSS_THRESHOLD:
         score, _ = compute_confidence([ev], abs(net), 5.0, "above")
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_TOPICS,
-            subsystem=SUBSYSTEM_TOPIC_SELECTION,
-            measure=METRIC_SUBSCRIBERS_GAINED,
-            title="Net subscriber loss — review topic alignment with channel audience",
-            explanation=(
-                f"This publication resulted in a net subscriber change of {net:+.0f}. "
-                "A net subscriber loss suggests the content may not align with the "
-                "expectations of existing subscribers, or attracted viewers unlikely "
-                "to subscribe to the channel's core niche."
-            ),
-            expected_improvement=(
-                "Reviewing the topic selection criteria, tightening the niche focus, "
-                "and ensuring the video's audience fit score (Phase 3) is above "
-                "the channel threshold before production is associated with lower "
-                "subscriber churn in similar content."
-            ),
-            evidence=[ev],
-            confidence_score=score,
-            handoff=handoff,
-        ))
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_TOPICS,
+                subsystem=SUBSYSTEM_TOPIC_SELECTION,
+                measure=METRIC_SUBSCRIBERS_GAINED,
+                title="Net subscriber loss — review topic alignment with channel audience",
+                explanation=(
+                    f"This publication resulted in a net subscriber change of {net:+.0f}. "
+                    "A net subscriber loss suggests the content may not align with the "
+                    "expectations of existing subscribers, or attracted viewers unlikely "
+                    "to subscribe to the channel's core niche."
+                ),
+                expected_improvement=(
+                    "Reviewing the topic selection criteria, tightening the niche focus, "
+                    "and ensuring the video's audience fit score (Phase 3) is above "
+                    "the channel threshold before production is associated with lower "
+                    "subscriber churn in similar content."
+                ),
+                evidence=[ev],
+                confidence_score=score,
+                handoff=handoff,
+            )
+        )
 
     elif net > 10:
         score, _ = compute_confidence([ev], net, 10.0, "above")
-        drafts.append(_make_draft(
-            learning_run_id=learning_run_id,
-            topic_id=topic_id,
-            publication_id=publication_id,
-            domain=DOMAIN_TOPICS,
-            subsystem=SUBSYSTEM_TOPIC_SELECTION,
-            measure=METRIC_SUBSCRIBERS_GAINED,
-            title="Strong subscriber growth — replicate topic and content approach",
-            explanation=(
-                f"This publication resulted in a net subscriber gain of {net:+.0f}. "
-                "This is a strong indicator that the topic resonated with the "
-                "target audience and attracted new subscribers."
-            ),
-            expected_improvement=(
-                "Identifying and replicating the topic angle, research depth, and "
-                "script approach of this video in future content on related topics "
-                "is likely to maintain subscriber growth."
-            ),
-            evidence=[ev],
-            confidence_score=score,
-            handoff=handoff,
-        ))
+        drafts.append(
+            _make_draft(
+                learning_run_id=learning_run_id,
+                topic_id=topic_id,
+                publication_id=publication_id,
+                domain=DOMAIN_TOPICS,
+                subsystem=SUBSYSTEM_TOPIC_SELECTION,
+                measure=METRIC_SUBSCRIBERS_GAINED,
+                title="Strong subscriber growth — replicate topic and content approach",
+                explanation=(
+                    f"This publication resulted in a net subscriber gain of {net:+.0f}. "
+                    "This is a strong indicator that the topic resonated with the "
+                    "target audience and attracted new subscribers."
+                ),
+                expected_improvement=(
+                    "Identifying and replicating the topic angle, research depth, and "
+                    "script approach of this video in future content on related topics "
+                    "is likely to maintain subscriber growth."
+                ),
+                evidence=[ev],
+                confidence_score=score,
+                handoff=handoff,
+            )
+        )
 
     return drafts
 
@@ -684,9 +689,7 @@ def generate_shares_recommendations(
     topic_id = handoff.topic_id
     drafts: list[RecommendationDraft] = []
 
-    shares_value, snap_ids = _get_lifetime_aggregate(
-        conn, publication_id, METRIC_SHARES
-    )
+    shares_value, snap_ids = _get_lifetime_aggregate(conn, publication_id, METRIC_SHARES)
     views_value, _ = _get_lifetime_aggregate(conn, publication_id, METRIC_VIEWS)
 
     if shares_value is None or views_value is None or views_value == 0:
@@ -713,28 +716,30 @@ def generate_shares_recommendations(
     )
 
     score, _ = compute_confidence([ev], share_rate, 0.005, "above")
-    drafts.append(_make_draft(
-        learning_run_id=learning_run_id,
-        topic_id=topic_id,
-        publication_id=publication_id,
-        domain=DOMAIN_TOPICS,
-        subsystem=SUBSYSTEM_TOPIC_SELECTION,
-        measure=METRIC_SHARES,
-        title="High share rate — content has strong viral distribution potential",
-        explanation=(
-            f"Share rate of {share_rate:.2%} indicates this content is being "
-            "actively shared by viewers. Shareable content often addresses a universal "
-            "question or delivers a surprising/actionable insight."
-        ),
-        expected_improvement=(
-            "Identifying what made this content shareable (topic angle, specificity, "
-            "actionability) and applying those attributes to future topic selection "
-            "is historically associated with higher organic distribution."
-        ),
-        evidence=[ev],
-        confidence_score=score,
-        handoff=handoff,
-    ))
+    drafts.append(
+        _make_draft(
+            learning_run_id=learning_run_id,
+            topic_id=topic_id,
+            publication_id=publication_id,
+            domain=DOMAIN_TOPICS,
+            subsystem=SUBSYSTEM_TOPIC_SELECTION,
+            measure=METRIC_SHARES,
+            title="High share rate — content has strong viral distribution potential",
+            explanation=(
+                f"Share rate of {share_rate:.2%} indicates this content is being "
+                "actively shared by viewers. Shareable content often addresses a universal "
+                "question or delivers a surprising/actionable insight."
+            ),
+            expected_improvement=(
+                "Identifying what made this content shareable (topic angle, specificity, "
+                "actionability) and applying those attributes to future topic selection "
+                "is historically associated with higher organic distribution."
+            ),
+            evidence=[ev],
+            confidence_score=score,
+            handoff=handoff,
+        )
+    )
 
     return drafts
 
@@ -765,29 +770,33 @@ def generate_all_recommendations(
     generator_results: list[GeneratorResult] = []
 
     named_generators = [
-        (GENERATOR_CTR,         generate_ctr_recommendations),
-        (GENERATOR_RETENTION,   generate_retention_recommendations),
-        (GENERATOR_ENGAGEMENT,  generate_engagement_recommendations),
-        (GENERATOR_WATCH_TIME,  generate_watch_time_recommendations),
+        (GENERATOR_CTR, generate_ctr_recommendations),
+        (GENERATOR_RETENTION, generate_retention_recommendations),
+        (GENERATOR_ENGAGEMENT, generate_engagement_recommendations),
+        (GENERATOR_WATCH_TIME, generate_watch_time_recommendations),
         (GENERATOR_SUBSCRIBERS, generate_subscriber_recommendations),
-        (GENERATOR_SHARES,      generate_shares_recommendations),
+        (GENERATOR_SHARES, generate_shares_recommendations),
     ]
 
     for name, gen in named_generators:
         try:
             produced = gen(conn, handoff, learning_run_id)
             drafts.extend(produced)
-            generator_results.append(GeneratorResult(
-                generator_name=name,
-                status=GENERATOR_STATUS_SUCCEEDED,
-                recommendation_count=len(produced),
-            ))
+            generator_results.append(
+                GeneratorResult(
+                    generator_name=name,
+                    status=GENERATOR_STATUS_SUCCEEDED,
+                    recommendation_count=len(produced),
+                )
+            )
         except Exception as exc:
-            generator_results.append(GeneratorResult(
-                generator_name=name,
-                status=GENERATOR_STATUS_FAILED,
-                recommendation_count=0,
-                error_message=str(exc),
-            ))
+            generator_results.append(
+                GeneratorResult(
+                    generator_name=name,
+                    status=GENERATOR_STATUS_FAILED,
+                    recommendation_count=0,
+                    error_message=str(exc),
+                )
+            )
 
     return AllGeneratorResults(drafts=drafts, generator_results=generator_results)

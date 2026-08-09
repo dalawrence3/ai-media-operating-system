@@ -81,6 +81,7 @@ class TestPublishingPlan:
 
     def test_frozen_model_immutable(self):
         from pydantic import ValidationError
+
         plan = PublishingPlan(**_plan_row())
         with pytest.raises((TypeError, ValidationError)):
             plan.title = "changed"  # type: ignore[misc]

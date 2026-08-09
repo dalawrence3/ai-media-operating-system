@@ -25,8 +25,7 @@ class Config:
 
         # Dev auth gate (only honoured when ace_env == "development").
         self.dev_auth_enabled: bool = (
-            os.environ.get("ACE_DEV_AUTH", "enabled") == "enabled"
-            and self.ace_env == "development"
+            os.environ.get("ACE_DEV_AUTH", "enabled") == "enabled" and self.ace_env == "development"
         )
 
         # Phase 15 — PostgreSQL production database URL.
@@ -57,21 +56,13 @@ class Config:
         raw_bucket = os.environ.get("ACE_OBJECT_STORAGE_BUCKET", "")
         self.object_storage_bucket: str = raw_bucket or "ace-artifacts"
         self.object_storage_endpoint: str = os.environ.get("ACE_OBJECT_STORAGE_ENDPOINT", "")
-        self.object_storage_access_key: str = os.environ.get(
-            "ACE_OBJECT_STORAGE_ACCESS_KEY", ""
-        )
-        self.object_storage_secret_key: str = os.environ.get(
-            "ACE_OBJECT_STORAGE_SECRET_KEY", ""
-        )
-        self.object_storage_region: str = os.environ.get(
-            "ACE_OBJECT_STORAGE_REGION", "us-east-1"
-        )
+        self.object_storage_access_key: str = os.environ.get("ACE_OBJECT_STORAGE_ACCESS_KEY", "")
+        self.object_storage_secret_key: str = os.environ.get("ACE_OBJECT_STORAGE_SECRET_KEY", "")
+        self.object_storage_region: str = os.environ.get("ACE_OBJECT_STORAGE_REGION", "us-east-1")
 
         # Phase 15 — CORS origins (comma-separated, supplements hard-coded dev origins).
         self.cors_origins: list[str] = [
-            o.strip()
-            for o in os.environ.get("ACE_CORS_ORIGINS", "").split(",")
-            if o.strip()
+            o.strip() for o in os.environ.get("ACE_CORS_ORIGINS", "").split(",") if o.strip()
         ]
 
         # AI / LLM settings (Phase 2).
@@ -95,9 +86,11 @@ class Config:
         # The API key is never stored in the DB or logs.
         # tts_live_enabled must be explicitly set to true before any live call is made.
         self.elevenlabs_api_key: str = os.environ.get("ACE_ELEVENLABS_API_KEY", "")
-        self.tts_live_enabled: bool = os.environ.get(
-            "ACE_TTS_LIVE_ENABLED", ""
-        ).lower() in {"1", "true", "yes"}
+        self.tts_live_enabled: bool = os.environ.get("ACE_TTS_LIVE_ENABLED", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
 
         # Publishing safety gate (Phase 9).
         # Must be explicitly set to true before any live provider upload is made.

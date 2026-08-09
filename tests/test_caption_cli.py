@@ -80,8 +80,7 @@ class TestCaptionsGenerate:
         _seed_approved_narration(tmp_path)
         result = runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         assert result.exit_code == 0, result.output
 
@@ -89,8 +88,7 @@ class TestCaptionsGenerate:
         _seed_approved_narration(tmp_path)
         result = runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         assert "status=completed" in result.output
         assert "SRT" in result.output
@@ -100,8 +98,14 @@ class TestCaptionsGenerate:
     def test_generate_unknown_plan_exits_one(self, tmp_path: Path) -> None:
         result = runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "9999",
-             "--artifacts-path", str(tmp_path / "arts")],
+            [
+                "captions",
+                "generate",
+                "--plan-id",
+                "9999",
+                "--artifacts-path",
+                str(tmp_path / "arts"),
+            ],
         )
         assert result.exit_code == 1
 
@@ -117,8 +121,7 @@ class TestCaptionsRuns:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         result = runner.invoke(app, ["captions", "runs", "1"])
         assert "status=completed" in result.output
@@ -129,8 +132,7 @@ class TestCaptionsApprove:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         result = runner.invoke(app, ["captions", "approve", "1"])
         assert result.exit_code == 0
@@ -146,8 +148,7 @@ class TestCaptionsRejectRun:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         result = runner.invoke(app, ["captions", "reject-run", "1", "--reason-code", "timing"])
         assert result.exit_code == 0
@@ -166,8 +167,7 @@ class TestCaptionsRejectCue:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         conn = open_db(tmp_path / "test.db")
         cues = get_caption_cues(conn, run_id=1)
@@ -175,8 +175,7 @@ class TestCaptionsRejectCue:
         assert cues, "No cues to reject"
         result = runner.invoke(
             app,
-            ["captions", "reject-cue", "1", str(cues[0].id),
-             "--reason-code", "timing"],
+            ["captions", "reject-cue", "1", str(cues[0].id), "--reason-code", "timing"],
         )
         assert result.exit_code == 0
         assert "cue_rejected" in result.output or "rejection recorded" in result.output
@@ -187,8 +186,7 @@ class TestCaptionsEvents:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         result = runner.invoke(app, ["captions", "events", "1"])
         assert result.exit_code == 0
@@ -198,8 +196,7 @@ class TestCaptionsEvents:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         runner.invoke(app, ["captions", "approve", "1"])
         result = runner.invoke(app, ["captions", "events", "1"])
@@ -211,8 +208,15 @@ class TestCaptionsGenerateDryRun:
         _seed_approved_narration(tmp_path)
         result = runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts"), "--dry-run"],
+            [
+                "captions",
+                "generate",
+                "--plan-id",
+                "1",
+                "--artifacts-path",
+                str(tmp_path / "arts"),
+                "--dry-run",
+            ],
         )
         assert result.exit_code == 0, result.output
 
@@ -221,8 +225,7 @@ class TestCaptionsGenerateDryRun:
         arts = tmp_path / "arts"
         result = runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(arts), "--dry-run"],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(arts), "--dry-run"],
         )
         assert "dry-run" in result.output
         assert "cues=" in result.output
@@ -233,8 +236,15 @@ class TestCaptionsGenerateDryRun:
     def test_dry_run_unknown_plan_exits_one(self, tmp_path: Path) -> None:
         result = runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "9999",
-             "--artifacts-path", str(tmp_path / "arts"), "--dry-run"],
+            [
+                "captions",
+                "generate",
+                "--plan-id",
+                "9999",
+                "--artifacts-path",
+                str(tmp_path / "arts"),
+                "--dry-run",
+            ],
         )
         assert result.exit_code == 1
 
@@ -245,8 +255,15 @@ class TestCaptionsGenerateDryRun:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts"), "--dry-run"],
+            [
+                "captions",
+                "generate",
+                "--plan-id",
+                "1",
+                "--artifacts-path",
+                str(tmp_path / "arts"),
+                "--dry-run",
+            ],
         )
         conn = open_db(tmp_path / "test.db")
         runs = list_caption_runs_by_plan(conn, 1)
@@ -259,8 +276,7 @@ class TestCaptionsShow:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         result = runner.invoke(app, ["captions", "show", "1"])
         assert result.exit_code == 0, result.output
@@ -269,8 +285,7 @@ class TestCaptionsShow:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         result = runner.invoke(app, ["captions", "show", "1"])
         assert "status" in result.output
@@ -283,8 +298,7 @@ class TestCaptionsShow:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         result = runner.invoke(app, ["captions", "show", "1"])
         # Cue timeline header should appear
@@ -302,8 +316,7 @@ class TestCaptionsExport:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         result = runner.invoke(
             app,
@@ -315,8 +328,7 @@ class TestCaptionsExport:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         arts = tmp_path / "arts"
         result = runner.invoke(
@@ -334,8 +346,7 @@ class TestCaptionsExport:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         arts = tmp_path / "arts2"
         result = runner.invoke(
@@ -350,13 +361,19 @@ class TestCaptionsExport:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         result = runner.invoke(
             app,
-            ["captions", "export", "1", "--artifacts-path", str(tmp_path / "arts"),
-             "--format", "mp4"],
+            [
+                "captions",
+                "export",
+                "1",
+                "--artifacts-path",
+                str(tmp_path / "arts"),
+                "--format",
+                "mp4",
+            ],
         )
         assert result.exit_code == 1
 
@@ -367,8 +384,7 @@ class TestCaptionsExport:
         _seed_approved_narration(tmp_path)
         runner.invoke(
             app,
-            ["captions", "generate", "--plan-id", "1",
-             "--artifacts-path", str(tmp_path / "arts")],
+            ["captions", "generate", "--plan-id", "1", "--artifacts-path", str(tmp_path / "arts")],
         )
         arts = tmp_path / "arts"
         runner.invoke(

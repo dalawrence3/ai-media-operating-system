@@ -30,7 +30,8 @@ def _opp(channel_id: int = 1) -> Opportunity:
         channel_id=channel_id,
         raw_topic="best index funds 2026",
         normalized_topic="best index fund 2026",
-        current_lifecycle_state=LifecycleState.new, discovery_run_id=1,
+        current_lifecycle_state=LifecycleState.new,
+        discovery_run_id=1,
     )
 
 
@@ -55,7 +56,9 @@ def _ev(
         observation_id=obs_id,
         evidence_type=ev_type,
         evidence_value=value,
-        evidence_text=text, source_label="test", opportunity_id=1,
+        evidence_text=text,
+        source_label="test",
+        opportunity_id=1,
     )
 
 
@@ -164,7 +167,9 @@ def test_hash_changes_with_different_topic() -> None:
     ctx1 = _ctx()
     ctx2 = FactorContext(
         opportunity=Opportunity(
-            id=42, channel_id=1, raw_topic="different topic",
+            id=42,
+            channel_id=1,
+            raw_topic="different topic",
             normalized_topic="different topic",
             current_lifecycle_state=LifecycleState.new,
             discovery_run_id=1,

@@ -37,14 +37,20 @@ class TestSchemaVersion:
     def test_learning_runs_columns(self):
         with tempfile.TemporaryDirectory() as d:
             conn = open_db(pathlib.Path(d) / "test.db")
-            cols = {
-                r[1]
-                for r in conn.execute("PRAGMA table_info(learning_runs)").fetchall()
-            }
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(learning_runs)").fetchall()}
             required = {
-                "id", "topic_id", "publication_id", "publication_count",
-                "recommendation_count", "status", "engine_version",
-                "schema_version", "input_hash", "error", "created_at", "completed_at",
+                "id",
+                "topic_id",
+                "publication_id",
+                "publication_count",
+                "recommendation_count",
+                "status",
+                "engine_version",
+                "schema_version",
+                "input_hash",
+                "error",
+                "created_at",
+                "completed_at",
             }
             assert required <= cols
 
@@ -53,18 +59,33 @@ class TestSchemaVersion:
             conn = open_db(pathlib.Path(d) / "test.db")
             cols = {
                 r[1]
-                for r in conn.execute(
-                    "PRAGMA table_info(optimization_recommendations)"
-                ).fetchall()
+                for r in conn.execute("PRAGMA table_info(optimization_recommendations)").fetchall()
             }
             required = {
-                "id", "learning_run_id", "topic_id", "publication_id",
-                "domain", "subsystem", "measure",
-                "title", "explanation", "expected_improvement",
-                "evidence_json", "confidence", "confidence_score",
-                "affected_subsystem", "subsystem_entity_type", "subsystem_entity_id",
-                "experiment_id", "engine_version", "schema_version", "input_hash",
-                "status", "superseded_at", "superseded_by_id", "created_at",
+                "id",
+                "learning_run_id",
+                "topic_id",
+                "publication_id",
+                "domain",
+                "subsystem",
+                "measure",
+                "title",
+                "explanation",
+                "expected_improvement",
+                "evidence_json",
+                "confidence",
+                "confidence_score",
+                "affected_subsystem",
+                "subsystem_entity_type",
+                "subsystem_entity_id",
+                "experiment_id",
+                "engine_version",
+                "schema_version",
+                "input_hash",
+                "status",
+                "superseded_at",
+                "superseded_by_id",
+                "created_at",
             }
             assert required <= cols
 
@@ -73,13 +94,18 @@ class TestSchemaVersion:
             conn = open_db(pathlib.Path(d) / "test.db")
             cols = {
                 r[1]
-                for r in conn.execute(
-                    "PRAGMA table_info(recommendation_review_events)"
-                ).fetchall()
+                for r in conn.execute("PRAGMA table_info(recommendation_review_events)").fetchall()
             }
             required = {
-                "id", "recommendation_id", "topic_id", "event_type",
-                "reviewer", "notes", "expected_outcome", "input_hash", "created_at",
+                "id",
+                "recommendation_id",
+                "topic_id",
+                "event_type",
+                "reviewer",
+                "notes",
+                "expected_outcome",
+                "input_hash",
+                "created_at",
             }
             assert required <= cols
 
@@ -88,6 +114,7 @@ class TestMigrationFrom16:
     def _build_v16_db(self, path: pathlib.Path) -> sqlite3.Connection:
         """Create a v16 database by patching SCHEMA_VERSION temporarily."""
         import app.core.database as db_mod
+
         original = db_mod.SCHEMA_VERSION
         db_mod.SCHEMA_VERSION = 16
         try:

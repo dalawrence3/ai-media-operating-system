@@ -129,6 +129,7 @@ class TestDefaultHandlers:
 class TestDispatchWithDefaults:
     def test_start_pipeline_dispatches(self, conn, workspace, channel):
         from app.application.composition import build_application_service, reset_composition
+
         reset_composition()
         # Inject allow-all hook so non-system actor can dispatch in tests.
         svc = build_application_service(conn, auth_hook=allow_all_auth_hook)

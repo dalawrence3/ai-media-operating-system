@@ -29,9 +29,7 @@ def record_health(
     return repo.create_health_record(conn, draft)
 
 
-def get_health(
-    conn: Any, entity_type: str, entity_id: str
-) -> HealthRecord | None:
+def get_health(conn: Any, entity_type: str, entity_id: str) -> HealthRecord | None:
     return repo.get_latest_health_record(conn, entity_type, entity_id)
 
 

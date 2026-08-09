@@ -152,8 +152,8 @@ _CAUSAL_PATTERNS = re.compile(
 
 def _emit_all_drafts(db):
     """Emit all possible recommendation text by exercising all generators."""
-    _insert_aggregate(db, 1, "ctr", 0.01, snapshot_ids=[1, 2, 3])       # low CTR × 2
-    _insert_aggregate(db, 1, "ctr", 0.06, snapshot_ids=[1, 2, 3])        # duplicate, last wins
+    _insert_aggregate(db, 1, "ctr", 0.01, snapshot_ids=[1, 2, 3])  # low CTR × 2
+    _insert_aggregate(db, 1, "ctr", 0.06, snapshot_ids=[1, 2, 3])  # duplicate, last wins
     # Re-insert to get both low and high CTR exercised in separate calls
     return _make_handoff()
 
@@ -172,18 +172,14 @@ class TestCausalLanguageEnforcement:
         drafts = generate_ctr_recommendations(db, _make_handoff(), learning_run_id=1)
         for field, text in self._collect_text(drafts):
             m = _CAUSAL_PATTERNS.search(text)
-            assert m is None, (
-                f"Causal term {m.group()!r} in observational CTR {field!r}: {text!r}"
-            )
+            assert m is None, f"Causal term {m.group()!r} in observational CTR {field!r}: {text!r}"
 
     def test_high_ctr_no_causal_wording(self, db):
         _insert_aggregate(db, 1, "ctr", 0.06)
         drafts = generate_ctr_recommendations(db, _make_handoff(), learning_run_id=1)
         for field, text in self._collect_text(drafts):
             m = _CAUSAL_PATTERNS.search(text)
-            assert m is None, (
-                f"Causal term {m.group()!r} in observational CTR {field!r}: {text!r}"
-            )
+            assert m is None, f"Causal term {m.group()!r} in observational CTR {field!r}: {text!r}"
 
     def test_all_generators_no_causal_wording(self, db):
         _insert_aggregate(db, 1, "ctr", 0.01)
@@ -239,6 +235,7 @@ class TestEvidenceClassification:
 class TestRecommendationStrength:
     def _make_ev(self, snapshot_ids: list[int]):
         from app.learning.models import EvidenceItem
+
         return EvidenceItem(
             metric_name="ctr",
             observed_value=0.01,
@@ -253,6 +250,7 @@ class TestRecommendationStrength:
         ev = self._make_ev([1])
         # With 1 unique snapshot, volume is low, consistency 0 → score < 0.4
         from app.learning.scoring import compute_confidence
+
         score, _ = compute_confidence([ev], 0.01, 0.02, "below")
         strength = _classify_strength(score, [ev])
         assert strength == STRENGTH_EXPLORATORY
@@ -260,6 +258,7 @@ class TestRecommendationStrength:
     def test_sufficient_snapshots_and_effect_can_be_actionable(self):
         ev = self._make_ev(list(range(5)))  # 5 unique snapshots
         from app.learning.scoring import compute_confidence
+
         # CTR well below threshold → large effect
         score, _ = compute_confidence([ev], 0.001, 0.02, "below")
         strength = _classify_strength(score, [ev])

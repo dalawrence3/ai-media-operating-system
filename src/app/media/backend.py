@@ -202,26 +202,34 @@ class FFmpegRenderBackend:
             # Generate silent audio matching total duration
             duration_s = draft.total_duration_ms / 1000.0
             cmd = [
-                self._ffmpeg, "-y",
-                "-f", "lavfi",
-                "-t", f"{duration_s:.3f}",
-                "-i", "anullsrc=r=44100:cl=stereo",
-                "-c:a", "pcm_s16le",
+                self._ffmpeg,
+                "-y",
+                "-f",
+                "lavfi",
+                "-t",
+                f"{duration_s:.3f}",
+                "-i",
+                "anullsrc=r=44100:cl=stereo",
+                "-c:a",
+                "pcm_s16le",
                 str(audio_out),
             ]
             self._run(cmd)
             return audio_out
 
         concat_list = tmp_dir / "audio_concat.txt"
-        concat_list.write_text(
-            "\n".join(f"file '{p}'" for p in audio_paths), encoding="utf-8"
-        )
+        concat_list.write_text("\n".join(f"file '{p}'" for p in audio_paths), encoding="utf-8")
         cmd = [
-            self._ffmpeg, "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(concat_list),
-            "-c:a", "pcm_s16le",
+            self._ffmpeg,
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_list),
+            "-c:a",
+            "pcm_s16le",
             str(audio_out),
         ]
         self._run(cmd)
@@ -251,17 +259,32 @@ class FFmpegRenderBackend:
         concat_list.write_text("\n".join(lines), encoding="utf-8")
 
         cmd = [
-            self._ffmpeg, "-y",
-            "-f", "concat", "-safe", "0", "-i", str(concat_list),
-            "-i", str(audio_path),
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-c:v", video_codec,
-            "-crf", str(crf),
-            "-preset", preset,
-            "-c:a", audio_codec,
-            "-b:a", audio_bitrate,
-            "-movflags", "+faststart",
+            self._ffmpeg,
+            "-y",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(concat_list),
+            "-i",
+            str(audio_path),
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-c:v",
+            video_codec,
+            "-crf",
+            str(crf),
+            "-preset",
+            preset,
+            "-c:a",
+            audio_codec,
+            "-b:a",
+            audio_bitrate,
+            "-movflags",
+            "+faststart",
             "-shortest",
             str(output_path),
         ]
@@ -285,12 +308,18 @@ class FFmpegRenderBackend:
             f"setsar=1,fps={fps},format=yuv420p"
         )
         return [
-            self._ffmpeg, "-y",
-            "-loop", "1",
-            "-t", f"{duration_s:.3f}",
-            "-i", str(asset_path),
-            "-vf", vf,
-            "-c:v", video_codec,
+            self._ffmpeg,
+            "-y",
+            "-loop",
+            "1",
+            "-t",
+            f"{duration_s:.3f}",
+            "-i",
+            str(asset_path),
+            "-vf",
+            vf,
+            "-c:v",
+            video_codec,
             "-an",
             str(output),
         ]
@@ -315,11 +344,16 @@ class FFmpegRenderBackend:
             f"format=yuv420p"
         )
         return [
-            self._ffmpeg, "-y",
-            "-f", "lavfi",
-            "-t", f"{duration_s:.3f}",
-            "-i", vf,
-            "-c:v", video_codec,
+            self._ffmpeg,
+            "-y",
+            "-f",
+            "lavfi",
+            "-t",
+            f"{duration_s:.3f}",
+            "-i",
+            vf,
+            "-c:v",
+            video_codec,
             "-an",
             str(output),
         ]

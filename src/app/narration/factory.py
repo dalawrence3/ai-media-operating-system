@@ -73,9 +73,7 @@ class DefaultProviderLoader:
 
             provider = self._factory.create(provider_name)
             return provider, ELEVENLABS_METADATA
-        raise ProviderFactoryError(
-            f"No loader entry for provider {provider_name!r}"
-        )
+        raise ProviderFactoryError(f"No loader entry for provider {provider_name!r}")
 
 
 class RegisteringProviderLoader:

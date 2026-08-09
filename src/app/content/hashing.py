@@ -85,9 +85,7 @@ def compute_evidence_hash(claims: list[EvidenceClaim]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def compute_prompt_hash(
-    name: str, version: str, system: str, user_template: str
-) -> str:
+def compute_prompt_hash(name: str, version: str, system: str, user_template: str) -> str:
     """SHA-256 of the canonical prompt identity (name, version, system, user_template)."""
     payload = {
         "name": name,

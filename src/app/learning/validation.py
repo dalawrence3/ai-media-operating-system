@@ -68,9 +68,7 @@ def validate_confidence_level(confidence: str) -> None:
 
 def validate_confidence_score(score: float) -> None:
     if not (0.0 <= score <= 1.0):
-        raise InvalidConfidenceScoreError(
-            f"confidence_score must be in [0.0, 1.0]; got {score}"
-        )
+        raise InvalidConfidenceScoreError(f"confidence_score must be in [0.0, 1.0]; got {score}")
 
 
 def validate_recommendation_status(status: str) -> None:
@@ -108,8 +106,6 @@ def validate_review_event(
 ) -> None:
     validate_review_event_type(event_type)
     if event_type in {"accepted", "rejected"} and not reviewer.strip():
-        raise ReviewerRequiredError(
-            f"A reviewer name is required for {event_type!r} events."
-        )
+        raise ReviewerRequiredError(f"A reviewer name is required for {event_type!r} events.")
     if event_type == "rejected" and not notes.strip():
         raise NotesRequiredError("Notes are required for 'rejected' events.")

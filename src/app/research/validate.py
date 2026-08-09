@@ -29,30 +29,30 @@ _BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = t
     ipaddress.ip_network(n)
     for n in [
         # IPv4
-        "0.0.0.0/8",          # This network (RFC 1122)
-        "10.0.0.0/8",         # RFC 1918
-        "100.64.0.0/10",      # Shared address space (RFC 6598)
-        "127.0.0.0/8",        # Loopback
-        "169.254.0.0/16",     # Link-local (RFC 3927)
-        "172.16.0.0/12",      # RFC 1918
-        "192.0.0.0/24",       # IETF protocol assignments (RFC 5737)
-        "192.0.2.0/24",       # Documentation TEST-NET-1 (RFC 5737)
-        "192.168.0.0/16",     # RFC 1918
-        "198.18.0.0/15",      # Benchmarking (RFC 2544)
-        "198.51.100.0/24",    # Documentation TEST-NET-2 (RFC 5737)
-        "203.0.113.0/24",     # Documentation TEST-NET-3 (RFC 5737)
-        "224.0.0.0/4",        # Multicast (RFC 3171)
-        "233.252.0.0/24",     # Documentation multicast (RFC 5771)
-        "240.0.0.0/4",        # Reserved (RFC 1112)
-        "255.255.255.255/32", # Broadcast
+        "0.0.0.0/8",  # This network (RFC 1122)
+        "10.0.0.0/8",  # RFC 1918
+        "100.64.0.0/10",  # Shared address space (RFC 6598)
+        "127.0.0.0/8",  # Loopback
+        "169.254.0.0/16",  # Link-local (RFC 3927)
+        "172.16.0.0/12",  # RFC 1918
+        "192.0.0.0/24",  # IETF protocol assignments (RFC 5737)
+        "192.0.2.0/24",  # Documentation TEST-NET-1 (RFC 5737)
+        "192.168.0.0/16",  # RFC 1918
+        "198.18.0.0/15",  # Benchmarking (RFC 2544)
+        "198.51.100.0/24",  # Documentation TEST-NET-2 (RFC 5737)
+        "203.0.113.0/24",  # Documentation TEST-NET-3 (RFC 5737)
+        "224.0.0.0/4",  # Multicast (RFC 3171)
+        "233.252.0.0/24",  # Documentation multicast (RFC 5771)
+        "240.0.0.0/4",  # Reserved (RFC 1112)
+        "255.255.255.255/32",  # Broadcast
         # IPv6
-        "::1/128",            # Loopback
-        "::/128",             # Unspecified
-        "fc00::/7",           # Unique local (RFC 4193)
-        "fe80::/10",          # Link-local (RFC 4291)
-        "ff00::/8",           # Multicast (RFC 4291)
-        "2001:db8::/32",      # Documentation (RFC 3849)
-        "100::/64",           # Discard prefix (RFC 6666)
+        "::1/128",  # Loopback
+        "::/128",  # Unspecified
+        "fc00::/7",  # Unique local (RFC 4193)
+        "fe80::/10",  # Link-local (RFC 4291)
+        "ff00::/8",  # Multicast (RFC 4291)
+        "2001:db8::/32",  # Documentation (RFC 3849)
+        "100::/64",  # Discard prefix (RFC 6666)
     ]
 )
 
@@ -92,9 +92,7 @@ def validate_url(url: str) -> None:
         raise SecurityError("URL has no hostname.")
 
     if parsed.username is not None or parsed.password is not None:
-        raise SecurityError(
-            "URL contains userinfo (username or password), which is not allowed."
-        )
+        raise SecurityError("URL contains userinfo (username or password), which is not allowed.")
 
     host = parsed.hostname
     port = parsed.port or (443 if scheme == "https" else 80)
@@ -144,9 +142,7 @@ def validate_file_path(path_str: str) -> Path:
     suffix = resolved.suffix.lower()
     if suffix not in ALLOWED_FILE_EXTENSIONS:
         allowed = ", ".join(sorted(ALLOWED_FILE_EXTENSIONS))
-        raise ValueError(
-            f"Unsupported file extension {suffix!r}. Allowed: {allowed}"
-        )
+        raise ValueError(f"Unsupported file extension {suffix!r}. Allowed: {allowed}")
 
     if st.st_size > FILE_MAX_BYTES:
         mb = st.st_size / (1024 * 1024)

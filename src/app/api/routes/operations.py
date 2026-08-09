@@ -42,9 +42,7 @@ def retry_operation(
 ) -> dict[str, Any]:
     try:
         return svc.retry_operation(
-            RetryOperationCommand(
-                workspace_id=workspace_id, operation_id=operation_id, actor=actor
-            )
+            RetryOperationCommand(workspace_id=workspace_id, operation_id=operation_id, actor=actor)
         )
     except PermissionError:
         raise

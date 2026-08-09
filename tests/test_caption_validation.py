@@ -88,6 +88,7 @@ class TestValidateCaptionCues:
 
     def test_end_within_tolerance_passes(self):
         from app.captions.constants import CAPTION_TIMING_ROUNDING_TOLERANCE_MS
+
         cue = _make_cue(0, 0, start_ms=0, end_ms=5000 + CAPTION_TIMING_ROUNDING_TOLERANCE_MS)
         result = validate_caption_cues(cues=[cue], **_base_maps())
         assert result.ok, result.errors
@@ -166,9 +167,17 @@ class TestValidateCaptionCues:
 
     def test_two_segments_multi_cue_valid(self):
         cue1 = _make_cue(0, 0, segment_id=1, asset_id=10, text="Hello", start_ms=0, end_ms=1500)
-        cue2 = _make_cue(1, 0, segment_id=2, asset_id=20,
-                         text_hash="c" * 64, audio_sha256="d" * 64,
-                         text="world", start_ms=0, end_ms=2000)
+        cue2 = _make_cue(
+            1,
+            0,
+            segment_id=2,
+            asset_id=20,
+            text_hash="c" * 64,
+            audio_sha256="d" * 64,
+            text="world",
+            start_ms=0,
+            end_ms=2000,
+        )
         maps = {
             "segment_id_to_narration_text": {1: "Hello", 2: "world"},
             "segment_id_to_duration_ms": {1: 1500, 2: 2000},

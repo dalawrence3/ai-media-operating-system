@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 # ── Pre-persistence drafts (mutable) ─────────────────────────────────────────
 
+
 @dataclass
 class PublishingMetadataDraft:
     """All metadata fields for a publishing plan before persistence."""
@@ -38,11 +39,12 @@ class PublishingScheduleDraft:
     """Scheduling intent for a publishing plan."""
 
     schedule_type: str = "immediate"
-    scheduled_at: str | None = None   # ISO 8601 UTC string
-    timezone: str | None = None       # IANA tz name, e.g. "America/New_York"
+    scheduled_at: str | None = None  # ISO 8601 UTC string
+    timezone: str | None = None  # IANA tz name, e.g. "America/New_York"
 
 
 # ── DB row projections (frozen Pydantic) ──────────────────────────────────────
+
 
 class PublishingPlan(BaseModel):
     """Frozen projection of a publishing_plans row."""

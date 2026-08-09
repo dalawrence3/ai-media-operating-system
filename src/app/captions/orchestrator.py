@@ -132,6 +132,7 @@ def generate_captions(
         )
     if existing is not None and existing.status == "running":
         from app.captions.errors import IllegalCaptionTransitionError
+
         raise IllegalCaptionTransitionError(
             f"Caption run {existing.id} with the same input_hash is already running. "
             "Wait for it to complete or fail before retrying."
@@ -219,7 +220,8 @@ def generate_captions(
 
         total_duration_ms = sum(s.duration_ms for s in handoff.segments)
         complete_caption_run(
-            conn, run.id,
+            conn,
+            run.id,
             total_cue_count=len(all_cues),
             total_duration_ms=total_duration_ms,
             srt_path=relative_artifact_path(arts, srt_dest),
@@ -248,9 +250,7 @@ def generate_captions(
 def _validate_handoff(handoff: ApprovedNarrationRun, arts: Path) -> None:
     """Raise a descriptive error for any handoff integrity violation."""
     if not handoff.segments:
-        raise MissingNarrationSegmentAssetError(
-            f"Narration run {handoff.run_id} has no segments"
-        )
+        raise MissingNarrationSegmentAssetError(f"Narration run {handoff.run_id} has no segments")
 
     seen_segment_ids: set[int] = set()
     seen_asset_ids: set[int] = set()

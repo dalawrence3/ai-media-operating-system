@@ -25,8 +25,8 @@ class ResolvedAsset:
     asset_index: int
     category: str
     priority: str
-    local_path: str | None       # None if not yet downloaded
-    local_sha256: str | None     # populated after download
+    local_path: str | None  # None if not yet downloaded
+    local_sha256: str | None  # populated after download
     source_url: str | None
     license_status: str
     commercial_safe: bool
@@ -37,10 +37,10 @@ class RenderSceneDraft:
     """Per-scene render data assembled before persistence."""
 
     scene_index: int
-    scene_id: int                 # FK scene_manifest_scenes
+    scene_id: int  # FK scene_manifest_scenes
     segment_id: int
     narration_asset_id: int | None
-    audio_path: str | None        # resolved from ApprovedNarrationRun
+    audio_path: str | None  # resolved from ApprovedNarrationRun
     audio_sha256: str | None
     start_ms: int
     end_ms: int

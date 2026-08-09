@@ -68,8 +68,11 @@ def channel(conn, workspace):
     return cp_repo.create_channel(
         conn,
         ChannelDraft(
-            id=_uid(), workspace_id=workspace.id,
-            name="Chan", slug="chan", actor="cli",
+            id=_uid(),
+            workspace_id=workspace.id,
+            name="Chan",
+            slug="chan",
+            actor="cli",
         ),
     )
 
@@ -111,16 +114,15 @@ class TestStartPipeline:
             conn, OrganizationDraft(id=_uid(), name="O2", slug="o2", actor="cli")
         )
         ws1 = cp_repo.create_workspace(
-            conn, WorkspaceDraft(id=_uid(), name="WS1", slug="ws1", actor="cli",
-                                 organization_id=org.id)
+            conn,
+            WorkspaceDraft(id=_uid(), name="WS1", slug="ws1", actor="cli", organization_id=org.id),
         )
         ws2 = cp_repo.create_workspace(
-            conn, WorkspaceDraft(id=_uid(), name="WS2", slug="ws2", actor="cli",
-                                 organization_id=org.id)
+            conn,
+            WorkspaceDraft(id=_uid(), name="WS2", slug="ws2", actor="cli", organization_id=org.id),
         )
         ch2 = cp_repo.create_channel(
-            conn, ChannelDraft(id=_uid(), workspace_id=ws2.id, name="Ch2",
-                               slug="ch2", actor="cli")
+            conn, ChannelDraft(id=_uid(), workspace_id=ws2.id, name="Ch2", slug="ch2", actor="cli")
         )
         cmd = _start_cmd(ws1.id, ch2.id)
         with pytest.raises(CrossWorkspaceAccessError):
@@ -164,8 +166,10 @@ class TestStartPipeline:
     def test_custom_correlation_id_preserved(self, conn, workspace, channel):
         custom_corr = _uid()
         cmd = StartPipelineCommand(
-            workspace_id=workspace.id, channel_id=channel.id,
-            actor="a", idempotency_key=_uid(),
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            actor="a",
+            idempotency_key=_uid(),
             correlation_id=custom_corr,
         )
         pv = pipeline_ctrl.start_pipeline(conn, cmd)
@@ -178,8 +182,10 @@ class TestAdvancePipeline:
             conn, _start_cmd(workspace.id, channel.id, start="research", end="script_generation")
         )
         cmd = AdvancePipelineStageCommand(
-            pipeline_id=pv.id, workspace_id=workspace.id,
-            stage="research", actor="test",
+            pipeline_id=pv.id,
+            workspace_id=workspace.id,
+            stage="research",
+            actor="test",
         )
         updated = pipeline_ctrl.advance_pipeline(conn, cmd)
         research_stage = next(s for s in updated.stages if s.stage == "research")
@@ -188,22 +194,26 @@ class TestAdvancePipeline:
     def test_review_required_stage_parks_at_waiting(self, conn, workspace, channel):
         pv = pipeline_ctrl.start_pipeline(
             conn,
-            _start_cmd(workspace.id, channel.id, start="script_generation", end="script_generation")
+            _start_cmd(
+                workspace.id, channel.id, start="script_generation", end="script_generation"
+            ),
         )
         cmd = AdvancePipelineStageCommand(
-            pipeline_id=pv.id, workspace_id=workspace.id,
-            stage="script_generation", actor="test",
+            pipeline_id=pv.id,
+            workspace_id=workspace.id,
+            stage="script_generation",
+            actor="test",
         )
         updated = pipeline_ctrl.advance_pipeline(conn, cmd)
         assert updated.status == "waiting_for_review"
 
     def test_prerequisite_check_fails(self, conn, workspace, channel):
-        pv = pipeline_ctrl.start_pipeline(
-            conn, _start_cmd(workspace.id, channel.id)
-        )
+        pv = pipeline_ctrl.start_pipeline(conn, _start_cmd(workspace.id, channel.id))
         cmd = AdvancePipelineStageCommand(
-            pipeline_id=pv.id, workspace_id=workspace.id,
-            stage="script_generation", actor="test",
+            pipeline_id=pv.id,
+            workspace_id=workspace.id,
+            stage="script_generation",
+            actor="test",
         )
         with pytest.raises(StagePrerequisiteError):
             pipeline_ctrl.advance_pipeline(conn, cmd)
@@ -211,8 +221,10 @@ class TestAdvancePipeline:
     def test_cross_workspace_pipeline_raises(self, conn, workspace, channel):
         pv = pipeline_ctrl.start_pipeline(conn, _start_cmd(workspace.id, channel.id))
         cmd = AdvancePipelineStageCommand(
-            pipeline_id=pv.id, workspace_id="other-workspace",
-            stage="research", actor="test",
+            pipeline_id=pv.id,
+            workspace_id="other-workspace",
+            stage="research",
+            actor="test",
         )
         with pytest.raises(CrossWorkspaceAccessError):
             pipeline_ctrl.advance_pipeline(conn, cmd)
@@ -222,8 +234,10 @@ class TestAdvancePipeline:
             conn, _start_cmd(workspace.id, channel.id, start="analytics", end="analytics")
         )
         cmd = AdvancePipelineStageCommand(
-            pipeline_id=pv.id, workspace_id=workspace.id,
-            stage="analytics", actor="test",
+            pipeline_id=pv.id,
+            workspace_id=workspace.id,
+            stage="analytics",
+            actor="test",
         )
         updated = pipeline_ctrl.advance_pipeline(conn, cmd)
         assert updated.status == "completed"
@@ -233,8 +247,11 @@ class TestFailPipeline:
     def test_fail_stage_marks_pipeline_failed(self, conn, workspace, channel):
         pv = pipeline_ctrl.start_pipeline(conn, _start_cmd(workspace.id, channel.id))
         cmd = FailPipelineStageCommand(
-            pipeline_id=pv.id, workspace_id=workspace.id,
-            stage="research", error_message="network error", actor="engine",
+            pipeline_id=pv.id,
+            workspace_id=workspace.id,
+            stage="research",
+            error_message="network error",
+            actor="engine",
         )
         updated = pipeline_ctrl.fail_pipeline(conn, cmd)
         assert updated.status == "failed"
@@ -247,8 +264,11 @@ class TestFailPipeline:
         pipeline_ctrl.fail_pipeline(
             conn,
             FailPipelineStageCommand(
-                pipeline_id=pv.id, workspace_id=workspace.id,
-                stage="research", error_message="err", actor="engine",
+                pipeline_id=pv.id,
+                workspace_id=workspace.id,
+                stage="research",
+                error_message="err",
+                actor="engine",
             ),
         )
         events = conn.execute(

@@ -37,6 +37,7 @@ from app.control_plane.models import (
 @pytest.fixture()
 def db(tmp_path):
     from app.core.database import open_db
+
     return open_db(tmp_path / "test.db")
 
 
@@ -193,8 +194,12 @@ class TestCredentialProfileRepository:
 
     def test_list_by_workspace(self, db, workspace):
         draft = CredentialProfileDraft(
-            id="cp-2", workspace_id=workspace.id, display_name="Key",
-            credential_type="api_key", external_ref="ref-002", actor="cli"
+            id="cp-2",
+            workspace_id=workspace.id,
+            display_name="Key",
+            credential_type="api_key",
+            external_ref="ref-002",
+            actor="cli",
         )
         repo.create_credential_profile(db, draft)
         items = repo.list_credential_profiles(db, workspace.id)
@@ -202,8 +207,12 @@ class TestCredentialProfileRepository:
 
     def test_update_status(self, db, workspace):
         draft = CredentialProfileDraft(
-            id="cp-3", workspace_id=workspace.id, display_name="K",
-            credential_type="api_key", external_ref="r", actor="cli"
+            id="cp-3",
+            workspace_id=workspace.id,
+            display_name="K",
+            credential_type="api_key",
+            external_ref="r",
+            actor="cli",
         )
         profile = repo.create_credential_profile(db, draft)
         updated = repo.update_credential_status(db, profile.id, "expired", "cli")
@@ -230,12 +239,20 @@ class TestAutomationPolicyRepository:
 
     def test_new_policy_deactivates_old(self, db, workspace):
         draft1 = AutomationPolicyDraft(
-            id="pol-1", scope="workspace", scope_id=workspace.id,
-            automation_level="manual", allowed_actions=[], actor="cli"
+            id="pol-1",
+            scope="workspace",
+            scope_id=workspace.id,
+            automation_level="manual",
+            allowed_actions=[],
+            actor="cli",
         )
         draft2 = AutomationPolicyDraft(
-            id="pol-2", scope="workspace", scope_id=workspace.id,
-            automation_level="autonomous", allowed_actions=[], actor="cli"
+            id="pol-2",
+            scope="workspace",
+            scope_id=workspace.id,
+            automation_level="autonomous",
+            allowed_actions=[],
+            actor="cli",
         )
         repo.create_automation_policy(db, draft1)
         repo.create_automation_policy(db, draft2)
@@ -251,8 +268,7 @@ class TestAutomationPolicyRepository:
 class TestStrategyProfileRepository:
     def test_create_and_activate(self, db, channel):
         draft = StrategyProfileDraft(
-            id="sp-1", channel_id=channel.id, version=1,
-            config={"target_ctr": 0.05}, actor="cli"
+            id="sp-1", channel_id=channel.id, version=1, config={"target_ctr": 0.05}, actor="cli"
         )
         sp = repo.create_strategy_profile(db, draft)
         assert sp.version == 1
@@ -295,25 +311,38 @@ class TestEventRepository:
 
     def test_list_by_workspace(self, db, workspace):
         draft = ControlEventDraft(
-            id="ev-2", event_type="channel.created",
-            workspace_id=workspace.id, actor="cli", payload={}
+            id="ev-2",
+            event_type="channel.created",
+            workspace_id=workspace.id,
+            actor="cli",
+            payload={},
         )
         repo.create_event(db, draft)
         items = repo.list_events_by_workspace(db, workspace.id)
         assert any(e.id == "ev-2" for e in items)
 
     def test_list_filtered_by_type(self, db, workspace):
-        repo.create_event(db, ControlEventDraft(
-            id="ev-3", event_type="channel.created",
-            workspace_id=workspace.id, actor="cli", payload={}
-        ))
-        repo.create_event(db, ControlEventDraft(
-            id="ev-4", event_type="workspace.suspended",
-            workspace_id=workspace.id, actor="cli", payload={}
-        ))
-        items = repo.list_events_by_workspace(
-            db, workspace.id, event_type="channel.created"
+        repo.create_event(
+            db,
+            ControlEventDraft(
+                id="ev-3",
+                event_type="channel.created",
+                workspace_id=workspace.id,
+                actor="cli",
+                payload={},
+            ),
         )
+        repo.create_event(
+            db,
+            ControlEventDraft(
+                id="ev-4",
+                event_type="workspace.suspended",
+                workspace_id=workspace.id,
+                actor="cli",
+                payload={},
+            ),
+        )
+        items = repo.list_events_by_workspace(db, workspace.id, event_type="channel.created")
         ids = [e.id for e in items]
         assert "ev-3" in ids
         assert "ev-4" not in ids
@@ -340,21 +369,28 @@ class TestWorkflowRepository:
 
     def test_list_active_for_trigger(self, db, workspace):
         draft = WorkflowDraft(
-            id="wf-2", workspace_id=workspace.id, name="W2",
+            id="wf-2",
+            workspace_id=workspace.id,
+            name="W2",
             trigger_event_type="account.status_changed",
-            conditions=[], actions=[], actor="cli", status="active"
+            conditions=[],
+            actions=[],
+            actor="cli",
+            status="active",
         )
         repo.create_workflow(db, draft)
-        items = repo.list_active_workflows_for_trigger(
-            db, workspace.id, "account.status_changed"
-        )
+        items = repo.list_active_workflows_for_trigger(db, workspace.id, "account.status_changed")
         assert any(w.id == "wf-2" for w in items)
 
     def test_update_status(self, db, workspace):
         draft = WorkflowDraft(
-            id="wf-3", workspace_id=workspace.id, name="W3",
+            id="wf-3",
+            workspace_id=workspace.id,
+            name="W3",
             trigger_event_type="health.degraded",
-            conditions=[], actions=[], actor="cli"
+            conditions=[],
+            actions=[],
+            actor="cli",
         )
         wf = repo.create_workflow(db, draft)
         updated = repo.update_workflow_status(db, wf.id, "active", "cli")
@@ -364,8 +400,13 @@ class TestWorkflowRepository:
 class TestExperimentRepository:
     def test_create_and_get(self, db, workspace, channel):
         draft = ExperimentDraft(
-            id="exp-1", workspace_id=workspace.id, channel_id=channel.id,
-            name="CTR test", hypothesis="A > B", primary_metric="ctr", actor="cli"
+            id="exp-1",
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="CTR test",
+            hypothesis="A > B",
+            primary_metric="ctr",
+            actor="cli",
         )
         exp = repo.create_experiment(db, draft)
         assert exp.status == "draft"
@@ -376,8 +417,13 @@ class TestExperimentRepository:
 
     def test_activate(self, db, workspace, channel):
         draft = ExperimentDraft(
-            id="exp-2", workspace_id=workspace.id, channel_id=channel.id,
-            name="E2", hypothesis="H", primary_metric="retention", actor="cli"
+            id="exp-2",
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="E2",
+            hypothesis="H",
+            primary_metric="retention",
+            actor="cli",
         )
         repo.create_experiment(db, draft)
         exp = repo.activate_experiment(db, "exp-2")
@@ -386,8 +432,13 @@ class TestExperimentRepository:
 
     def test_conclude(self, db, workspace, channel):
         draft = ExperimentDraft(
-            id="exp-3", workspace_id=workspace.id, channel_id=channel.id,
-            name="E3", hypothesis="H", primary_metric="retention", actor="cli"
+            id="exp-3",
+            workspace_id=workspace.id,
+            channel_id=channel.id,
+            name="E3",
+            hypothesis="H",
+            primary_metric="retention",
+            actor="cli",
         )
         repo.create_experiment(db, draft)
         repo.activate_experiment(db, "exp-3")
@@ -410,13 +461,19 @@ class TestOperationExecutionRepository:
 
     def test_duplicate_idempotency_key_raises(self, db, workspace):
         draft = OperationExecutionDraft(
-            id="op-1", operation_type="publish",
-            workspace_id=workspace.id, idempotency_key="same-key", actor="cli"
+            id="op-1",
+            operation_type="publish",
+            workspace_id=workspace.id,
+            idempotency_key="same-key",
+            actor="cli",
         )
         repo.create_operation_execution(db, draft)
         draft2 = OperationExecutionDraft(
-            id="op-2", operation_type="publish",
-            workspace_id=workspace.id, idempotency_key="same-key", actor="cli"
+            id="op-2",
+            operation_type="publish",
+            workspace_id=workspace.id,
+            idempotency_key="same-key",
+            actor="cli",
         )
         with pytest.raises(DuplicateIdempotencyKeyError) as exc_info:
             repo.create_operation_execution(db, draft2)
@@ -425,19 +482,23 @@ class TestOperationExecutionRepository:
 
     def test_update_status(self, db, workspace):
         draft = OperationExecutionDraft(
-            id="op-3", operation_type="ingest",
-            workspace_id=workspace.id, idempotency_key="k3", actor="cli"
+            id="op-3",
+            operation_type="ingest",
+            workspace_id=workspace.id,
+            idempotency_key="k3",
+            actor="cli",
         )
         op = repo.create_operation_execution(db, draft)
-        updated = repo.update_operation_status(
-            db, op.id, "completed", output_data={"result": "ok"}
-        )
+        updated = repo.update_operation_status(db, op.id, "completed", output_data={"result": "ok"})
         assert updated.status == "completed"
 
     def test_get_by_idempotency_key(self, db, workspace):
         draft = OperationExecutionDraft(
-            id="op-4", operation_type="pub",
-            workspace_id=workspace.id, idempotency_key="findme", actor="cli"
+            id="op-4",
+            operation_type="pub",
+            workspace_id=workspace.id,
+            idempotency_key="findme",
+            actor="cli",
         )
         repo.create_operation_execution(db, draft)
         found = repo.get_operation_by_idempotency_key(db, "findme")
@@ -454,12 +515,20 @@ class TestCostRecordRepository:
         from datetime import UTC, datetime
 
         draft1 = CostRecordDraft(
-            id="cr-1", workspace_id=workspace.id, provider_key="claude",
-            cost_unit="tokens", quantity=1000, usd_equivalent=0.003
+            id="cr-1",
+            workspace_id=workspace.id,
+            provider_key="claude",
+            cost_unit="tokens",
+            quantity=1000,
+            usd_equivalent=0.003,
         )
         draft2 = CostRecordDraft(
-            id="cr-2", workspace_id=workspace.id, provider_key="claude",
-            cost_unit="tokens", quantity=2000, usd_equivalent=0.006
+            id="cr-2",
+            workspace_id=workspace.id,
+            provider_key="claude",
+            cost_unit="tokens",
+            quantity=2000,
+            usd_equivalent=0.006,
         )
         repo.create_cost_record(db, draft1)
         repo.create_cost_record(db, draft2)
@@ -470,8 +539,12 @@ class TestCostRecordRepository:
 
     def test_list_by_workspace(self, db, workspace):
         draft = CostRecordDraft(
-            id="cr-3", workspace_id=workspace.id, provider_key="tts",
-            cost_unit="characters", quantity=500, usd_equivalent=0.001
+            id="cr-3",
+            workspace_id=workspace.id,
+            provider_key="tts",
+            cost_unit="characters",
+            quantity=500,
+            usd_equivalent=0.001,
         )
         repo.create_cost_record(db, draft)
         items = repo.list_cost_records_by_workspace(db, workspace.id)
@@ -481,8 +554,12 @@ class TestCostRecordRepository:
 class TestBudgetPolicyRepository:
     def test_create_and_get_active(self, db, workspace):
         draft = BudgetPolicyDraft(
-            id="bp-1", scope="workspace", scope_id=workspace.id,
-            period="monthly", limit_usd=100.0, actor="cli"
+            id="bp-1",
+            scope="workspace",
+            scope_id=workspace.id,
+            period="monthly",
+            limit_usd=100.0,
+            actor="cli",
         )
         policy = repo.create_budget_policy(db, draft)
         assert policy.limit_usd == 100.0
@@ -494,12 +571,20 @@ class TestBudgetPolicyRepository:
 
     def test_new_policy_deactivates_old(self, db, workspace):
         draft1 = BudgetPolicyDraft(
-            id="bp-1", scope="workspace", scope_id=workspace.id,
-            period="monthly", limit_usd=100.0, actor="cli"
+            id="bp-1",
+            scope="workspace",
+            scope_id=workspace.id,
+            period="monthly",
+            limit_usd=100.0,
+            actor="cli",
         )
         draft2 = BudgetPolicyDraft(
-            id="bp-2", scope="workspace", scope_id=workspace.id,
-            period="monthly", limit_usd=200.0, actor="cli"
+            id="bp-2",
+            scope="workspace",
+            scope_id=workspace.id,
+            period="monthly",
+            limit_usd=200.0,
+            actor="cli",
         )
         repo.create_budget_policy(db, draft1)
         repo.create_budget_policy(db, draft2)
@@ -511,12 +596,19 @@ class TestBudgetPolicyRepository:
 class TestHealthRecordRepository:
     def test_create_and_get_latest(self, db):
         draft1 = HealthRecordDraft(
-            id="hr-1", entity_type="channel", entity_id="ch-1",
-            status="healthy", recorded_by="monitor"
+            id="hr-1",
+            entity_type="channel",
+            entity_id="ch-1",
+            status="healthy",
+            recorded_by="monitor",
         )
         draft2 = HealthRecordDraft(
-            id="hr-2", entity_type="channel", entity_id="ch-1",
-            status="degraded", recorded_by="monitor", detail="Quota low"
+            id="hr-2",
+            entity_type="channel",
+            entity_id="ch-1",
+            status="degraded",
+            recorded_by="monitor",
+            detail="Quota low",
         )
         repo.create_health_record(db, draft1)
         repo.create_health_record(db, draft2)
@@ -531,8 +623,11 @@ class TestHealthRecordRepository:
 
     def test_list_by_status(self, db):
         draft = HealthRecordDraft(
-            id="hr-3", entity_type="provider", entity_id="claude",
-            status="unavailable", recorded_by="monitor"
+            id="hr-3",
+            entity_type="provider",
+            entity_id="claude",
+            status="unavailable",
+            recorded_by="monitor",
         )
         repo.create_health_record(db, draft)
         items = repo.list_health_records(db, status="unavailable")
@@ -542,8 +637,11 @@ class TestHealthRecordRepository:
 class TestProviderRegistryRepository:
     def test_register_and_get(self, db):
         draft = ProviderRegistryDraft(
-            id="pr-1", provider_key="claude", domain="ai",
-            display_name="Claude", capabilities=["text_generation"]
+            id="pr-1",
+            provider_key="claude",
+            domain="ai",
+            display_name="Claude",
+            capabilities=["text_generation"],
         )
         entry = repo.register_provider(db, draft)
         assert entry.provider_key == "claude"
@@ -566,19 +664,28 @@ class TestProviderRegistryRepository:
             repo.get_provider_by_key(db, "nonexistent_provider")
 
     def test_list_by_domain(self, db):
-        repo.register_provider(db, ProviderRegistryDraft(
-            id="p1", provider_key="claude", domain="ai", display_name="Claude"
-        ))
-        repo.register_provider(db, ProviderRegistryDraft(
-            id="p2", provider_key="deepmind-tts", domain="tts", display_name="DeepMind TTS"
-        ))
+        repo.register_provider(
+            db,
+            ProviderRegistryDraft(
+                id="p1", provider_key="claude", domain="ai", display_name="Claude"
+            ),
+        )
+        repo.register_provider(
+            db,
+            ProviderRegistryDraft(
+                id="p2", provider_key="deepmind-tts", domain="tts", display_name="DeepMind TTS"
+            ),
+        )
         ai_providers = repo.list_providers_by_domain(db, "ai")
         assert any(p.provider_key == "claude" for p in ai_providers)
         assert not any(p.provider_key == "deepmind-tts" for p in ai_providers)
 
     def test_update_health(self, db):
-        repo.register_provider(db, ProviderRegistryDraft(
-            id="pr-1", provider_key="elevenlabs", domain="tts", display_name="ElevenLabs"
-        ))
+        repo.register_provider(
+            db,
+            ProviderRegistryDraft(
+                id="pr-1", provider_key="elevenlabs", domain="tts", display_name="ElevenLabs"
+            ),
+        )
         updated = repo.update_provider_health(db, "elevenlabs", "degraded")
         assert updated.status == "degraded"

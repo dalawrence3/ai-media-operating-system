@@ -46,32 +46,16 @@ def _default_provider():
 @analytics_app.command("ingest")
 def analytics_ingest(
     publication_id: Annotated[int, typer.Argument(help="Publication ID.")],
-    provider_video_id: Annotated[
-        str, typer.Argument(help="Provider-side video identifier.")
-    ],
-    publishing_plan_id: Annotated[
-        int, typer.Option("--plan", help="Publishing plan ID.")
-    ],
-    publishing_job_id: Annotated[
-        int, typer.Option("--job", help="Publishing job ID.")
-    ],
-    render_manifest_id: Annotated[
-        int, typer.Option("--render", help="Render manifest ID.")
-    ],
-    scene_manifest_id: Annotated[
-        int, typer.Option("--scene", help="Scene manifest ID.")
-    ],
-    production_plan_id: Annotated[
-        int, typer.Option("--production", help="Production plan ID.")
-    ],
+    provider_video_id: Annotated[str, typer.Argument(help="Provider-side video identifier.")],
+    publishing_plan_id: Annotated[int, typer.Option("--plan", help="Publishing plan ID.")],
+    publishing_job_id: Annotated[int, typer.Option("--job", help="Publishing job ID.")],
+    render_manifest_id: Annotated[int, typer.Option("--render", help="Render manifest ID.")],
+    scene_manifest_id: Annotated[int, typer.Option("--scene", help="Scene manifest ID.")],
+    production_plan_id: Annotated[int, typer.Option("--production", help="Production plan ID.")],
     script_id: Annotated[int, typer.Option("--script", help="Script ID.")],
     topic_id: Annotated[int, typer.Option("--topic", help="Topic ID.")],
-    narration_run_id: Annotated[
-        int, typer.Option("--narration", help="Narration run ID.")
-    ],
-    caption_run_id: Annotated[
-        int, typer.Option("--caption", help="Caption run ID.")
-    ],
+    narration_run_id: Annotated[int, typer.Option("--narration", help="Narration run ID.")],
+    caption_run_id: Annotated[int, typer.Option("--caption", help="Caption run ID.")],
     period_start: Annotated[
         str | None, typer.Option("--period-start", help="ISO 8601 period start.")
     ] = None,
@@ -271,9 +255,7 @@ def analytics_list(
 
 @analytics_app.command("events")
 def analytics_events(
-    snapshot_id: Annotated[
-        int | None, typer.Argument(help="Snapshot ID (omit for all).")
-    ] = None,
+    snapshot_id: Annotated[int | None, typer.Argument(help="Snapshot ID (omit for all).")] = None,
     severity: Annotated[
         str | None, typer.Option("--severity", "-s", help="Filter by severity.")
     ] = None,
@@ -288,8 +270,7 @@ def analytics_events(
         return
     for e in events:
         typer.echo(
-            f"#{e.id:4d}  snap={e.snapshot_id}  {e.severity:<10}"
-            f"  {e.created_at}  {e.notes[:60]}"
+            f"#{e.id:4d}  snap={e.snapshot_id}  {e.severity:<10}  {e.created_at}  {e.notes[:60]}"
         )
 
 

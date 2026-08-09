@@ -93,9 +93,7 @@ def learn_list(
         typer.echo("No recommendations found.")
         return
 
-    typer.echo(
-        f"{'ID':>5}  {'Domain':<12}  {'Subsystem':<22}  {'Conf':<6}  {'Status':<10}  Title"
-    )
+    typer.echo(f"{'ID':>5}  {'Domain':<12}  {'Subsystem':<22}  {'Conf':<6}  {'Status':<10}  Title")
     typer.echo("-" * 100)
     for r in recs:
         title_short = r.title[:50] + "…" if len(r.title) > 50 else r.title
@@ -131,17 +129,17 @@ def learn_show(
     typer.echo(f"  Affected:         {rec.affected_subsystem}")
     if rec.subsystem_entity_type:
         typer.echo(f"  Entity:           {rec.subsystem_entity_type} #{rec.subsystem_entity_id}")
-    typer.echo(f"\n  Title\n  {'─'*60}")
+    typer.echo(f"\n  Title\n  {'─' * 60}")
     typer.echo(f"  {rec.title}")
-    typer.echo(f"\n  Why this recommendation exists\n  {'─'*60}")
+    typer.echo(f"\n  Why this recommendation exists\n  {'─' * 60}")
     for line in rec.explanation.split(". "):
         if line.strip():
             typer.echo(f"  {line.strip()}.")
-    typer.echo(f"\n  Expected improvement\n  {'─'*60}")
+    typer.echo(f"\n  Expected improvement\n  {'─' * 60}")
     for line in rec.expected_improvement.split(". "):
         if line.strip():
             typer.echo(f"  {line.strip()}.")
-    typer.echo(f"\n  Evidence ({len(rec.evidence)} item(s))\n  {'─'*60}")
+    typer.echo(f"\n  Evidence ({len(rec.evidence)} item(s))\n  {'─' * 60}")
     for i, ev in enumerate(rec.evidence, 1):
         typer.echo(f"  [{i}] {ev.metric_name} | {ev.period_type} ({ev.period_key})")
         typer.echo(f"       Observed: {ev.observed_value:.4f}")
@@ -149,7 +147,7 @@ def learn_show(
             typer.echo(f"       Threshold: {ev.comparison_value:.4f}")
         typer.echo(f"       Snapshots: {ev.snapshot_ids}")
         typer.echo(f"       {ev.interpretation}")
-    typer.echo(f"\n  Provenance\n  {'─'*60}")
+    typer.echo(f"\n  Provenance\n  {'─' * 60}")
     typer.echo(f"  Engine: {rec.engine_version}  Schema: {rec.schema_version}")
     typer.echo(f"  Hash:   {rec.input_hash[:32]}…")
     typer.echo(f"  Run:    #{rec.learning_run_id}")

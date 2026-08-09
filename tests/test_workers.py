@@ -250,9 +250,18 @@ def _insert_schedule(conn, schedule_id, workspace_id, next_run_at, is_active=1):
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            schedule_id, workspace_id, "Test Schedule", "pipeline_run",
-            "interval", '{"seconds": 3600}', "UTC", is_active,
-            next_run_at, "system:scheduler", now, now,
+            schedule_id,
+            workspace_id,
+            "Test Schedule",
+            "pipeline_run",
+            "interval",
+            '{"seconds": 3600}',
+            "UTC",
+            is_active,
+            next_run_at,
+            "system:scheduler",
+            now,
+            now,
         ),
     )
     conn.commit()
@@ -342,9 +351,17 @@ def test_run_scheduler_tick_idempotent(tmp_path: Path):
     with patch("app.workers.scheduler.get_due_schedules") as mock_due:
         # Simulate what happens: first call returns due schedule, second returns []
         mock_due.side_effect = [
-            [{"id": "sched-1", "workspace_id": "ws-1", "name": "S1",
-              "schedule_type": "interval", "schedule_config_json": '{"seconds":3600}',
-              "timezone": "UTC", "actor": "system:scheduler"}],
+            [
+                {
+                    "id": "sched-1",
+                    "workspace_id": "ws-1",
+                    "name": "S1",
+                    "schedule_type": "interval",
+                    "schedule_config_json": '{"seconds":3600}',
+                    "timezone": "UTC",
+                    "actor": "system:scheduler",
+                }
+            ],
             [],
         ]
         with patch("app.workers.jobs.get_queue", return_value=mock_queue):

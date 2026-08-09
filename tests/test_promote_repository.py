@@ -149,9 +149,7 @@ def test_promote_topic_title_from_raw_topic(db: sqlite3.Connection) -> None:
 
 def test_promote_topic_title_from_opportunity_title(db: sqlite3.Connection) -> None:
     channel_id = _make_channel(db)
-    opp = _make_opportunity(
-        db, channel_id, raw_topic="raw topic", title="Curated Title"
-    )
+    opp = _make_opportunity(db, channel_id, raw_topic="raw topic", title="Curated Title")
     policy_id = _make_policy(db, channel_id)
     _add_score(db, opp.id, policy_id, 1)
 
@@ -162,9 +160,7 @@ def test_promote_topic_title_from_opportunity_title(db: sqlite3.Connection) -> N
 
 def test_promote_angle_from_topic_summary(db: sqlite3.Connection) -> None:
     channel_id = _make_channel(db)
-    opp = _make_opportunity(
-        db, channel_id, topic_summary="How low-cost ETFs beat active funds"
-    )
+    opp = _make_opportunity(db, channel_id, topic_summary="How low-cost ETFs beat active funds")
     policy_id = _make_policy(db, channel_id)
     _add_score(db, opp.id, policy_id, 1)
 
@@ -387,9 +383,7 @@ def test_promote_allow_unscored_bypasses_check(db: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_promote_atomicity_on_transition_failure(
-    db: sqlite3.Connection, monkeypatch
-) -> None:
+def test_promote_atomicity_on_transition_failure(db: sqlite3.Connection, monkeypatch) -> None:
     """If transition_opportunity_state raises, no topics row must be committed."""
     from app.intelligence import repository as repo_module
 

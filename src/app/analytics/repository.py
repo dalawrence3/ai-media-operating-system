@@ -77,15 +77,31 @@ def create_snapshot(
             )
             """,
             (
-                publication_id, publishing_plan_id, publishing_job_id,
-                render_manifest_id, scene_manifest_id, production_plan_id,
-                script_id, topic_id, narration_run_id, caption_run_id,
-                experiment_id, provider, provider_version, adapter_version,
-                ANALYTICS_ENGINE_VERSION, ANALYTICS_SCHEMA_VERSION, db_schema_version,
-                input_hash, json.dumps(raw_metrics),
-                period_start, period_end,
-                1 if is_period_complete else 0, currency_code,
-                now, now,
+                publication_id,
+                publishing_plan_id,
+                publishing_job_id,
+                render_manifest_id,
+                scene_manifest_id,
+                production_plan_id,
+                script_id,
+                topic_id,
+                narration_run_id,
+                caption_run_id,
+                experiment_id,
+                provider,
+                provider_version,
+                adapter_version,
+                ANALYTICS_ENGINE_VERSION,
+                ANALYTICS_SCHEMA_VERSION,
+                db_schema_version,
+                input_hash,
+                json.dumps(raw_metrics),
+                period_start,
+                period_end,
+                1 if is_period_complete else 0,
+                currency_code,
+                now,
+                now,
             ),
         )
         conn.commit()
@@ -98,17 +114,13 @@ def create_snapshot(
 
 def get_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> AnalyticsSnapshot:
     """Return an analytics snapshot by ID. Raises SnapshotNotFoundError if missing."""
-    row = conn.execute(
-        "SELECT * FROM analytics_snapshots WHERE id = ?", (snapshot_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM analytics_snapshots WHERE id = ?", (snapshot_id,)).fetchone()
     if row is None:
         raise SnapshotNotFoundError(snapshot_id)
     return AnalyticsSnapshot.from_row(row)
 
 
-def get_snapshot_by_hash(
-    conn: sqlite3.Connection, input_hash: str
-) -> AnalyticsSnapshot | None:
+def get_snapshot_by_hash(conn: sqlite3.Connection, input_hash: str) -> AnalyticsSnapshot | None:
     """Return a snapshot by input_hash, or None if not found."""
     row = conn.execute(
         "SELECT * FROM analytics_snapshots WHERE input_hash = ?", (input_hash,)
@@ -172,9 +184,16 @@ def create_metric(
         ) VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            snapshot_id, publication_id, topic_id, provider,
-            metric_name, metric_value, period_start, period_end,
-            input_hash, now,
+            snapshot_id,
+            publication_id,
+            topic_id,
+            provider,
+            metric_name,
+            metric_value,
+            period_start,
+            period_end,
+            input_hash,
+            now,
         ),
     )
     conn.commit()
@@ -183,17 +202,13 @@ def create_metric(
 
 def get_metric(conn: sqlite3.Connection, metric_id: int) -> AnalyticsMetric:
     """Return a metric by ID. Raises MetricNotFoundError if missing."""
-    row = conn.execute(
-        "SELECT * FROM analytics_metrics WHERE id = ?", (metric_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM analytics_metrics WHERE id = ?", (metric_id,)).fetchone()
     if row is None:
         raise MetricNotFoundError(metric_id)
     return AnalyticsMetric.from_row(row)
 
 
-def list_metrics_for_snapshot(
-    conn: sqlite3.Connection, snapshot_id: int
-) -> list[AnalyticsMetric]:
+def list_metrics_for_snapshot(conn: sqlite3.Connection, snapshot_id: int) -> list[AnalyticsMetric]:
     """Return all metrics for a snapshot, ordered by metric_name."""
     rows = conn.execute(
         "SELECT * FROM analytics_metrics WHERE snapshot_id = ? ORDER BY metric_name",
@@ -269,10 +284,19 @@ def upsert_aggregate(
             input_hash               = excluded.input_hash
         """,
         (
-            publication_id, topic_id, provider,
-            period_type, period_key, metric_name, metric_value,
-            snapshot_count, calculation_method, currency_code,
-            source_json, input_hash, now,
+            publication_id,
+            topic_id,
+            provider,
+            period_type,
+            period_key,
+            metric_name,
+            metric_value,
+            snapshot_count,
+            calculation_method,
+            currency_code,
+            source_json,
+            input_hash,
+            now,
         ),
     )
     conn.commit()
@@ -343,13 +367,9 @@ def create_review_event(
     return get_review_event(conn, cur.lastrowid)  # type: ignore[arg-type]
 
 
-def get_review_event(
-    conn: sqlite3.Connection, event_id: int
-) -> AnalyticsReviewEvent:
+def get_review_event(conn: sqlite3.Connection, event_id: int) -> AnalyticsReviewEvent:
     """Return a review event by ID. Raises ReviewEventNotFoundError if missing."""
-    row = conn.execute(
-        "SELECT * FROM analytics_review_events WHERE id = ?", (event_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM analytics_review_events WHERE id = ?", (event_id,)).fetchone()
     if row is None:
         raise ReviewEventNotFoundError(event_id)
     return AnalyticsReviewEvent.from_row(row)

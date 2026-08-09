@@ -114,9 +114,7 @@ class TestRecommendationHash:
         assert h1 != h2
 
     def test_evidence_classification_change_changes_hash(self):
-        h1 = compute_recommendation_hash(
-            self._make_input(evidence_classification="observational")
-        )
+        h1 = compute_recommendation_hash(self._make_input(evidence_classification="observational"))
         h2 = compute_recommendation_hash(
             self._make_input(evidence_classification="controlled_experiment")
         )

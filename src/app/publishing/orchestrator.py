@@ -70,6 +70,7 @@ from app.publishing.validation import (
 
 # ── Plan preparation ──────────────────────────────────────────────────────────
 
+
 def prepare_publishing_plan(
     conn: sqlite3.Connection,
     render_manifest_id: int,
@@ -87,9 +88,7 @@ def prepare_publishing_plan(
     # 1. Resolve render manifest
     manifest = get_render_manifest(conn, render_manifest_id)
     if manifest is None:
-        raise PublishingPlanNotFoundError(
-            f"Render manifest {render_manifest_id} not found."
-        )
+        raise PublishingPlanNotFoundError(f"Render manifest {render_manifest_id} not found.")
     if manifest.status != "approved":
         raise RenderManifestNotApprovedError(
             f"Render manifest {render_manifest_id} status is {manifest.status!r}, "
@@ -183,6 +182,7 @@ def _supersede_prior_plans(
     new_plan_id: int,
 ) -> None:
     from app.publishing.repository import list_publishing_plans
+
     priors = list_publishing_plans(
         conn, render_manifest_id=render_manifest_id, include_superseded=False
     )
@@ -205,6 +205,7 @@ def _supersede_prior_plans(
 
 
 # ── Job execution ─────────────────────────────────────────────────────────────
+
 
 def start_publishing_job(
     conn: sqlite3.Connection,
@@ -262,9 +263,7 @@ def start_publishing_job(
     )
 
     # Move to running
-    job = update_publishing_job_status(
-        conn, job.id, JOB_STATUS_RUNNING, mark_started=True
-    )
+    job = update_publishing_job_status(conn, job.id, JOB_STATUS_RUNNING, mark_started=True)
     record_publishing_review_event(
         conn,
         publishing_plan_id=plan_id,
@@ -326,9 +325,7 @@ def start_publishing_job(
         )
 
         pub_to_status = (
-            PUB_STATUS_SCHEDULED
-            if publish_result.status == "scheduled"
-            else PUB_STATUS_PUBLISHED
+            PUB_STATUS_SCHEDULED if publish_result.status == "scheduled" else PUB_STATUS_PUBLISHED
         )
         publication = update_publication_status(
             conn,
@@ -339,9 +336,7 @@ def start_publishing_job(
         )
 
         # Complete job
-        job = update_publishing_job_status(
-            conn, job.id, JOB_STATUS_COMPLETED, mark_completed=True
-        )
+        job = update_publishing_job_status(conn, job.id, JOB_STATUS_COMPLETED, mark_completed=True)
         record_publishing_review_event(
             conn,
             publishing_plan_id=plan_id,
@@ -372,6 +367,7 @@ def _dry_run_job(
     """Return a non-persisted job object for dry-run inspection."""
     from datetime import UTC
     from datetime import datetime as _dt
+
     now = _dt.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
     row: dict = {
@@ -430,6 +426,7 @@ def _fail_job(
 
 # ── Retry ─────────────────────────────────────────────────────────────────────
 
+
 def retry_publishing_job(
     conn: sqlite3.Connection,
     plan_id: int,
@@ -468,6 +465,7 @@ def retry_publishing_job(
 
 # ── Cancel ────────────────────────────────────────────────────────────────────
 
+
 def cancel_publishing_job(
     conn: sqlite3.Connection,
     plan_id: int,
@@ -478,17 +476,13 @@ def cancel_publishing_job(
     """Cancel the active queued or running job for the plan."""
     active = get_active_publishing_job(conn, plan_id)
     if active is None:
-        raise JobNotCancellableError(
-            f"Plan {plan_id} has no active job to cancel."
-        )
+        raise JobNotCancellableError(f"Plan {plan_id} has no active job to cancel.")
     if active.status not in {JOB_STATUS_QUEUED, JOB_STATUS_RUNNING}:
         raise JobNotCancellableError(
             f"Job {active.id} is in status {active.status!r} and cannot be cancelled."
         )
 
-    job = update_publishing_job_status(
-        conn, active.id, JOB_STATUS_CANCELLED, mark_completed=True
-    )
+    job = update_publishing_job_status(conn, active.id, JOB_STATUS_CANCELLED, mark_completed=True)
 
     plan = get_publishing_plan(conn, plan_id)
     assert plan is not None
@@ -511,6 +505,7 @@ def cancel_publishing_job(
 
 # ── Schedule update ───────────────────────────────────────────────────────────
 
+
 def update_plan_schedule(
     conn: sqlite3.Connection,
     plan_id: int,
@@ -524,6 +519,7 @@ def update_plan_schedule(
         raise PublishingPlanNotFoundError(f"Publishing plan {plan_id} not found.")
     if plan.status != "draft":
         from app.publishing.errors import IllegalPublishingPlanTransitionError
+
         raise IllegalPublishingPlanTransitionError(
             f"Cannot update schedule: plan {plan_id} is in status {plan.status!r}."
         )
@@ -569,4 +565,5 @@ def update_plan_schedule(
 
 def _now() -> str:
     from datetime import UTC, datetime
+
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")

@@ -74,9 +74,7 @@ def test_compat_cursor_executemany_converts_placeholders():
     mock_cur = _make_mock_cursor()
     cc = CompatCursor(mock_cur)
     cc.executemany("INSERT INTO t (x) VALUES (?)", [(1,), (2,)])
-    mock_cur.executemany.assert_called_once_with(
-        "INSERT INTO t (x) VALUES (%s)", [(1,), (2,)]
-    )
+    mock_cur.executemany.assert_called_once_with("INSERT INTO t (x) VALUES (%s)", [(1,), (2,)])
 
 
 def test_compat_cursor_fetchone():
@@ -124,9 +122,7 @@ def test_v20_auth_tables_exist(tmp_path: Path):
     conn = open_db(tmp_path / "v20.db")
     tables = {
         row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }
     assert "auth_users" in tables
     assert "auth_refresh_tokens" in tables
@@ -137,31 +133,43 @@ def test_v20_auth_tables_exist(tmp_path: Path):
 
 def test_auth_users_columns(tmp_path: Path):
     conn = open_db(tmp_path / "v20.db")
-    cols = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(auth_users)").fetchall()
-    }
-    assert {"id", "email", "display_name", "password_hash", "is_active",
-            "created_at", "updated_at", "last_login_at"} <= cols
+    cols = {row["name"] for row in conn.execute("PRAGMA table_info(auth_users)").fetchall()}
+    assert {
+        "id",
+        "email",
+        "display_name",
+        "password_hash",
+        "is_active",
+        "created_at",
+        "updated_at",
+        "last_login_at",
+    } <= cols
     conn.close()
 
 
 def test_auth_refresh_tokens_columns(tmp_path: Path):
     conn = open_db(tmp_path / "v20.db")
     cols = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(auth_refresh_tokens)").fetchall()
+        row["name"] for row in conn.execute("PRAGMA table_info(auth_refresh_tokens)").fetchall()
     }
-    assert {"id", "user_id", "token_hash", "issued_at", "expires_at",
-            "revoked_at", "last_used_at", "device_hint", "ip_hint"} <= cols
+    assert {
+        "id",
+        "user_id",
+        "token_hash",
+        "issued_at",
+        "expires_at",
+        "revoked_at",
+        "last_used_at",
+        "device_hint",
+        "ip_hint",
+    } <= cols
     conn.close()
 
 
 def test_auth_workspace_roles_columns(tmp_path: Path):
     conn = open_db(tmp_path / "v20.db")
     cols = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(auth_workspace_roles)").fetchall()
+        row["name"] for row in conn.execute("PRAGMA table_info(auth_workspace_roles)").fetchall()
     }
     assert {"id", "user_id", "workspace_id", "role", "granted_at", "granted_by"} <= cols
     conn.close()
@@ -170,12 +178,23 @@ def test_auth_workspace_roles_columns(tmp_path: Path):
 def test_obj_storage_objects_columns(tmp_path: Path):
     conn = open_db(tmp_path / "v20.db")
     cols = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(obj_storage_objects)").fetchall()
+        row["name"] for row in conn.execute("PRAGMA table_info(obj_storage_objects)").fetchall()
     }
-    assert {"id", "workspace_id", "channel_id", "storage_backend", "bucket",
-            "object_key", "sha256", "byte_size", "content_type",
-            "source_entity_type", "source_entity_id", "created_at", "deleted_at"} <= cols
+    assert {
+        "id",
+        "workspace_id",
+        "channel_id",
+        "storage_backend",
+        "bucket",
+        "object_key",
+        "sha256",
+        "byte_size",
+        "content_type",
+        "source_entity_type",
+        "source_entity_id",
+        "created_at",
+        "deleted_at",
+    } <= cols
     conn.close()
 
 

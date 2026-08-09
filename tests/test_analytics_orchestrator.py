@@ -86,8 +86,13 @@ def _seed_eligible(
 ) -> None:
     """Insert a complete eligible publication + render chain."""
     _insert_render_manifest(conn, render_id)
-    _insert_publication(conn, publication_id, provider_video_id=provider_video_id,
-                        provider=provider, render_id=render_id)
+    _insert_publication(
+        conn,
+        publication_id,
+        provider_video_id=provider_video_id,
+        provider=provider,
+        render_id=render_id,
+    )
 
 
 def _ingest(orch, db, publication_id=1, **kw):
@@ -130,6 +135,7 @@ class TestOrchestratorIngest:
 
     def test_metrics_have_canonical_names(self, orch, seeded_db):
         from app.analytics.constants import CANONICAL_METRICS
+
         _, metrics = _ingest(orch, seeded_db)
         for m in metrics:
             assert m.metric_name in CANONICAL_METRICS
@@ -147,8 +153,9 @@ class TestOrchestratorIngest:
     def test_different_publication_different_snapshot(self, orch, seeded_db):
         _seed_eligible(seeded_db, publication_id=2, render_id=2, provider_video_id="vid456")
         snap1, _ = _ingest(orch, seeded_db, publication_id=1, render_manifest_id=1)
-        snap2, _ = _ingest(orch, seeded_db, publication_id=2, render_manifest_id=2,
-                           provider_video_id="vid456")
+        snap2, _ = _ingest(
+            orch, seeded_db, publication_id=2, render_manifest_id=2, provider_video_id="vid456"
+        )
         assert snap1.id != snap2.id
 
     def test_snapshot_attribution_stored(self, orch, seeded_db):
@@ -304,16 +311,19 @@ class TestOrchestratorAggregate:
         _ingest(orch, seeded_db)
         orch.aggregate(publication_id=1, topic_id=1)
         from app.analytics.repository import list_aggregates
+
         aggs = list_aggregates(seeded_db, publication_id=1)
         assert len(aggs) > 0
 
     def test_aggregate_stores_calculation_method(self, orch, seeded_db):
         from app.analytics.constants import CALC_METHOD_SUM, METRIC_VIEWS
+
         p = FakeAnalyticsProvider(metrics={METRIC_VIEWS: 100.0})
         orch2 = AnalyticsOrchestrator(seeded_db, p)
         _ingest(orch2, seeded_db)
         orch2.aggregate(publication_id=1, topic_id=1)
         from app.analytics.repository import list_aggregates
+
         aggs = list_aggregates(seeded_db, publication_id=1, metric_name=METRIC_VIEWS)
         assert any(a.calculation_method == CALC_METHOD_SUM for a in aggs)
 
@@ -321,6 +331,7 @@ class TestOrchestratorAggregate:
         snap, _ = _ingest(orch, seeded_db)
         orch.aggregate(publication_id=1, topic_id=1)
         from app.analytics.repository import list_aggregates
+
         aggs = list_aggregates(seeded_db, publication_id=1)
         for agg in aggs:
             assert isinstance(agg.source_snapshot_ids, list)
@@ -332,9 +343,8 @@ class TestOrchestratorAggregate:
         _ingest(orch, seeded_db, currency_code="USD")
         orch.aggregate(publication_id=1, topic_id=1)
         from app.analytics.repository import list_aggregates
-        aggs = list_aggregates(
-            seeded_db, publication_id=1, metric_name=METRIC_REVENUE_ESTIMATE
-        )
+
+        aggs = list_aggregates(seeded_db, publication_id=1, metric_name=METRIC_REVENUE_ESTIMATE)
         assert all(a.currency_code == "USD" for a in aggs)
 
 

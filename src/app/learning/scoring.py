@@ -128,9 +128,7 @@ def compute_confidence_from_evidence(
     return score, label
 
 
-def meets_minimum_confidence(
-    snapshot_count: int, required: str
-) -> bool:
+def meets_minimum_confidence(snapshot_count: int, required: str) -> bool:
     """Return True if the snapshot count meets the minimum for the required confidence level."""
     if required == "high":
         return snapshot_count >= MIN_SNAPSHOTS_HIGH_CONFIDENCE

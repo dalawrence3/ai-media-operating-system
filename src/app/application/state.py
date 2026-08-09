@@ -72,9 +72,7 @@ def create_pipeline(
     return pipeline_id
 
 
-def create_stage_entries(
-    conn: Any, pipeline_id: str, stages: list[str], *, first: str
-) -> None:
+def create_stage_entries(conn: Any, pipeline_id: str, stages: list[str], *, first: str) -> None:
     """Insert initial stage log rows — first stage is 'running', rest 'pending'."""
     now = _now_iso()
     for stage in stages:
@@ -112,9 +110,7 @@ def advance_stage(
     conn.commit()
 
 
-def fail_stage(
-    conn: Any, pipeline_id: str, stage: str, *, error_message: str
-) -> None:
+def fail_stage(conn: Any, pipeline_id: str, stage: str, *, error_message: str) -> None:
     now = _now_iso()
     conn.execute(
         "UPDATE app_pipeline_stage_log "
@@ -180,7 +176,8 @@ def update_pipeline_status(
     blocked_reason: str | None = None,
 ) -> None:
     _update_pipeline(
-        conn, pipeline_id,
+        conn,
+        pipeline_id,
         status=status,
         current_stage=current_stage,
         error_message=error_message,
@@ -203,9 +200,7 @@ def get_pipeline(conn: Any, pipeline_id: str) -> PipelineView:
     return _row_to_view(row, stages)
 
 
-def get_pipeline_by_idempotency_key(
-    conn: Any, idempotency_key: str
-) -> PipelineView | None:
+def get_pipeline_by_idempotency_key(conn: Any, idempotency_key: str) -> PipelineView | None:
     row = conn.execute(
         "SELECT * FROM app_pipeline_executions WHERE idempotency_key=?",
         (idempotency_key,),
@@ -270,9 +265,7 @@ def _build_stages(stage_rows: list) -> list[PipelineStageView]:
             seen.add(r["stage"])
             latest.append(r)
     latest.sort(
-        key=lambda r: (
-            PIPELINE_STAGES.index(r["stage"]) if r["stage"] in PIPELINE_STAGES else 999
-        )
+        key=lambda r: PIPELINE_STAGES.index(r["stage"]) if r["stage"] in PIPELINE_STAGES else 999
     )
     return [_row_to_stage_view(r) for r in latest]
 
@@ -296,8 +289,7 @@ def _load_stages(conn: Any, pipeline_id: str) -> list[PipelineStageView]:
     from app.application.commands import PIPELINE_STAGES
 
     rows = conn.execute(
-        "SELECT * FROM app_pipeline_stage_log "
-        "WHERE pipeline_id=? ORDER BY attempt_number DESC",
+        "SELECT * FROM app_pipeline_stage_log WHERE pipeline_id=? ORDER BY attempt_number DESC",
         (pipeline_id,),
     ).fetchall()
     seen: set[str] = set()

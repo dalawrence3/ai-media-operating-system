@@ -37,15 +37,11 @@ def revoke_credential(conn: Any, profile_id: str, actor: str) -> CredentialProfi
     return repo.update_credential_status(conn, profile_id, "revoked", actor)
 
 
-def mark_credential_expiring(
-    conn: Any, profile_id: str, actor: str
-) -> CredentialProfile:
+def mark_credential_expiring(conn: Any, profile_id: str, actor: str) -> CredentialProfile:
     return repo.update_credential_status(conn, profile_id, "expiring", actor)
 
 
-def mark_credential_expired(
-    conn: Any, profile_id: str, actor: str
-) -> CredentialProfile:
+def mark_credential_expired(conn: Any, profile_id: str, actor: str) -> CredentialProfile:
     return repo.update_credential_status(conn, profile_id, "expired", actor)
 
 

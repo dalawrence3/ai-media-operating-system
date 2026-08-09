@@ -129,6 +129,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def _permission_error_handler(request: Request, exc: PermissionError) -> JSONResponse:
     return JSONResponse(status_code=403, content={"detail": str(exc)})
 
+
 # ---------------------------------------------------------------------------
 # Observability middleware (order matters: outermost = last added)
 # ---------------------------------------------------------------------------

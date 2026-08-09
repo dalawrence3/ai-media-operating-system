@@ -27,9 +27,7 @@ class TestV18DDLStandalone:
         conn = open_db(db_path)
         tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         cp_tables = {
             "cp_organizations",
@@ -125,9 +123,7 @@ class TestV17ToV18Migration:
         ]
         existing = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         for table in v17_tables:
             assert table in existing
@@ -195,8 +191,23 @@ class TestExperimentAssignmentUnique:
         )
         conn.execute(
             "INSERT INTO cp_experiments VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            ("e-1", "ws-1", "ch-1", "Test", "H", "draft", "ctr", "cli",
-             now, now, None, None, None, None, None),
+            (
+                "e-1",
+                "ws-1",
+                "ch-1",
+                "Test",
+                "H",
+                "draft",
+                "ctr",
+                "cli",
+                now,
+                now,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
         )
         conn.execute(
             "INSERT INTO cp_experiment_variants VALUES (?,?,?,?,?,?,?)",

@@ -54,9 +54,7 @@ def get_review_queue(conn: Any, workspace_id: str) -> list[ReviewItemView]:
                 item_id=row["id"],
                 workspace_id=workspace_id,
                 channel_id=row["channel_id"],
-                description=(
-                    f"Pipeline waiting for review at stage '{row['current_stage']}'"
-                ),
+                description=(f"Pipeline waiting for review at stage '{row['current_stage']}'"),
                 status="open",
                 created_at=row["created_at"] or _now_iso(),
                 metadata={"stage": row["current_stage"]},
@@ -119,6 +117,7 @@ def _approve_pipeline_review(
     pv = pipeline_state.get_pipeline(conn, pipeline_id)
     if pv.workspace_id != workspace_id:
         from app.application.errors import CrossWorkspaceAccessError
+
         raise CrossWorkspaceAccessError("Pipeline", pipeline_id, workspace_id)
 
     # Find the stage currently waiting for review and mark it completed.
@@ -147,6 +146,7 @@ def _reject_pipeline_review(
     pv = pipeline_state.get_pipeline(conn, pipeline_id)
     if pv.workspace_id != workspace_id:
         from app.application.errors import CrossWorkspaceAccessError
+
         raise CrossWorkspaceAccessError("Pipeline", pipeline_id, workspace_id)
 
     waiting = [s for s in pv.stages if s.status == "waiting_for_review"]

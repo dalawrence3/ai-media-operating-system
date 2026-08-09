@@ -86,8 +86,11 @@ def check_budget(
         )
     if platform_account_id:
         checks.append(
-            (BUDGET_SCOPE_PLATFORM_ACCOUNT, platform_account_id,
-             lambda s: repo.sum_cost_usd_by_account(conn, platform_account_id, s))
+            (
+                BUDGET_SCOPE_PLATFORM_ACCOUNT,
+                platform_account_id,
+                lambda s: repo.sum_cost_usd_by_account(conn, platform_account_id, s),
+            )
         )
 
     for scope, scope_id, spend_fn in checks:

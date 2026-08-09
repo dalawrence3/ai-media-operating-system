@@ -18,11 +18,11 @@ Production must never degrade to a permissive default.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class StageClass(str, Enum):
+class StageClass(StrEnum):
     A = "A"  # Local — always allowed
     B = "B"  # Provider API required
     C = "C"  # Live publishing required
@@ -96,8 +96,7 @@ class ProviderBoundary:
 
         if stage_class in (StageClass.B, StageClass.C):
             ai_live = getattr(cfg, "ai_provider", "fake") != "fake" and bool(
-                getattr(cfg, "anthropic_api_key", "")
-                or getattr(cfg, "elevenlabs_api_key", "")
+                getattr(cfg, "anthropic_api_key", "") or getattr(cfg, "elevenlabs_api_key", "")
             )
             tts_live = getattr(cfg, "tts_live_enabled", False)
             provider_live = ai_live or tts_live

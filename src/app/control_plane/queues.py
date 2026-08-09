@@ -34,4 +34,5 @@ def list_failed_operations_by_workspace(
         (workspace_id, limit),
     ).fetchall()
     from app.control_plane.repository import _row_to_operation_execution
+
     return [_row_to_operation_execution(r) for r in rows]

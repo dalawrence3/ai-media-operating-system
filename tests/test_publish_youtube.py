@@ -93,6 +93,7 @@ class TestYouTubeUpload:
 
     def test_prepare_package_title_too_long_raises(self):
         from app.publishing.errors import PublishingValidationError
+
         p = _provider()
         with pytest.raises(PublishingValidationError, match="100"):
             p.prepare_package(_package(title="x" * 101))

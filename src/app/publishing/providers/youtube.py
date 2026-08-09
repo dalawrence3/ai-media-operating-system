@@ -45,6 +45,7 @@ YOUTUBE_API_VERSION = "v3"
 
 # ── Injected client boundary ──────────────────────────────────────────────────
 
+
 @runtime_checkable
 class YouTubeAPIClient(Protocol):
     """Minimal API surface needed by the YouTube adapter.
@@ -104,6 +105,7 @@ class FakeYouTubeAPIClient:
 
 # ── YouTube adapter ───────────────────────────────────────────────────────────
 
+
 class YouTubePublishingProvider:
     """YouTube publishing adapter implementing the PublishingProvider protocol.
 
@@ -136,14 +138,14 @@ class YouTubePublishingProvider:
         """Validate YouTube-specific constraints before upload."""
         if len(package.title) > 100:
             from app.publishing.errors import PublishingValidationError
+
             raise PublishingValidationError(
                 f"YouTube title exceeds 100 chars ({len(package.title)})."
             )
         if len(package.tags) > 500:
             from app.publishing.errors import PublishingValidationError
-            raise PublishingValidationError(
-                f"YouTube tag count {len(package.tags)} exceeds 500."
-            )
+
+            raise PublishingValidationError(f"YouTube tag count {len(package.tags)} exceeds 500.")
         return package
 
     def upload(self, package: UploadPackage) -> UploadResult:
@@ -155,9 +157,8 @@ class YouTubePublishingProvider:
             )
         except Exception as exc:
             from app.publishing.errors import ProviderUploadError
-            raise ProviderUploadError(
-                f"YouTube upload failed: {exc}"
-            ) from exc
+
+            raise ProviderUploadError(f"YouTube upload failed: {exc}") from exc
         video_id = response.get("id", "")
         url = f"https://www.youtube.com/watch?v={video_id}" if video_id else None
         return UploadResult(
@@ -192,9 +193,8 @@ class YouTubePublishingProvider:
             )
         except Exception as exc:
             from app.publishing.errors import ProviderUploadError
-            raise ProviderUploadError(
-                f"YouTube publish step failed: {exc}"
-            ) from exc
+
+            raise ProviderUploadError(f"YouTube publish step failed: {exc}") from exc
 
         return PublishResult(
             provider_video_id=result.provider_video_id,

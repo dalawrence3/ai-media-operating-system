@@ -42,6 +42,7 @@ def _now() -> str:
 
 # ── Publishing Plan ───────────────────────────────────────────────────────────
 
+
 def create_publishing_plan(
     conn: sqlite3.Connection,
     *,
@@ -79,40 +80,52 @@ def create_publishing_plan(
         )
         """,
         (
-            render_manifest_id, render_job_id,
-            topic_id, production_plan_id, script_id, scene_manifest_id,
-            narration_run_id, caption_run_id, experiment_id,
-            input_hash, PUBLISHING_ENGINE_VERSION, PUBLISHING_METADATA_VERSION,
-            provider, provider_version,
-            metadata.title, metadata.description,
-            json.dumps(metadata.tags), metadata.language,
-            metadata.category, metadata.visibility,
+            render_manifest_id,
+            render_job_id,
+            topic_id,
+            production_plan_id,
+            script_id,
+            scene_manifest_id,
+            narration_run_id,
+            caption_run_id,
+            experiment_id,
+            input_hash,
+            PUBLISHING_ENGINE_VERSION,
+            PUBLISHING_METADATA_VERSION,
+            provider,
+            provider_version,
+            metadata.title,
+            metadata.description,
+            json.dumps(metadata.tags),
+            metadata.language,
+            metadata.category,
+            metadata.visibility,
             1 if metadata.made_for_kids else 0,
-            metadata.playlist_id, metadata.thumbnail_path, metadata.captions_path,
-            metadata.copyright_notice, metadata.licensing_notes, metadata.publication_notes,
-            schedule.schedule_type, schedule.scheduled_at, schedule.timezone,
-            PLAN_STATUS_DRAFT, now, now,
+            metadata.playlist_id,
+            metadata.thumbnail_path,
+            metadata.captions_path,
+            metadata.copyright_notice,
+            metadata.licensing_notes,
+            metadata.publication_notes,
+            schedule.schedule_type,
+            schedule.scheduled_at,
+            schedule.timezone,
+            PLAN_STATUS_DRAFT,
+            now,
+            now,
         ),
     ).lastrowid
-    row = conn.execute(
-        "SELECT * FROM publishing_plans WHERE id = ?", (row_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM publishing_plans WHERE id = ?", (row_id,)).fetchone()
     assert row is not None
     return PublishingPlan.from_row(row)
 
 
-def get_publishing_plan(
-    conn: sqlite3.Connection, plan_id: int
-) -> PublishingPlan | None:
-    row = conn.execute(
-        "SELECT * FROM publishing_plans WHERE id = ?", (plan_id,)
-    ).fetchone()
+def get_publishing_plan(conn: sqlite3.Connection, plan_id: int) -> PublishingPlan | None:
+    row = conn.execute("SELECT * FROM publishing_plans WHERE id = ?", (plan_id,)).fetchone()
     return PublishingPlan.from_row(row) if row else None
 
 
-def get_publishing_plan_by_hash(
-    conn: sqlite3.Connection, input_hash: str
-) -> PublishingPlan | None:
+def get_publishing_plan_by_hash(conn: sqlite3.Connection, input_hash: str) -> PublishingPlan | None:
     row = conn.execute(
         "SELECT * FROM publishing_plans WHERE input_hash = ?", (input_hash,)
     ).fetchone()
@@ -238,9 +251,7 @@ def reject_publishing_plan(
     plan = get_publishing_plan(conn, plan_id)
     if plan is None:
         raise PublishingPlanNotFoundError(f"Publishing plan {plan_id} not found.")
-    updated = update_publishing_plan_status(
-        conn, plan_id, "rejected", rejection_reason=reason_code
-    )
+    updated = update_publishing_plan_status(conn, plan_id, "rejected", rejection_reason=reason_code)
     record_publishing_review_event(
         conn,
         publishing_plan_id=plan_id,
@@ -262,6 +273,7 @@ def reject_publishing_plan(
 
 # ── Publishing Job ────────────────────────────────────────────────────────────
 
+
 def create_publishing_job(
     conn: sqlite3.Connection,
     publishing_plan_id: int,
@@ -278,22 +290,24 @@ def create_publishing_job(
             status, retry_count, created_at, updated_at
         ) VALUES (?,?,?,?,?,?,?,?)
         """,
-        (publishing_plan_id, attempt_number, provider, provider_version,
-         JOB_STATUS_QUEUED, 0, now, now),
+        (
+            publishing_plan_id,
+            attempt_number,
+            provider,
+            provider_version,
+            JOB_STATUS_QUEUED,
+            0,
+            now,
+            now,
+        ),
     ).lastrowid
-    row = conn.execute(
-        "SELECT * FROM publishing_jobs WHERE id = ?", (row_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM publishing_jobs WHERE id = ?", (row_id,)).fetchone()
     assert row is not None
     return PublishingJob.from_row(row)
 
 
-def get_publishing_job(
-    conn: sqlite3.Connection, job_id: int
-) -> PublishingJob | None:
-    row = conn.execute(
-        "SELECT * FROM publishing_jobs WHERE id = ?", (job_id,)
-    ).fetchone()
+def get_publishing_job(conn: sqlite3.Connection, job_id: int) -> PublishingJob | None:
+    row = conn.execute("SELECT * FROM publishing_jobs WHERE id = ?", (job_id,)).fetchone()
     return PublishingJob.from_row(row) if row else None
 
 
@@ -320,12 +334,9 @@ def get_active_publishing_job(
     return PublishingJob.from_row(row) if row else None
 
 
-def list_publishing_jobs(
-    conn: sqlite3.Connection, publishing_plan_id: int
-) -> list[PublishingJob]:
+def list_publishing_jobs(conn: sqlite3.Connection, publishing_plan_id: int) -> list[PublishingJob]:
     rows = conn.execute(
-        "SELECT * FROM publishing_jobs WHERE publishing_plan_id = ?"
-        " ORDER BY attempt_number",
+        "SELECT * FROM publishing_jobs WHERE publishing_plan_id = ? ORDER BY attempt_number",
         (publishing_plan_id,),
     ).fetchall()
     return [PublishingJob.from_row(r) for r in rows]
@@ -374,6 +385,7 @@ def update_publishing_job_status(
 
 # ── Publication ───────────────────────────────────────────────────────────────
 
+
 def create_publication(
     conn: sqlite3.Connection,
     *,
@@ -403,44 +415,42 @@ def create_publication(
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            publishing_plan_id, publishing_job_id,
-            provider, provider_version,
-            provider_video_id, provider_url, json.dumps(provider_status),
-            initial_status, visibility, scheduled_at,
-            PUBLISHING_ENGINE_VERSION, input_hash, output_sha256,
-            now, now,
+            publishing_plan_id,
+            publishing_job_id,
+            provider,
+            provider_version,
+            provider_video_id,
+            provider_url,
+            json.dumps(provider_status),
+            initial_status,
+            visibility,
+            scheduled_at,
+            PUBLISHING_ENGINE_VERSION,
+            input_hash,
+            output_sha256,
+            now,
+            now,
         ),
     ).lastrowid
-    row = conn.execute(
-        "SELECT * FROM publications WHERE id = ?", (row_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM publications WHERE id = ?", (row_id,)).fetchone()
     assert row is not None
     return Publication.from_row(row)
 
 
-def get_publication(
-    conn: sqlite3.Connection, publication_id: int
-) -> Publication | None:
-    row = conn.execute(
-        "SELECT * FROM publications WHERE id = ?", (publication_id,)
-    ).fetchone()
+def get_publication(conn: sqlite3.Connection, publication_id: int) -> Publication | None:
+    row = conn.execute("SELECT * FROM publications WHERE id = ?", (publication_id,)).fetchone()
     return Publication.from_row(row) if row else None
 
 
-def get_latest_publication(
-    conn: sqlite3.Connection, publishing_plan_id: int
-) -> Publication | None:
+def get_latest_publication(conn: sqlite3.Connection, publishing_plan_id: int) -> Publication | None:
     row = conn.execute(
-        "SELECT * FROM publications WHERE publishing_plan_id = ?"
-        " ORDER BY id DESC LIMIT 1",
+        "SELECT * FROM publications WHERE publishing_plan_id = ? ORDER BY id DESC LIMIT 1",
         (publishing_plan_id,),
     ).fetchone()
     return Publication.from_row(row) if row else None
 
 
-def list_publications(
-    conn: sqlite3.Connection, publishing_plan_id: int
-) -> list[Publication]:
+def list_publications(conn: sqlite3.Connection, publishing_plan_id: int) -> list[Publication]:
     rows = conn.execute(
         "SELECT * FROM publications WHERE publishing_plan_id = ? ORDER BY id",
         (publishing_plan_id,),
@@ -488,6 +498,7 @@ def update_publication_status(
 
 # ── Publishing Review Events ──────────────────────────────────────────────────
 
+
 def record_publishing_review_event(
     conn: sqlite3.Connection,
     *,
@@ -519,16 +530,25 @@ def record_publishing_review_event(
         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
-            publishing_plan_id, publishing_job_id, publication_id,
-            topic_id, production_plan_id, script_id, render_manifest_id,
-            provider, experiment_id,
-            event_type, reason_code, severity, notes, actor, expected_correction,
+            publishing_plan_id,
+            publishing_job_id,
+            publication_id,
+            topic_id,
+            production_plan_id,
+            script_id,
+            render_manifest_id,
+            provider,
+            experiment_id,
+            event_type,
+            reason_code,
+            severity,
+            notes,
+            actor,
+            expected_correction,
             now,
         ),
     ).lastrowid
-    row = conn.execute(
-        "SELECT * FROM publishing_review_events WHERE id = ?", (row_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM publishing_review_events WHERE id = ?", (row_id,)).fetchone()
     assert row is not None
     return PublishingReviewEvent.from_row(row)
 
@@ -537,8 +557,7 @@ def list_publishing_review_events(
     conn: sqlite3.Connection, publishing_plan_id: int
 ) -> list[PublishingReviewEvent]:
     rows = conn.execute(
-        "SELECT * FROM publishing_review_events"
-        " WHERE publishing_plan_id = ? ORDER BY id",
+        "SELECT * FROM publishing_review_events WHERE publishing_plan_id = ? ORDER BY id",
         (publishing_plan_id,),
     ).fetchall()
     return [PublishingReviewEvent.from_row(r) for r in rows]

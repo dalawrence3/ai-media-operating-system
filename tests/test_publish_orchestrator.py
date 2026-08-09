@@ -42,8 +42,7 @@ def db(tmp_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=OFF")
     conn.execute("INSERT INTO topics (id, title, angle) VALUES (1,'T','A')")
     conn.execute(
-        "INSERT INTO scripts (id, topic_id, version, body, status)"
-        " VALUES (1,1,1,'body','approved')"
+        "INSERT INTO scripts (id, topic_id, version, body, status) VALUES (1,1,1,'body','approved')"
     )
     conn.execute(
         "INSERT INTO production_plans"
@@ -126,8 +125,12 @@ def _prepare(db, title: str = "Test Video", **kw):
 
 def _start(db, plan_id: int, *, provider=None, **kw):
     return start_publishing_job(
-        db, plan_id, provider or _fake_provider(),
-        output_path="/tmp/out.mp4", output_sha256="sha256out", **kw
+        db,
+        plan_id,
+        provider or _fake_provider(),
+        output_path="/tmp/out.mp4",
+        output_sha256="sha256out",
+        **kw,
     )
 
 
@@ -156,9 +159,7 @@ class TestPreparePlan:
 
     def test_manifest_not_found_raises(self, db):
         with pytest.raises(PublishingPlanNotFoundError):
-            prepare_publishing_plan(
-                db, 999, _metadata(), _schedule(), provider=_fake_provider()
-            )
+            prepare_publishing_plan(db, 999, _metadata(), _schedule(), provider=_fake_provider())
 
     def test_manifest_not_approved_raises(self, db):
         db.execute("UPDATE render_manifests SET status='draft' WHERE id=1")
@@ -231,6 +232,7 @@ class TestStartPublishingJob:
 
     def test_max_retries_blocked(self, db):
         from app.publishing.constants import MAX_RETRY_ATTEMPTS
+
         plan, _ = _prepare(db)
         db.commit()
         for i in range(MAX_RETRY_ATTEMPTS):
@@ -269,8 +271,7 @@ class TestRetryPublishingJob:
     def test_retry_creates_new_job(self, db):
         plan_id = self._setup_failed_job(db)
         job, pub = retry_publishing_job(
-            db, plan_id, _fake_provider(),
-            output_path="/tmp/out.mp4", output_sha256="sha256out"
+            db, plan_id, _fake_provider(), output_path="/tmp/out.mp4", output_sha256="sha256out"
         )
         db.commit()
         assert job.attempt_number == 2
@@ -281,15 +282,13 @@ class TestRetryPublishingJob:
         db.commit()
         with pytest.raises(JobNotRetryableError):
             retry_publishing_job(
-                db, plan.id, _fake_provider(),
-                output_path="/tmp/out.mp4", output_sha256="sha256out"
+                db, plan.id, _fake_provider(), output_path="/tmp/out.mp4", output_sha256="sha256out"
             )
 
     def test_retry_records_retry_requested_event(self, db):
         plan_id = self._setup_failed_job(db)
         retry_publishing_job(
-            db, plan_id, _fake_provider(),
-            output_path="/tmp/out.mp4", output_sha256="sha256out"
+            db, plan_id, _fake_provider(), output_path="/tmp/out.mp4", output_sha256="sha256out"
         )
         db.commit()
         events = list_publishing_review_events(db, plan_id)
@@ -306,10 +305,7 @@ class TestCancelPublishingJob:
         db.commit()
         assert job.status == "cancelled"
         events = list_publishing_review_events(db, plan.id)
-        assert any(
-            e.event_type == "cancellation_requested" and e.actor == "alice"
-            for e in events
-        )
+        assert any(e.event_type == "cancellation_requested" and e.actor == "alice" for e in events)
 
     def test_cancel_no_active_job_raises(self, db):
         plan, _ = _prepare(db)
@@ -323,7 +319,8 @@ class TestUpdatePlanSchedule:
         plan, _ = _prepare(db)
         db.commit()
         updated = update_plan_schedule(
-            db, plan.id,
+            db,
+            plan.id,
             PublishingScheduleDraft(
                 schedule_type="scheduled",
                 scheduled_at="2099-06-01T12:00:00+00:00",
@@ -338,7 +335,8 @@ class TestUpdatePlanSchedule:
         plan, _ = _prepare(db)
         db.commit()
         update_plan_schedule(
-            db, plan.id,
+            db,
+            plan.id,
             PublishingScheduleDraft(schedule_type="manual"),
             actor="ops",
         )
@@ -349,12 +347,14 @@ class TestUpdatePlanSchedule:
     def test_rejected_plan_schedule_update_raises(self, db):
         from app.publishing.errors import IllegalPublishingPlanTransitionError
         from app.publishing.repository import reject_publishing_plan
+
         plan, _ = _prepare(db)
         db.commit()
         reject_publishing_plan(db, plan.id)
         db.commit()
         with pytest.raises(IllegalPublishingPlanTransitionError):
             update_plan_schedule(
-                db, plan.id,
+                db,
+                plan.id,
                 PublishingScheduleDraft(schedule_type="manual"),
             )

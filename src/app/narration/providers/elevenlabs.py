@@ -69,6 +69,7 @@ _RETRY_STATUSES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
 
 # ── Capabilities (module-level constants, built once) ─────────────────────────
 
+
 def _build_elevenlabs_capabilities() -> tuple[ProviderCapabilities, ProviderFeatureFlags]:
     flags = ProviderFeatureFlags(
         supports_speaking_rate=True,
@@ -93,13 +94,46 @@ def _build_elevenlabs_capabilities() -> tuple[ProviderCapabilities, ProviderFeat
                 # BCP-47 codes for the 29 languages in eleven_multilingual_v2.
                 # Wildcard is NOT used: we list the exact language set so the
                 # DefaultProviderValidator can enforce language compatibility.
-                "en", "en-US", "en-GB", "en-AU", "en-IN",
-                "ja", "zh", "de", "hi", "fr", "fr-FR",
-                "ko", "pt", "pt-BR", "pt-PT", "it", "es", "es-ES", "es-MX",
-                "id", "nl", "tr", "pl", "sv", "bg", "ro", "ar", "cs", "el",
-                "fi", "hr", "ms", "sk", "da", "ta", "uk",
+                "en",
+                "en-US",
+                "en-GB",
+                "en-AU",
+                "en-IN",
+                "ja",
+                "zh",
+                "de",
+                "hi",
+                "fr",
+                "fr-FR",
+                "ko",
+                "pt",
+                "pt-BR",
+                "pt-PT",
+                "it",
+                "es",
+                "es-ES",
+                "es-MX",
+                "id",
+                "nl",
+                "tr",
+                "pl",
+                "sv",
+                "bg",
+                "ro",
+                "ar",
+                "cs",
+                "el",
+                "fi",
+                "hr",
+                "ms",
+                "sk",
+                "da",
+                "ta",
+                "uk",
                 # Flash v2.5 adds Hungarian, Norwegian, Vietnamese.
-                "hu", "nb", "vi",
+                "hu",
+                "nb",
+                "vi",
             }
         ),
         supported_sample_rates_hz=frozenset({8000, 16000, 22050, 24000, 32000, 44100, 48000}),
@@ -160,6 +194,7 @@ ELEVENLABS_PROVIDER_CONFIG: ProviderConfig = _build_elevenlabs_config()
 
 # ── Output format mapping ─────────────────────────────────────────────────────
 
+
 def _elevenlabs_output_format(output_format: str, sample_rate_hz: int) -> str:
     """Map generic output_format + sample_rate_hz to an ElevenLabs format string.
 
@@ -180,6 +215,7 @@ def _elevenlabs_output_format(output_format: str, sample_rate_hz: int) -> str:
 
 
 # ── Loudness measurement (RMS dBFS from WAV PCM) ─────────────────────────────
+
 
 def _measure_rms_dbfs(wav_bytes: bytes) -> float | None:
     """Return RMS dBFS of the WAV audio, or None on parse error.
@@ -225,6 +261,7 @@ def _measure_rms_dbfs(wav_bytes: bytes) -> float | None:
 
 # ── Duration deviation check ──────────────────────────────────────────────────
 
+
 def _check_duration_deviation(
     narration_text: str,
     speaking_rate: float,
@@ -244,8 +281,7 @@ def _check_duration_deviation(
     deviation = abs(actual_seconds - estimated) / estimated
     if deviation > NARRATION_DURATION_DEVIATION_THRESHOLD:
         logger.warning(
-            "ElevenLabs duration deviation %.0f%% "
-            "(estimated=%.2fs actual=%.2fs words=%d)",
+            "ElevenLabs duration deviation %.0f%% (estimated=%.2fs actual=%.2fs words=%d)",
             deviation * 100,
             estimated,
             actual_seconds,
@@ -254,6 +290,7 @@ def _check_duration_deviation(
 
 
 # ── ElevenLabs provider ───────────────────────────────────────────────────────
+
 
 class ElevenLabsTTSProvider:
     """Live ElevenLabs TTS adapter.
@@ -362,8 +399,7 @@ class ElevenLabsTTSProvider:
         cfg = get_config()
         if not cfg.tts_live_enabled:
             raise ProviderCredentialError(
-                "ElevenLabs live synthesis is disabled. "
-                "Set ACE_TTS_LIVE_ENABLED=true to enable it."
+                "ElevenLabs live synthesis is disabled. Set ACE_TTS_LIVE_ENABLED=true to enable it."
             )
         api_key = self._api_key or cfg.elevenlabs_api_key
         if not api_key:
@@ -380,8 +416,7 @@ class ElevenLabsTTSProvider:
             self._sdk = ElevenLabs(api_key=api_key)
         except ImportError as exc:
             raise ProviderCredentialError(
-                "elevenlabs SDK is not installed. "
-                "Run: pip install 'elevenlabs>=2.45.0,<3.0'"
+                "elevenlabs SDK is not installed. Run: pip install 'elevenlabs>=2.45.0,<3.0'"
             ) from exc
 
         self._lifecycle_state = ProviderLifecycleState.READY
@@ -455,6 +490,7 @@ class ElevenLabsTTSProvider:
             kwargs["seed"] = int(seed)
         if pronunciation_dict_ids:
             from elevenlabs.types import PronunciationDictionaryVersionLocator
+
             kwargs["pronunciation_dictionary_locators"] = [
                 PronunciationDictionaryVersionLocator(
                     pronunciation_dictionary_id=did,
@@ -536,6 +572,7 @@ class ElevenLabsTTSProvider:
 
 # ── Module-level metadata constants (SDK version resolved at import time) ─────
 
+
 def _get_sdk_version() -> str:
     try:
         import elevenlabs as _el
@@ -554,6 +591,7 @@ ELEVENLABS_METADATA: ProviderMetadata = _build_elevenlabs_metadata(
 
 # ── Internal utilities ────────────────────────────────────────────────────────
 
+
 class _RetryableError(Exception):
     """Internal sentinel: the API call failed with a retryable status code."""
 
@@ -568,7 +606,7 @@ def _extract_status_code(exc: Exception) -> int | None:
     for prefix in ("status_code=", "HTTP ", "Status: ", "status: "):
         idx = msg.find(prefix)
         if idx != -1:
-            tail = msg[idx + len(prefix):].lstrip()
+            tail = msg[idx + len(prefix) :].lstrip()
             try:
                 return int(tail[:3])
             except ValueError:
@@ -664,6 +702,7 @@ def _build_provider_metadata_json(
     for None explicitly rather than relying on AttributeError to be safe with both the
     real SDK response and SimpleNamespace test fixtures.
     """
+
     def _extract_alignment(obj) -> dict:
         al = getattr(obj, "alignment", None)
         if al is None:

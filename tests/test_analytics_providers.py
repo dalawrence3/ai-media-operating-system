@@ -182,8 +182,11 @@ class TestProviderIsolation:
         import inspect
 
         yt_field_names = {
-            "estimatedMinutesWatched", "impressionClickThroughRate",
-            "subscribersGained", "subscribersLost", "estimatedRevenue",
+            "estimatedMinutesWatched",
+            "impressionClickThroughRate",
+            "subscribersGained",
+            "subscribersLost",
+            "estimatedRevenue",
             "averageViewDuration",
         }
         modules_to_check = [
@@ -226,6 +229,5 @@ class TestProviderIsolation:
             mod = importlib.import_module(mod_name)
             source = inspect.getsource(mod)
             assert '"youtube"' not in source or mod_name.endswith("providers"), (
-                f'provider == "youtube" check found in {mod_name}. '
-                "Must stay in adapters only."
+                f'provider == "youtube" check found in {mod_name}. Must stay in adapters only.'
             )

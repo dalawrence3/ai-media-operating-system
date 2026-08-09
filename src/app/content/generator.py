@@ -249,9 +249,7 @@ def generate_script(
         try:
             data = json.loads(response.raw_text)
         except json.JSONDecodeError as exc:
-            raise ScriptGenerationError(
-                f"Provider returned non-JSON response: {exc}"
-            ) from exc
+            raise ScriptGenerationError(f"Provider returned non-JSON response: {exc}") from exc
 
         llm_script = LLMGeneratedScript.model_validate(data)
         script = GeneratedScript.from_llm(llm_script)

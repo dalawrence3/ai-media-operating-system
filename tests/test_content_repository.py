@@ -84,6 +84,7 @@ def _finalize(
     if script is None:
         script = _make_generated_script()
     from app.content.renderer import compute_duration_s, count_words, render_body
+
     body = render_body(script)
     word_count = count_words(script)
     duration_s = compute_duration_s(word_count)

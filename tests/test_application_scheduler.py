@@ -96,6 +96,7 @@ class TestCreateSchedule:
 
     def test_invalid_schedule_type_raises(self, conn, workspace):
         from app.application.errors import InvalidScheduleTypeError
+
         with pytest.raises(InvalidScheduleTypeError):
             sched.create_schedule(
                 conn,
@@ -131,8 +132,8 @@ class TestListSchedules:
             conn, OrganizationDraft(id=_uid(), name="O2", slug="o2", actor="cli")
         )
         ws2 = cp_repo.create_workspace(
-            conn, WorkspaceDraft(id=_uid(), name="W2", slug="w2", actor="cli",
-                                 organization_id=org.id)
+            conn,
+            WorkspaceDraft(id=_uid(), name="W2", slug="w2", actor="cli", organization_id=org.id),
         )
         _create_interval(conn, workspace.id)
         _create_interval(conn, ws2.id)

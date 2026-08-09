@@ -26,9 +26,7 @@ _DEV_ACTOR = "dev:studio-user"
 _DEV_AUTH_ENABLED = os.environ.get("ACE_DEV_AUTH", "enabled") == "enabled"
 
 
-def dev_auth_hook(
-    conn: Any, command_type: str, workspace_id: str, actor: str
-) -> None:
+def dev_auth_hook(conn: Any, command_type: str, workspace_id: str, actor: str) -> None:
     """Dev-only auth hook — permits the canonical dev actor; denies all others.
 
     Replaces the fail-closed default_auth_hook during development so the

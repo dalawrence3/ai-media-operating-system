@@ -282,6 +282,7 @@ class TestLifecycle:
         monkeypatch.delenv("ACE_TTS_LIVE_ENABLED", raising=False)
         monkeypatch.delenv("ACE_ELEVENLABS_API_KEY", raising=False)
         from app.core.config import reset_config
+
         reset_config()
         p = ElevenLabsTTSProvider()
         with pytest.raises(ProviderCredentialError, match="ACE_TTS_LIVE_ENABLED"):
@@ -292,6 +293,7 @@ class TestLifecycle:
         monkeypatch.setenv("ACE_TTS_LIVE_ENABLED", "true")
         monkeypatch.delenv("ACE_ELEVENLABS_API_KEY", raising=False)
         from app.core.config import reset_config
+
         reset_config()
         p = ElevenLabsTTSProvider()
         with pytest.raises(ProviderCredentialError, match="ACE_ELEVENLABS_API_KEY"):
@@ -578,6 +580,7 @@ class TestMeasureRmsDbfs:
         result = _measure_rms_dbfs(wav)
         assert result is not None
         import math
+
         assert math.isinf(result) and result < 0
 
     def test_non_silent_wav_returns_finite_value(self):
@@ -594,6 +597,7 @@ class TestMeasureRmsDbfs:
         result = _measure_rms_dbfs(wav)
         assert result is not None
         import math
+
         assert math.isfinite(result)
         assert result < 0
 

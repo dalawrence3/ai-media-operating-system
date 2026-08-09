@@ -40,8 +40,15 @@ class TestDomains:
 
     def test_all_expected_domains_present(self):
         expected = {
-            "topics", "research", "scripts", "narration",
-            "captions", "scenes", "media", "publishing", "analytics",
+            "topics",
+            "research",
+            "scripts",
+            "narration",
+            "captions",
+            "scenes",
+            "media",
+            "publishing",
+            "analytics",
         }
         assert expected == RECOMMENDATION_DOMAINS
 
@@ -71,6 +78,7 @@ class TestSubsystems:
             SUBSYSTEM_TITLE_EFFECTIVENESS,
             SUBSYSTEM_TOPIC_SELECTION,
         )
+
         assert SUBSYSTEM_TOPIC_SELECTION in RECOMMENDATION_SUBSYSTEMS
         assert SUBSYSTEM_HOOK_EFFECTIVENESS in RECOMMENDATION_SUBSYSTEMS
         assert SUBSYSTEM_NARRATION_PACE in RECOMMENDATION_SUBSYSTEMS
@@ -111,6 +119,7 @@ class TestStatuses:
 class TestThresholds:
     def test_ctr_thresholds_ordered(self):
         from app.learning.constants import CTR_HIGH_THRESHOLD, CTR_LOW_THRESHOLD
+
         assert CTR_LOW_THRESHOLD < CTR_HIGH_THRESHOLD
 
     def test_retention_thresholds_ordered(self):
@@ -118,10 +127,12 @@ class TestThresholds:
             RETENTION_HIGH_THRESHOLD_S,
             RETENTION_LOW_THRESHOLD_S,
         )
+
         assert RETENTION_LOW_THRESHOLD_S < RETENTION_HIGH_THRESHOLD_S
 
     def test_engagement_threshold_positive(self):
         from app.learning.constants import ENGAGEMENT_LOW_THRESHOLD
+
         assert ENGAGEMENT_LOW_THRESHOLD > 0
 
     def test_min_snapshot_counts_ordered(self):
@@ -129,4 +140,5 @@ class TestThresholds:
             MIN_SNAPSHOTS_HIGH_CONFIDENCE,
             MIN_SNAPSHOTS_MEDIUM_CONFIDENCE,
         )
+
         assert MIN_SNAPSHOTS_MEDIUM_CONFIDENCE < MIN_SNAPSHOTS_HIGH_CONFIDENCE

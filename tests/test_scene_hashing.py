@@ -58,12 +58,8 @@ def test_different_segment_tuples_produce_different_hashes():
 
 
 def test_segment_order_matters():
-    h1 = compute_manifest_input_hash(
-        _make_input(segment_tuples=[(1, "a", 1000), (2, "b", 2000)])
-    )
-    h2 = compute_manifest_input_hash(
-        _make_input(segment_tuples=[(2, "b", 2000), (1, "a", 1000)])
-    )
+    h1 = compute_manifest_input_hash(_make_input(segment_tuples=[(1, "a", 1000), (2, "b", 2000)]))
+    h2 = compute_manifest_input_hash(_make_input(segment_tuples=[(2, "b", 2000), (1, "a", 1000)]))
     assert h1 != h2
 
 

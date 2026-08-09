@@ -46,9 +46,7 @@ def build_render_manifest(
     """
     render_scenes: list[RenderSceneDraft] = [_resolve_scene(s) for s in scenes]
 
-    scene_tuples = [
-        (s.scene_index, s.segment_id, s.audio_sha256) for s in render_scenes
-    ]
+    scene_tuples = [(s.scene_index, s.segment_id, s.audio_sha256) for s in render_scenes]
     hash_input = RenderHashInput(
         scene_manifest_id=scene_manifest_id,
         narration_run_id=narration_run_id,
@@ -205,7 +203,7 @@ class SceneInputBuilder:
                     asset_index=a.asset_index,
                     category=a.category,
                     priority=a.priority,
-                    local_path=None,    # not yet downloaded — placeholder render
+                    local_path=None,  # not yet downloaded — placeholder render
                     local_sha256=None,
                     source_url=a.source_url,
                     license_status=a.license_status,

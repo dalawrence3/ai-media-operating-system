@@ -67,15 +67,11 @@ def _emit_event(
     dispatch_event(conn, event)
 
 
-def find_recoverable_pipelines(
-    conn: Any, workspace_id: str
-) -> list[PipelineView]:
+def find_recoverable_pipelines(conn: Any, workspace_id: str) -> list[PipelineView]:
     """Return failed/blocked/paused pipelines that can be recovered."""
     result = []
     for status in RECOVERABLE_STATUSES:
-        result.extend(
-            pipeline_state.list_pipelines(conn, workspace_id, status=status)
-        )
+        result.extend(pipeline_state.list_pipelines(conn, workspace_id, status=status))
     return sorted(result, key=lambda p: p.created_at, reverse=True)
 
 
@@ -95,12 +91,11 @@ def recover_pipeline(
 
     if pv.workspace_id != workspace_id:
         from app.application.errors import CrossWorkspaceAccessError
+
         raise CrossWorkspaceAccessError("Pipeline", pipeline_id, workspace_id)
 
     if pv.status not in RECOVERABLE_STATUSES:
-        raise PipelineNotRecoverableError(
-            pipeline_id, f"status '{pv.status}' is not recoverable"
-        )
+        raise PipelineNotRecoverableError(pipeline_id, f"status '{pv.status}' is not recoverable")
 
     # Determine the stage to recover from.
     target_stage = from_stage
@@ -118,17 +113,18 @@ def recover_pipeline(
     # Preserve failure history — insert new attempt rows instead of updating in-place.
     stage_names = [s.stage for s in pv.stages]
     if target_stage not in stage_names:
-        raise PipelineNotRecoverableError(
-            pipeline_id, f"stage '{target_stage}' not in pipeline"
-        )
+        raise PipelineNotRecoverableError(pipeline_id, f"stage '{target_stage}' not in pipeline")
     target_idx = stage_names.index(target_stage)
     now = _now_iso()
     for stage in stage_names[target_idx:]:
-        max_attempt = conn.execute(
-            "SELECT MAX(attempt_number) FROM app_pipeline_stage_log "
-            "WHERE pipeline_id=? AND stage=?",
-            (pipeline_id, stage),
-        ).fetchone()[0] or 0
+        max_attempt = (
+            conn.execute(
+                "SELECT MAX(attempt_number) FROM app_pipeline_stage_log "
+                "WHERE pipeline_id=? AND stage=?",
+                (pipeline_id, stage),
+            ).fetchone()[0]
+            or 0
+        )
         status = "running" if stage == target_stage else "pending"
         started_at = now if stage == target_stage else None
         conn.execute(
@@ -147,7 +143,10 @@ def recover_pipeline(
     conn.commit()
 
     _emit_event(
-        conn, "pipeline.recovered", workspace_id, actor,
+        conn,
+        "pipeline.recovered",
+        workspace_id,
+        actor,
         {"pipeline_id": pipeline_id, "from_stage": target_stage},
         correlation_id=pv.correlation_id,
     )
@@ -168,9 +167,7 @@ def replay_event(
 
     Raises ReplayBlockedError for non-idempotent or completed events.
     """
-    row = conn.execute(
-        "SELECT * FROM cp_events WHERE id=?", (event_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM cp_events WHERE id=?", (event_id,)).fetchone()
     if row is None:
         raise ReplayBlockedError(event_id, "event not found")
 
@@ -183,8 +180,7 @@ def replay_event(
 
     # Check if any processing entries already completed successfully.
     completed = conn.execute(
-        "SELECT COUNT(*) FROM cp_event_processing "
-        "WHERE event_id=? AND status='completed'",
+        "SELECT COUNT(*) FROM cp_event_processing WHERE event_id=? AND status='completed'",
         (event_id,),
     ).fetchone()[0]
     if completed > 0:
@@ -203,7 +199,10 @@ def replay_event(
     conn.commit()
 
     _emit_event(
-        conn, "event.replayed", workspace_id, actor,
+        conn,
+        "event.replayed",
+        workspace_id,
+        actor,
         {"original_event_id": event_id, "event_type": event_type},
         causation_id=event_id,
     )

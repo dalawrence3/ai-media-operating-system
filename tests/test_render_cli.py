@@ -107,9 +107,7 @@ class TestRenderListCommand:
 
     def test_list_filter_by_topic(self, tmp_path, db):
         _seed(db)
-        result = _invoke(
-            ["render", "list", "--topic-id", "1"], str(tmp_path / "test.db")
-        )
+        result = _invoke(["render", "list", "--topic-id", "1"], str(tmp_path / "test.db"))
         assert result.exit_code == 0
         assert "id=1" in result.output
 
@@ -205,10 +203,15 @@ class TestRenderRejectCommand:
         _seed(db)
         result = _invoke(
             [
-                "render", "reject", "1",
-                "--reason", "visual_quality",
-                "--severity", "3",
-                "--actor", "bob",
+                "render",
+                "reject",
+                "1",
+                "--reason",
+                "visual_quality",
+                "--severity",
+                "3",
+                "--actor",
+                "bob",
             ],
             str(tmp_path / "test.db"),
         )

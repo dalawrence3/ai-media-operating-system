@@ -41,6 +41,7 @@ from app.core.database import open_db
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _db(tmp_path, name="test.db"):
     return open_db(tmp_path / name)
 
@@ -70,8 +71,17 @@ def _credential(conn, workspace_id, suffix="main"):
         "(id, workspace_id, display_name, credential_type, status, "
         "external_ref, actor, created_at, updated_at) "
         "VALUES (?,?,?,?,?,?,?,?,?)",
-        (cred_id, workspace_id, f"Cred {suffix}", "oauth2", "active",
-         f"vault://secret/{suffix}", "cli", NOW, NOW),
+        (
+            cred_id,
+            workspace_id,
+            f"Cred {suffix}",
+            "oauth2",
+            "active",
+            f"vault://secret/{suffix}",
+            "cli",
+            NOW,
+            NOW,
+        ),
     )
     conn.commit()
     return cred_id
@@ -84,8 +94,18 @@ def _platform_account(conn, channel_id, cred_id, platform_id, platform_key="yout
         "(id, channel_id, platform_id, platform_key, external_account_id, display_name, "
         "credential_profile_id, actor, created_at, updated_at) "
         "VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (acc_id, channel_id, platform_id, platform_key, f"ext-{suffix}",
-         f"Handle {suffix}", cred_id, "cli", NOW, NOW),
+        (
+            acc_id,
+            channel_id,
+            platform_id,
+            platform_key,
+            f"ext-{suffix}",
+            f"Handle {suffix}",
+            cred_id,
+            "cli",
+            NOW,
+            NOW,
+        ),
     )
     conn.commit()
     return acc_id
@@ -98,8 +118,18 @@ def _pending_op(conn, workspace_id, idem_key, channel_id=None, account_id=None):
         "(id, operation_type, workspace_id, channel_id, platform_account_id, idempotency_key, "
         "status, actor, created_at, updated_at) "
         "VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (op_id, "publish", workspace_id, channel_id, account_id,
-         idem_key, "pending", "cli", NOW, NOW),
+        (
+            op_id,
+            "publish",
+            workspace_id,
+            channel_id,
+            account_id,
+            idem_key,
+            "pending",
+            "cli",
+            NOW,
+            NOW,
+        ),
     )
     conn.commit()
     return op_id
@@ -108,6 +138,7 @@ def _pending_op(conn, workspace_id, idem_key, channel_id=None, account_id=None):
 # ──────────────────────────────────────────────────────────────────────────────
 # Organization CRUD
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestOrganizationCRUD:
     def test_create_and_get_organization(self, tmp_path):
@@ -123,6 +154,7 @@ class TestOrganizationCRUD:
 
     def test_organization_slug_unique(self, tmp_path):
         import sqlite3
+
         conn = _db(tmp_path)
         repo.create_organization(
             conn, OrganizationDraft(id=_uid(), name="A", slug="same-slug", actor="cli")
@@ -148,9 +180,12 @@ class TestOrganizationCRUD:
         org = repo.create_organization(
             conn, OrganizationDraft(id=_uid(), name="Corp", slug="corp", actor="cli")
         )
-        ws = repo.create_workspace(conn, WorkspaceDraft(
-            id=_uid(), name="BrandWS", slug="brand-ws", actor="cli", organization_id=org.id
-        ))
+        ws = repo.create_workspace(
+            conn,
+            WorkspaceDraft(
+                id=_uid(), name="BrandWS", slug="brand-ws", actor="cli", organization_id=org.id
+            ),
+        )
         fetched = repo.get_workspace(conn, ws.id)
         assert fetched.organization_id == org.id
 
@@ -158,6 +193,7 @@ class TestOrganizationCRUD:
 # ──────────────────────────────────────────────────────────────────────────────
 # PublishingProfile CRUD
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestPublishingProfileCRUD:
     def test_create_and_get_publishing_profile(self, tmp_path):
@@ -169,8 +205,7 @@ class TestPublishingProfileCRUD:
         acc_id = _platform_account(conn, ch.id, cred_id, plat_id, suffix="pub1")
 
         draft = PublishingProfileDraft(
-            id=_uid(), platform_account_id=acc_id,
-            config={"default_title": "My Show"}, actor="cli"
+            id=_uid(), platform_account_id=acc_id, config={"default_title": "My Show"}, actor="cli"
         )
         profile = repo.create_publishing_profile(conn, draft)
         assert profile.id == draft.id
@@ -185,9 +220,10 @@ class TestPublishingProfileCRUD:
         ch = create_channel(conn, workspace_id=ws.id, name="Ch2", slug="ch-pub2", actor="cli")
         acc_id = _platform_account(conn, ch.id, cred_id, plat_id, suffix="pub2")
 
-        repo.create_publishing_profile(conn, PublishingProfileDraft(
-            id=_uid(), platform_account_id=acc_id, config={}, actor="cli"
-        ))
+        repo.create_publishing_profile(
+            conn,
+            PublishingProfileDraft(id=_uid(), platform_account_id=acc_id, config={}, actor="cli"),
+        )
         active = repo.get_active_publishing_profile(conn, acc_id)
         assert active is not None
         assert active.is_active
@@ -196,6 +232,7 @@ class TestPublishingProfileCRUD:
 # ──────────────────────────────────────────────────────────────────────────────
 # AnalyticsIdentity CRUD
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestAnalyticsIdentityCRUD:
     def test_create_analytics_identity(self, tmp_path):
@@ -207,8 +244,10 @@ class TestAnalyticsIdentityCRUD:
         acc_id = _platform_account(conn, ch.id, cred_id, plat_id, suffix="ai1")
 
         draft = AnalyticsIdentityDraft(
-            id=_uid(), platform_account_id=acc_id,
-            analytics_provider_key="ga4", analytics_account_id="UA-12345",
+            id=_uid(),
+            platform_account_id=acc_id,
+            analytics_provider_key="ga4",
+            analytics_account_id="UA-12345",
         )
         identity = repo.create_analytics_identity(conn, draft)
         assert identity.id == draft.id
@@ -217,6 +256,7 @@ class TestAnalyticsIdentityCRUD:
 
     def test_analytics_identity_unique_per_provider(self, tmp_path):
         import sqlite3
+
         conn = _db(tmp_path)
         ws = create_workspace(conn, name="WS", slug="ws-ai2", actor="cli")
         plat_id = _platform(conn)
@@ -224,15 +264,25 @@ class TestAnalyticsIdentityCRUD:
         ch = create_channel(conn, workspace_id=ws.id, name="Ch", slug="ch-ai2", actor="cli")
         acc_id = _platform_account(conn, ch.id, cred_id, plat_id, suffix="ai2")
 
-        repo.create_analytics_identity(conn, AnalyticsIdentityDraft(
-            id=_uid(), platform_account_id=acc_id,
-            analytics_provider_key="ga4", analytics_account_id="UA-111"
-        ))
+        repo.create_analytics_identity(
+            conn,
+            AnalyticsIdentityDraft(
+                id=_uid(),
+                platform_account_id=acc_id,
+                analytics_provider_key="ga4",
+                analytics_account_id="UA-111",
+            ),
+        )
         with pytest.raises(sqlite3.IntegrityError):
-            repo.create_analytics_identity(conn, AnalyticsIdentityDraft(
-                id=_uid(), platform_account_id=acc_id,
-                analytics_provider_key="ga4", analytics_account_id="UA-222"
-            ))
+            repo.create_analytics_identity(
+                conn,
+                AnalyticsIdentityDraft(
+                    id=_uid(),
+                    platform_account_id=acc_id,
+                    analytics_provider_key="ga4",
+                    analytics_account_id="UA-222",
+                ),
+            )
 
     def test_list_analytics_identities(self, tmp_path):
         conn = _db(tmp_path)
@@ -242,14 +292,24 @@ class TestAnalyticsIdentityCRUD:
         ch = create_channel(conn, workspace_id=ws.id, name="Ch", slug="ch-ai3", actor="cli")
         acc_id = _platform_account(conn, ch.id, cred_id, plat_id, suffix="ai3")
 
-        repo.create_analytics_identity(conn, AnalyticsIdentityDraft(
-            id=_uid(), platform_account_id=acc_id,
-            analytics_provider_key="ga4", analytics_account_id="UA-1"
-        ))
-        repo.create_analytics_identity(conn, AnalyticsIdentityDraft(
-            id=_uid(), platform_account_id=acc_id,
-            analytics_provider_key="mixpanel", analytics_account_id="MP-1"
-        ))
+        repo.create_analytics_identity(
+            conn,
+            AnalyticsIdentityDraft(
+                id=_uid(),
+                platform_account_id=acc_id,
+                analytics_provider_key="ga4",
+                analytics_account_id="UA-1",
+            ),
+        )
+        repo.create_analytics_identity(
+            conn,
+            AnalyticsIdentityDraft(
+                id=_uid(),
+                platform_account_id=acc_id,
+                analytics_provider_key="mixpanel",
+                analytics_account_id="MP-1",
+            ),
+        )
         identities = repo.list_analytics_identities(conn, acc_id)
         assert len(identities) == 2
 
@@ -257,6 +317,7 @@ class TestAnalyticsIdentityCRUD:
 # ──────────────────────────────────────────────────────────────────────────────
 # Multi-account same-platform isolation (Section 4)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestMultiAccountIsolation:
     def test_two_accounts_same_platform_independent(self, tmp_path):
@@ -298,6 +359,7 @@ class TestMultiAccountIsolation:
 # Event isolation — no cross-workspace leakage (Section 7)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 class TestEventIsolation:
     def test_events_scoped_to_workspace(self, tmp_path):
         conn = _db(tmp_path)
@@ -336,6 +398,7 @@ class TestEventIsolation:
     def test_event_handler_idempotency_unique(self, tmp_path):
         """Dead-letter: same (event_id, handler_key) pair is rejected."""
         import sqlite3
+
         conn = _db(tmp_path)
         ws = create_workspace(conn, name="WS", slug="ws-idem", actor="cli")
         ev = emit_event(conn, event_type="workspace.created", workspace_id=ws.id, actor="cli")
@@ -357,6 +420,7 @@ class TestEventIsolation:
 # ──────────────────────────────────────────────────────────────────────────────
 # Channel pause isolation (Section 16)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestChannelPauseIsolation:
     def test_pausing_channel_a_does_not_affect_channel_b(self, tmp_path):
@@ -398,6 +462,7 @@ class TestChannelPauseIsolation:
 # ──────────────────────────────────────────────────────────────────────────────
 # Concurrency enforcement (Section 18)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestConcurrencyEnforcement:
     def test_count_active_operations_zero_when_empty(self, tmp_path):
@@ -471,6 +536,7 @@ class TestConcurrencyEnforcement:
 # Control-center status (Section 20)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 class TestControlCenterStatus:
     def test_empty_workspace_returns_zero_counts(self, tmp_path):
         conn = _db(tmp_path)
@@ -522,6 +588,7 @@ class TestControlCenterStatus:
 # ──────────────────────────────────────────────────────────────────────────────
 # Audit timeline (Section 21)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 class TestAuditTimeline:
     def test_empty_workspace_returns_empty_timeline(self, tmp_path):

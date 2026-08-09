@@ -100,9 +100,7 @@ def pause_pipeline(
 ) -> dict[str, Any]:
     try:
         view = svc.pause_pipeline(
-            PausePipelineCommand(
-                workspace_id=workspace_id, pipeline_id=pipeline_id, actor=actor
-            )
+            PausePipelineCommand(workspace_id=workspace_id, pipeline_id=pipeline_id, actor=actor)
         )
         return view.model_dump()
     except PermissionError:
@@ -120,9 +118,7 @@ def resume_pipeline(
 ) -> dict[str, Any]:
     try:
         view = svc.resume_pipeline(
-            ResumePipelineCommand(
-                workspace_id=workspace_id, pipeline_id=pipeline_id, actor=actor
-            )
+            ResumePipelineCommand(workspace_id=workspace_id, pipeline_id=pipeline_id, actor=actor)
         )
         return view.model_dump()
     except PermissionError:
@@ -140,9 +136,7 @@ def cancel_pipeline(
 ) -> dict[str, Any]:
     try:
         view = svc.cancel_pipeline(
-            CancelPipelineCommand(
-                workspace_id=workspace_id, pipeline_id=pipeline_id, actor=actor
-            )
+            CancelPipelineCommand(workspace_id=workspace_id, pipeline_id=pipeline_id, actor=actor)
         )
         return view.model_dump()
     except PermissionError:
@@ -237,9 +231,7 @@ def recover_pipeline(
 ) -> dict[str, Any]:
     try:
         view = svc.recover_pipeline(
-            RecoverPipelineCommand(
-                workspace_id=workspace_id, pipeline_id=pipeline_id, actor=actor
-            )
+            RecoverPipelineCommand(workspace_id=workspace_id, pipeline_id=pipeline_id, actor=actor)
         )
         return view.model_dump()
     except PermissionError:

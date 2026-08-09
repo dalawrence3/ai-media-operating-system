@@ -51,15 +51,11 @@ def resume_account(conn: Any, account_id: str, actor: str) -> PlatformAccount:
 
 
 def mark_credential_invalid(conn: Any, account_id: str, actor: str) -> PlatformAccount:
-    return repo.update_platform_account_status(
-        conn, account_id, "credential_invalid", actor
-    )
+    return repo.update_platform_account_status(conn, account_id, "credential_invalid", actor)
 
 
 def mark_credential_expiring(conn: Any, account_id: str, actor: str) -> PlatformAccount:
-    return repo.update_platform_account_status(
-        conn, account_id, "credential_expiring", actor
-    )
+    return repo.update_platform_account_status(conn, account_id, "credential_expiring", actor)
 
 
 def mark_quota_limited(conn: Any, account_id: str, actor: str) -> PlatformAccount:

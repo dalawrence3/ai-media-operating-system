@@ -95,8 +95,15 @@ def test_is_local_false_when_sdk_present() -> None:
 def test_reproducibility_dict_has_required_keys() -> None:
     meta = _make_meta()
     d = meta.to_reproducibility_dict()
-    required = {"provider_name", "provider_version", "model_id",
-                "api_version", "sdk_name", "sdk_version", "capabilities"}
+    required = {
+        "provider_name",
+        "provider_version",
+        "model_id",
+        "api_version",
+        "sdk_name",
+        "sdk_version",
+        "capabilities",
+    }
     assert required.issubset(d.keys())
 
 

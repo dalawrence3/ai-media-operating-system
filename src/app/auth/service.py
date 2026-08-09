@@ -50,9 +50,7 @@ class AuthService:
 
     def __init__(self, secret_key: str, access_expire: int = 900, refresh_expire: int = 604800):
         if not secret_key or len(secret_key.encode()) < 32:
-            raise AuthConfigurationError(
-                "AuthService requires a secret_key of at least 32 bytes"
-            )
+            raise AuthConfigurationError("AuthService requires a secret_key of at least 32 bytes")
         self._secret = secret_key
         self._access_expire = access_expire
         self._refresh_expire = refresh_expire
@@ -107,9 +105,7 @@ class AuthService:
 
     # ── Login ──────────────────────────────────────────────────────────────
 
-    def login(
-        self, conn: Any, email: str, plaintext_password: str
-    ) -> dict[str, str]:
+    def login(self, conn: Any, email: str, plaintext_password: str) -> dict[str, str]:
         """Authenticate and return {access_token, refresh_token, token_type}.
 
         raw_refresh_token is returned to caller and NEVER stored.
@@ -244,9 +240,7 @@ class AuthService:
 
     # ── Workspace role management ──────────────────────────────────────────
 
-    def assign_workspace_role(
-        self, conn: Any, user_id: int, workspace_id: str, role: str
-    ) -> None:
+    def assign_workspace_role(self, conn: Any, user_id: int, workspace_id: str, role: str) -> None:
         """Grant or update a user's role in a workspace.
 
         Uses INSERT OR REPLACE semantics (ON CONFLICT DO UPDATE).

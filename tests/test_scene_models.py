@@ -1,6 +1,5 @@
 """Tests for Phase 7 scene-planning Pydantic and dataclass models."""
 
-
 from datetime import UTC
 
 import pytest

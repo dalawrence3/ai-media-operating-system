@@ -57,9 +57,7 @@ class FakeTTSProvider:
 
         self._call_count += 1
         if self._call_count in self._fail_on:
-            raise SynthesisError(
-                f"FakeTTSProvider: injected failure on call {self._call_count}"
-            )
+            raise SynthesisError(f"FakeTTSProvider: injected failure on call {self._call_count}")
 
         word_count = len(request.text.split())
         duration_seconds = max(0.1, word_count / self._words_per_minute * 60.0)

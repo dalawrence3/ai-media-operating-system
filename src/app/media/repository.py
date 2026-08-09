@@ -124,9 +124,7 @@ def create_render_manifest(
     for scene in draft.scenes:
         asset_db_id: int | None = None
         if scene.primary_asset is not None:
-            asset_rec = create_resolved_asset(
-                conn, scene.primary_asset, render_manifest_id=row_id
-            )
+            asset_rec = create_resolved_asset(conn, scene.primary_asset, render_manifest_id=row_id)
             asset_db_id = asset_rec.id
         create_render_manifest_scene(conn, row_id, scene, primary_asset_id=asset_db_id)
 
@@ -150,12 +148,8 @@ def get_or_create_render_manifest(
     return manifest, True
 
 
-def get_render_manifest(
-    conn: sqlite3.Connection, manifest_id: int
-) -> RenderManifest | None:
-    row = conn.execute(
-        "SELECT * FROM render_manifests WHERE id = ?", (manifest_id,)
-    ).fetchone()
+def get_render_manifest(conn: sqlite3.Connection, manifest_id: int) -> RenderManifest | None:
+    row = conn.execute("SELECT * FROM render_manifests WHERE id = ?", (manifest_id,)).fetchone()
     return RenderManifest.from_row(row) if row else None
 
 
@@ -251,8 +245,13 @@ def approve_render_manifest(
         WHERE scene_manifest_id = ? AND status = ? AND superseded_at IS NULL AND id != ?
         """,
         (
-            RENDER_STATUS_SUPERSEDED, now, manifest_id, now,
-            manifest.scene_manifest_id, RENDER_STATUS_APPROVED, manifest_id,
+            RENDER_STATUS_SUPERSEDED,
+            now,
+            manifest_id,
+            now,
+            manifest.scene_manifest_id,
+            RENDER_STATUS_APPROVED,
+            manifest_id,
         ),
     )
 
@@ -374,9 +373,7 @@ def create_render_job(
     return job
 
 
-def mark_render_job_rendering(
-    conn: sqlite3.Connection, job_id: int
-) -> RenderJob:
+def mark_render_job_rendering(conn: sqlite3.Connection, job_id: int) -> RenderJob:
     job = _require_job(conn, job_id)
     _check_job_transition(job.status, RENDER_JOB_STATUS_RENDERING)
     now = _now()
@@ -461,15 +458,11 @@ def mark_render_job_validated(
 
 
 def get_render_job(conn: sqlite3.Connection, job_id: int) -> RenderJob | None:
-    row = conn.execute(
-        "SELECT * FROM render_jobs WHERE id = ?", (job_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM render_jobs WHERE id = ?", (job_id,)).fetchone()
     return RenderJob.from_row(row) if row else None
 
 
-def list_render_jobs(
-    conn: sqlite3.Connection, render_manifest_id: int
-) -> list[RenderJob]:
+def list_render_jobs(conn: sqlite3.Connection, render_manifest_id: int) -> list[RenderJob]:
     rows = conn.execute(
         "SELECT * FROM render_jobs WHERE render_manifest_id = ? ORDER BY created_at DESC, id DESC",
         (render_manifest_id,),
@@ -530,9 +523,7 @@ def record_render_review_event(
             now,
         ),
     ).lastrowid
-    row = conn.execute(
-        "SELECT * FROM render_review_events WHERE id = ?", (row_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM render_review_events WHERE id = ?", (row_id,)).fetchone()
     assert row is not None
     return RenderReviewEvent.from_row(row)
 
@@ -654,9 +645,7 @@ def create_render_manifest_scene(
             _now(),
         ),
     ).lastrowid
-    row = conn.execute(
-        "SELECT * FROM render_manifest_scenes WHERE id = ?", (row_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM render_manifest_scenes WHERE id = ?", (row_id,)).fetchone()
     assert row is not None
     return RenderManifestScene.from_row(row)
 
@@ -665,8 +654,7 @@ def list_render_manifest_scenes(
     conn: sqlite3.Connection, render_manifest_id: int
 ) -> list[RenderManifestScene]:
     rows = conn.execute(
-        "SELECT * FROM render_manifest_scenes"
-        " WHERE render_manifest_id = ? ORDER BY scene_index",
+        "SELECT * FROM render_manifest_scenes WHERE render_manifest_id = ? ORDER BY scene_index",
         (render_manifest_id,),
     ).fetchall()
     return [RenderManifestScene.from_row(r) for r in rows]
@@ -706,19 +694,13 @@ def create_resolved_asset(
             now,
         ),
     ).lastrowid
-    row = conn.execute(
-        "SELECT * FROM resolved_assets WHERE id = ?", (row_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM resolved_assets WHERE id = ?", (row_id,)).fetchone()
     assert row is not None
     return ResolvedAssetRecord.from_row(row)
 
 
-def get_resolved_asset(
-    conn: sqlite3.Connection, asset_id: int
-) -> ResolvedAssetRecord | None:
-    row = conn.execute(
-        "SELECT * FROM resolved_assets WHERE id = ?", (asset_id,)
-    ).fetchone()
+def get_resolved_asset(conn: sqlite3.Connection, asset_id: int) -> ResolvedAssetRecord | None:
+    row = conn.execute("SELECT * FROM resolved_assets WHERE id = ?", (asset_id,)).fetchone()
     return ResolvedAssetRecord.from_row(row) if row else None
 
 
@@ -726,8 +708,7 @@ def list_resolved_assets_for_manifest(
     conn: sqlite3.Connection, render_manifest_id: int
 ) -> list[ResolvedAssetRecord]:
     rows = conn.execute(
-        "SELECT * FROM resolved_assets"
-        " WHERE render_manifest_id = ? ORDER BY scene_id, id",
+        "SELECT * FROM resolved_assets WHERE render_manifest_id = ? ORDER BY scene_id, id",
         (render_manifest_id,),
     ).fetchall()
     return [ResolvedAssetRecord.from_row(r) for r in rows]

@@ -64,9 +64,7 @@ def build_application_service(
     if obs_ctx is None:
         obs_ctx = ObservabilityContext()
 
-    return ApplicationService(
-        conn, registry=registry, obs_ctx=obs_ctx, auth_hook=auth_hook
-    )
+    return ApplicationService(conn, registry=registry, obs_ctx=obs_ctx, auth_hook=auth_hook)
 
 
 def reset_composition() -> None:

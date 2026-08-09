@@ -25,13 +25,13 @@ class EvidenceItem:
     Each item names the metric, the observed value, and why it matters.
     """
 
-    metric_name: str        # canonical metric name from Phase 10
-    observed_value: float   # the measured value
+    metric_name: str  # canonical metric name from Phase 10
+    observed_value: float  # the measured value
     comparison_value: float | None  # baseline or threshold being compared to
-    period_type: str        # lifetime / daily / weekly / monthly
-    period_key: str         # e.g. '2026-08', 'lifetime', '2026-W31'
-    snapshot_ids: list[int] # contributing analytics_snapshots IDs
-    interpretation: str     # plain-language meaning of this evidence item
+    period_type: str  # lifetime / daily / weekly / monthly
+    period_key: str  # e.g. '2026-08', 'lifetime', '2026-W31'
+    snapshot_ids: list[int]  # contributing analytics_snapshots IDs
+    interpretation: str  # plain-language meaning of this evidence item
 
     def to_dict(self) -> dict:
         return {
@@ -65,7 +65,7 @@ class GeneratorResult:
     """Outcome of running one recommendation generator."""
 
     generator_name: str
-    status: str          # "succeeded" | "failed"
+    status: str  # "succeeded" | "failed"
     recommendation_count: int
     error_message: str | None = None
 
@@ -94,8 +94,8 @@ class RecommendationDraft:
     measure: str
 
     title: str
-    explanation: str            # WHY: what evidence produced this
-    expected_improvement: str   # what we expect to improve
+    explanation: str  # WHY: what evidence produced this
+    expected_improvement: str  # what we expect to improve
 
     evidence: list[EvidenceItem] = field(default_factory=list)
     confidence: str = "low"
@@ -120,7 +120,7 @@ class ReviewEventDraft:
 
     recommendation_id: int
     topic_id: int
-    event_type: str         # accepted / rejected / noted
+    event_type: str  # accepted / rejected / noted
     reviewer: str = ""
     notes: str = ""
     expected_outcome: str = ""
@@ -267,15 +267,15 @@ class ReviewedRecommendationItem(BaseModel):
     title: str
     explanation: str
     expected_improvement: str
-    recommendation_strength: str   # exploratory | actionable
-    evidence_classification: str   # observational | controlled_experiment | …
+    recommendation_strength: str  # exploratory | actionable
+    evidence_classification: str  # observational | controlled_experiment | …
     confidence: str
     confidence_score: float
     affected_subsystem: str
     subsystem_entity_type: str
     subsystem_entity_id: int | None
     experiment_id: str | None
-    status: str                    # pending | accepted | rejected | superseded
+    status: str  # pending | accepted | rejected | superseded
     input_hash: str
     created_at: str
     review_events: list[RecommendationReviewEvent]
@@ -339,7 +339,7 @@ class ReviewedOptimizationHandoff(BaseModel):
     learning_run_id: int
     topic_id: int
     publication_id: int | None
-    run_status: str    # completed | partial | failed
+    run_status: str  # completed | partial | failed
 
     accepted: list[ReviewedRecommendationItem]
     rejected: list[ReviewedRecommendationItem]

@@ -62,8 +62,12 @@ def _fr(
 
 
 _ALL_NAMES = [
-    "trend_strength", "audience_demand", "competition",
-    "evergreen_value", "audience_fit", "content_novelty",
+    "trend_strength",
+    "audience_demand",
+    "competition",
+    "evergreen_value",
+    "audience_fit",
+    "content_novelty",
 ]
 
 
@@ -206,8 +210,6 @@ def test_confidence_never_negative() -> None:
         missing_audience_demand=MissingDataPolicy.require_research,
     )
     frs = [_fr(n, None, MissingDataPolicy.reweight_available) for n in _ALL_NAMES]
-    frs = [
-        FactorResult(name=n, raw_score=None, status=FactorStatus.absent) for n in _ALL_NAMES
-    ]
+    frs = [FactorResult(name=n, raw_score=None, status=FactorStatus.absent) for n in _ALL_NAMES]
     conf = compute_confidence(frs, [], policy)
     assert conf >= 0.0

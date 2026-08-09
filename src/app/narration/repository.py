@@ -60,8 +60,7 @@ def _validate_severity(severity: int | None) -> None:
     if severity is None:
         return
     valid = (
-        isinstance(severity, int)
-        and NARRATION_SEVERITY_MIN <= severity <= NARRATION_SEVERITY_MAX
+        isinstance(severity, int) and NARRATION_SEVERITY_MIN <= severity <= NARRATION_SEVERITY_MAX
     )
     if not valid:
         raise InvalidNarrationSeverityError(
@@ -124,10 +123,21 @@ def create_voice_profile(conn: sqlite3.Connection, vpc: VoiceProfileCreate) -> V
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                vpc.channel_id, vpc.provider, vpc.model, vpc.voice_id, vpc.name,
-                vpc.language, vpc.speaking_rate, vpc.style, vpc.stability,
-                vpc.similarity_boost, vpc.settings_json, vpc.version,
-                1 if vpc.is_default else 0, now, now,
+                vpc.channel_id,
+                vpc.provider,
+                vpc.model,
+                vpc.voice_id,
+                vpc.name,
+                vpc.language,
+                vpc.speaking_rate,
+                vpc.style,
+                vpc.stability,
+                vpc.similarity_boost,
+                vpc.settings_json,
+                vpc.version,
+                1 if vpc.is_default else 0,
+                now,
+                now,
             ),
         )
         vp_id = cur.lastrowid
@@ -141,13 +151,9 @@ def create_voice_profile(conn: sqlite3.Connection, vpc: VoiceProfileCreate) -> V
     return VoiceProfile.from_row(row)
 
 
-def get_voice_profile(
-    conn: sqlite3.Connection, profile_id: int
-) -> VoiceProfile | None:
+def get_voice_profile(conn: sqlite3.Connection, profile_id: int) -> VoiceProfile | None:
     conn.row_factory = sqlite3.Row
-    row = conn.execute(
-        "SELECT * FROM voice_profiles WHERE id = ?", (profile_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM voice_profiles WHERE id = ?", (profile_id,)).fetchone()
     return VoiceProfile.from_row(row) if row else None
 
 
@@ -181,9 +187,7 @@ def list_voice_profiles(
 # ── Narration runs ────────────────────────────────────────────────────────────
 
 
-def create_narration_run(
-    conn: sqlite3.Connection, draft: NarrationRunDraft
-) -> NarrationRun:
+def create_narration_run(conn: sqlite3.Connection, draft: NarrationRunDraft) -> NarrationRun:
     now = _NOW()
     try:
         cur = conn.execute(
@@ -196,12 +200,23 @@ def create_narration_run(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)
             """,
             (
-                draft.plan_id, draft.plan_input_hash, draft.voice_profile_id,
-                draft.voice_profile_version, draft.language, draft.speaking_rate,
-                draft.style, draft.stability, draft.similarity_boost,
-                draft.settings_json, draft.output_format, draft.sample_rate_hz,
+                draft.plan_id,
+                draft.plan_input_hash,
+                draft.voice_profile_id,
+                draft.voice_profile_version,
+                draft.language,
+                draft.speaking_rate,
+                draft.style,
+                draft.stability,
+                draft.similarity_boost,
+                draft.settings_json,
+                draft.output_format,
+                draft.sample_rate_hz,
                 _build_run_input_hash(draft),
-                draft.experiment_id, draft.notes, now, now,
+                draft.experiment_id,
+                draft.notes,
+                now,
+                now,
             ),
         )
     except sqlite3.IntegrityError as exc:
@@ -211,9 +226,7 @@ def create_narration_run(
             ) from exc
         raise
     conn.row_factory = sqlite3.Row
-    row = conn.execute(
-        "SELECT * FROM narration_runs WHERE id = ?", (cur.lastrowid,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM narration_runs WHERE id = ?", (cur.lastrowid,)).fetchone()
     return NarrationRun.from_row(row)
 
 
@@ -238,13 +251,9 @@ def _build_run_input_hash(draft: NarrationRunDraft) -> str:
     )
 
 
-def get_narration_run(
-    conn: sqlite3.Connection, run_id: int
-) -> NarrationRun | None:
+def get_narration_run(conn: sqlite3.Connection, run_id: int) -> NarrationRun | None:
     conn.row_factory = sqlite3.Row
-    row = conn.execute(
-        "SELECT * FROM narration_runs WHERE id = ?", (run_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM narration_runs WHERE id = ?", (run_id,)).fetchone()
     return NarrationRun.from_row(row) if row else None
 
 
@@ -287,9 +296,7 @@ def get_active_approved_narration_run(
     return NarrationRun.from_row(row) if row else None
 
 
-def list_narration_runs(
-    conn: sqlite3.Connection, plan_id: int
-) -> list[NarrationRun]:
+def list_narration_runs(conn: sqlite3.Connection, plan_id: int) -> list[NarrationRun]:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT * FROM narration_runs WHERE plan_id = ? ORDER BY id", (plan_id,)
@@ -385,8 +392,20 @@ def approve_narration_run(
             "(run_id, plan_id, script_id, topic_id, voice_profile_id, provider, model, "
             "voice_id, experiment_id, event_type, notes, actor, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'run_approved', ?, ?, ?)",
-            (run_id, run.plan_id, script_id, topic_id, run.voice_profile_id,
-             vp_provider, vp_model, vp_voice_id, run.experiment_id, notes, actor, now),
+            (
+                run_id,
+                run.plan_id,
+                script_id,
+                topic_id,
+                run.voice_profile_id,
+                vp_provider,
+                vp_model,
+                vp_voice_id,
+                run.experiment_id,
+                notes,
+                actor,
+                now,
+            ),
         )
         conn.execute("RELEASE approve_nr")
     except Exception:
@@ -459,9 +478,23 @@ def reject_narration_run(
             "voice_id, experiment_id, event_type, reason_code, severity, "
             "expected_correction, notes, actor, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'run_rejected', ?, ?, ?, ?, ?, ?)",
-            (run_id, run.plan_id, script_id, topic_id, run.voice_profile_id,
-             vp_provider, vp_model, vp_voice_id, run.experiment_id,
-             reason_code, severity, expected_correction, notes, actor, now),
+            (
+                run_id,
+                run.plan_id,
+                script_id,
+                topic_id,
+                run.voice_profile_id,
+                vp_provider,
+                vp_model,
+                vp_voice_id,
+                run.experiment_id,
+                reason_code,
+                severity,
+                expected_correction,
+                notes,
+                actor,
+                now,
+            ),
         )
         conn.execute("RELEASE reject_nr")
     except Exception:
@@ -488,12 +521,25 @@ def create_narration_segment_asset(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
         """,
         (
-            draft.run_id, draft.segment_id, draft.narration_text_hash,
-            draft.provider, draft.model, draft.voice_id,
-            draft.voice_profile_id, draft.voice_profile_version, draft.language,
-            draft.speaking_rate, draft.style, draft.stability, draft.similarity_boost,
-            draft.settings_json_hash, draft.output_format, draft.sample_rate_hz,
-            draft.input_hash, now, now,
+            draft.run_id,
+            draft.segment_id,
+            draft.narration_text_hash,
+            draft.provider,
+            draft.model,
+            draft.voice_id,
+            draft.voice_profile_id,
+            draft.voice_profile_version,
+            draft.language,
+            draft.speaking_rate,
+            draft.style,
+            draft.stability,
+            draft.similarity_boost,
+            draft.settings_json_hash,
+            draft.output_format,
+            draft.sample_rate_hz,
+            draft.input_hash,
+            now,
+            now,
         ),
     )
     conn.row_factory = sqlite3.Row
@@ -585,18 +631,37 @@ def finalize_narration_segment_asset(
                 "voice_id, experiment_id, segment_id, asset_id, replacement_asset_id, "
                 "event_type, actor, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'segment_regenerated', ?, ?)",
-                (asset.run_id, plan_id, script_id, topic_id, asset.voice_profile_id,
-                 asset.provider, asset.model, asset.voice_id,
-                 experiment_id, asset.segment_id, rejected_asset_id, asset_id,
-                 actor, now),
+                (
+                    asset.run_id,
+                    plan_id,
+                    script_id,
+                    topic_id,
+                    asset.voice_profile_id,
+                    asset.provider,
+                    asset.model,
+                    asset.voice_id,
+                    experiment_id,
+                    asset.segment_id,
+                    rejected_asset_id,
+                    asset_id,
+                    actor,
+                    now,
+                ),
             )
         conn.execute(
             "UPDATE narration_segment_assets SET "
             "status='synthesized', audio_path=?, audio_sha256=?, "
             "duration_seconds=?, characters_billed=?, cost_usd=?, "
             "updated_at=? WHERE id=?",
-            (audio_path, audio_sha256, duration_seconds,
-             characters_billed, cost_usd, now, asset_id),
+            (
+                audio_path,
+                audio_sha256,
+                duration_seconds,
+                characters_billed,
+                cost_usd,
+                now,
+                asset_id,
+            ),
         )
         conn.execute("RELEASE finalize_nsa")
     except Exception:
@@ -644,10 +709,25 @@ def reject_narration_segment_asset(
             "reason_code, severity, expected_correction, notes, actor, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'segment_rejected', "
             "?, ?, ?, ?, ?, ?)",
-            (asset.run_id, plan_id, script_id, topic_id, asset.voice_profile_id,
-             asset.provider, asset.model, asset.voice_id,
-             experiment_id, asset.segment_id, asset_id,
-             reason_code, severity, expected_correction, notes, actor, now),
+            (
+                asset.run_id,
+                plan_id,
+                script_id,
+                topic_id,
+                asset.voice_profile_id,
+                asset.provider,
+                asset.model,
+                asset.voice_id,
+                experiment_id,
+                asset.segment_id,
+                asset_id,
+                reason_code,
+                severity,
+                expected_correction,
+                notes,
+                actor,
+                now,
+            ),
         )
         conn.execute("RELEASE reject_nsa")
     except Exception:
@@ -692,10 +772,24 @@ def record_tts_call(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            run_id, segment_id, provider, model, voice_id, input_characters,
-            characters_billed, output_format, sample_rate_hz, duration_seconds,
-            cost_usd, 1 if success else 0, error_message, latency_ms, request_id,
-            provider_metadata_json, NARRATION_SCHEMA_VERSION, NARRATION_ALGORITHM_VERSION,
+            run_id,
+            segment_id,
+            provider,
+            model,
+            voice_id,
+            input_characters,
+            characters_billed,
+            output_format,
+            sample_rate_hz,
+            duration_seconds,
+            cost_usd,
+            1 if success else 0,
+            error_message,
+            latency_ms,
+            request_id,
+            provider_metadata_json,
+            NARRATION_SCHEMA_VERSION,
+            NARRATION_ALGORITHM_VERSION,
             now,
         ),
     )

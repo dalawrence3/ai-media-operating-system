@@ -88,9 +88,7 @@ def _seed(conn: sqlite3.Connection) -> None:
         "  0, 15000, 1080, 1920, 30,"
         "  'approved', '2024-01-01T00:00:00', '2024-01-01T00:00:00')"
     )
-    conn.execute(
-        "UPDATE render_manifests SET approved_at='2024-01-01T00:00:00' WHERE id=1"
-    )
+    conn.execute("UPDATE render_manifests SET approved_at='2024-01-01T00:00:00' WHERE id=1")
     conn.execute(
         "INSERT INTO render_jobs"
         " (id, render_manifest_id, backend, backend_version,"

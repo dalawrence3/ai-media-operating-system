@@ -24,6 +24,7 @@ class ProviderPricingPolicy(Protocol):
 
     def estimate_cost(self, model: str, characters_billed: int) -> float: ...
 
+
 # Price per 1,000 characters billed, in USD.
 # The fake provider is always 0.0 (no cost).
 # ElevenLabs prices as of 2026-08 (official API pricing page).

@@ -29,9 +29,7 @@ def list_channels(conn: Any, workspace_id: str) -> list[Channel]:
     return repo.list_channels_by_workspace(conn, workspace_id)
 
 
-def list_platform_accounts(
-    conn: Any, channel_id: str
-) -> list[PlatformAccount]:
+def list_platform_accounts(conn: Any, channel_id: str) -> list[PlatformAccount]:
     return repo.list_platform_accounts_by_channel(conn, channel_id)
 
 
@@ -42,24 +40,19 @@ def get_effective_policy(
     platform_account_id: str | None = None,
 ) -> str:
     from app.control_plane.policies import resolve_effective_level
+
     return resolve_effective_level(conn, workspace_id, channel_id, platform_account_id)
 
 
-def list_active_experiments(
-    conn: Any, workspace_id: str
-) -> list[Experiment]:
+def list_active_experiments(conn: Any, workspace_id: str) -> list[Experiment]:
     return repo.list_experiments_by_workspace(conn, workspace_id, status="active")
 
 
-def get_channel_strategy(
-    conn: Any, channel_id: str
-) -> StrategyProfile | None:
+def get_channel_strategy(conn: Any, channel_id: str) -> StrategyProfile | None:
     return repo.get_active_strategy_for_channel(conn, channel_id)
 
 
-def get_review_queue(
-    conn: Any, workspace_id: str
-) -> list[ReviewQueueItem]:
+def get_review_queue(conn: Any, workspace_id: str) -> list[ReviewQueueItem]:
     return build_review_queue(conn, workspace_id)
 
 
@@ -69,13 +62,10 @@ def get_event_history(
     event_type: str | None = None,
     limit: int = 50,
 ) -> list[ControlEvent]:
-    return repo.list_events_by_workspace(
-        conn, workspace_id, event_type=event_type, limit=limit
-    )
+    return repo.list_events_by_workspace(conn, workspace_id, event_type=event_type, limit=limit)
 
 
 def get_cost_summary(conn: Any, workspace_id: str) -> dict[str, Any]:
-
     records = repo.list_cost_records_by_workspace(conn, workspace_id, limit=500)
     total_usd = sum(r.usd_equivalent for r in records)
     by_provider: dict[str, float] = {}
@@ -118,9 +108,7 @@ def workspace_control_center_status(conn: Any, workspace_id: str) -> dict[str, A
                 unhealthy.append({"account_id": acc.id, "status": acc.status, "channel_id": ch.id})
 
     paused_channels = [
-        {"channel_id": ch.id, "name": ch.name}
-        for ch in channels
-        if ch.status == "paused"
+        {"channel_id": ch.id, "name": ch.name} for ch in channels if ch.status == "paused"
     ]
 
     active_experiments = repo.list_experiments_by_workspace(conn, workspace_id, status="active")
@@ -162,29 +150,33 @@ def workspace_audit_timeline(
 
     timeline = []
     for ev in events:
-        timeline.append({
-            "kind": "event",
-            "id": ev.id,
-            "event_type": ev.event_type,
-            "actor": ev.actor,
-            "source_engine": ev.source_engine,
-            "channel_id": ev.channel_id,
-            "platform_account_id": ev.platform_account_id,
-            "experiment_id": ev.experiment_id,
-            "correlation_id": ev.correlation_id,
-            "causation_id": ev.causation_id,
-            "ts": ev.created_at.isoformat(),
-        })
+        timeline.append(
+            {
+                "kind": "event",
+                "id": ev.id,
+                "event_type": ev.event_type,
+                "actor": ev.actor,
+                "source_engine": ev.source_engine,
+                "channel_id": ev.channel_id,
+                "platform_account_id": ev.platform_account_id,
+                "experiment_id": ev.experiment_id,
+                "correlation_id": ev.correlation_id,
+                "causation_id": ev.causation_id,
+                "ts": ev.created_at.isoformat(),
+            }
+        )
     for op in ops:
-        timeline.append({
-            "kind": "operation",
-            "id": op["id"],
-            "operation_type": op["operation_type"],
-            "status": op["status"],
-            "actor": op["actor"],
-            "source_engine": op["engine"],
-            "ts": op["created_at"],
-        })
+        timeline.append(
+            {
+                "kind": "operation",
+                "id": op["id"],
+                "operation_type": op["operation_type"],
+                "status": op["status"],
+                "actor": op["actor"],
+                "source_engine": op["engine"],
+                "ts": op["created_at"],
+            }
+        )
 
     timeline.sort(key=lambda x: x["ts"], reverse=True)
     return timeline[:limit]

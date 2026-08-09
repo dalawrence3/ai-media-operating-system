@@ -257,9 +257,7 @@ def test_register_storage_object(tmp_path: Path):
     )
     conn.commit()
     assert isinstance(obj_id, int)
-    row = conn.execute(
-        "SELECT * FROM obj_storage_objects WHERE id = ?", (obj_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM obj_storage_objects WHERE id = ?", (obj_id,)).fetchone()
     assert row["workspace_id"] == "ws-1"
     assert row["sha256"] == "abc123def456"
     assert row["source_entity_type"] == "narration_segment_asset"

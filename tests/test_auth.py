@@ -119,9 +119,7 @@ def test_decode_token_wrong_secret_raises():
 
 
 def test_decode_expired_token_raises():
-    token = create_access_token(
-        1, "t@t.com", {}, secret_key=_SECRET, expire_seconds=-1
-    )
+    token = create_access_token(1, "t@t.com", {}, secret_key=_SECRET, expire_seconds=-1)
     with pytest.raises(TokenExpiredError):
         decode_access_token(token, secret_key=_SECRET)
 

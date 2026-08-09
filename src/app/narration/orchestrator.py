@@ -133,8 +133,11 @@ def narrate_plan(
     if existing:
         from app.narration.repository import get_segment_assets_for_run
 
-        assets = [a for a in get_segment_assets_for_run(conn, existing.id)
-                  if a.status == "synthesized" and a.superseded_at is None]
+        assets = [
+            a
+            for a in get_segment_assets_for_run(conn, existing.id)
+            if a.status == "synthesized" and a.superseded_at is None
+        ]
         return NarrationRunResult(run_id=existing.id, assets=assets)
 
     run = create_narration_run(conn, draft)
@@ -190,7 +193,6 @@ def _narrate_segment(
     pr: TTSPricingRegistry,
     dry_run: bool,
 ):
-
     existing = get_active_segment_asset(conn, run_id, segment_id)
     if existing and existing.status == "synthesized":
         return existing

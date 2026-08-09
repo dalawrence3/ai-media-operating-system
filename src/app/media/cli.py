@@ -58,9 +58,7 @@ def render_plan(
     conn = _get_db()
     approved = get_scene_manifest_full_by_id(conn, scene_manifest_id)
     if approved is None:
-        typer.echo(
-            f"Scene manifest {scene_manifest_id} is not approved or not found.", err=True
-        )
+        typer.echo(f"Scene manifest {scene_manifest_id} is not approved or not found.", err=True)
         raise typer.Exit(1)
 
     builder = SceneInputBuilder(conn)
@@ -92,9 +90,7 @@ def render_plan(
         for s in draft.scenes:
             asset_label = s.primary_asset.local_path if s.primary_asset else "(placeholder)"
             audio_label = s.audio_path or "(silent)"
-            typer.echo(
-                f"  scene {s.scene_index:2d}: audio={audio_label!r}  asset={asset_label!r}"
-            )
+            typer.echo(f"  scene {s.scene_index:2d}: audio={audio_label!r}  asset={asset_label!r}")
         return
 
     manifest, created = get_or_create_render_manifest(conn, draft)
@@ -122,13 +118,9 @@ def render_start(
     video_codec: Annotated[
         str, typer.Option("--video-codec", help="FFmpeg video codec.")
     ] = "libx264",
-    audio_codec: Annotated[
-        str, typer.Option("--audio-codec", help="FFmpeg audio codec.")
-    ] = "aac",
+    audio_codec: Annotated[str, typer.Option("--audio-codec", help="FFmpeg audio codec.")] = "aac",
     crf: Annotated[int, typer.Option("--crf", help="Constant rate factor (0–51).")] = 23,
-    preset: Annotated[
-        str, typer.Option("--preset", help="FFmpeg encoding preset.")
-    ] = "medium",
+    preset: Annotated[str, typer.Option("--preset", help="FFmpeg encoding preset.")] = "medium",
     audio_bitrate: Annotated[
         str, typer.Option("--audio-bitrate", help="Audio bitrate (e.g. '128k').")
     ] = "128k",
@@ -218,6 +210,7 @@ def render_start(
     scene_inputs = builder.build(approved)
 
     from app.media.compositor import build_render_manifest as _build
+
     draft = _build(
         scene_manifest_id=approved.manifest_id,
         scene_manifest_input_hash=approved.input_hash,
@@ -400,9 +393,7 @@ def render_reject(
         str | None,
         typer.Option("--reason", help="Reason code (audio_sync/visual_quality/…)"),
     ] = None,
-    severity: Annotated[
-        int | None, typer.Option("--severity", help="Severity 1–5.")
-    ] = None,
+    severity: Annotated[int | None, typer.Option("--severity", help="Severity 1–5.")] = None,
     correction: Annotated[
         str | None, typer.Option("--correction", help="Expected correction.")
     ] = None,
@@ -439,15 +430,11 @@ def render_reject(
 
 @render_app.command("list")
 def render_list(
-    topic_id: Annotated[
-        int | None, typer.Option("--topic-id", help="Filter by topic.")
-    ] = None,
+    topic_id: Annotated[int | None, typer.Option("--topic-id", help="Filter by topic.")] = None,
     scene_manifest_id: Annotated[
         int | None, typer.Option("--scene-manifest-id", help="Filter by scene manifest.")
     ] = None,
-    status: Annotated[
-        str | None, typer.Option("--status", help="Filter by status.")
-    ] = None,
+    status: Annotated[str | None, typer.Option("--status", help="Filter by status.")] = None,
     limit: Annotated[int, typer.Option("--limit", help="Max results.")] = 20,
 ) -> None:
     """List render manifests."""
@@ -525,10 +512,8 @@ def render_show(
         typer.echo(f"\nReview events ({len(events)}):")
         for e in events:
             typer.echo(
-                f"  [{e.created_at}] {e.event_type}"
-                f"  actor={e.actor}  reason={e.reason_code}"
+                f"  [{e.created_at}] {e.event_type}  actor={e.actor}  reason={e.reason_code}"
             )
-
 
 
 # ---------------------------------------------------------------------------

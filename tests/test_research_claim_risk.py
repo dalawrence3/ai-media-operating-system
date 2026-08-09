@@ -122,9 +122,7 @@ class TestHistoricalYearSuppression:
 
     def test_historical_year_does_not_suppress_rule3(self):
         sc = _sc(age_days=30, suspected_truncation=True)
-        result = compute_requires_date_review(
-            "In 2015, GDP grew 3%.", ClaimType.statistical, sc
-        )
+        result = compute_requires_date_review("In 2015, GDP grew 3%.", ClaimType.statistical, sc)
         assert result  # rule 3 still fires
 
     def test_no_historical_year_rule4_applies(self):

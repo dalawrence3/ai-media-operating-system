@@ -36,8 +36,9 @@ def db():
         yield conn
 
 
-def _insert_aggregate(conn, publication_id: int, metric_name: str, value: float,
-                       snapshot_ids: list[int] | None = None) -> None:
+def _insert_aggregate(
+    conn, publication_id: int, metric_name: str, value: float, snapshot_ids: list[int] | None = None
+) -> None:
     conn.execute(
         """
         INSERT INTO analytics_aggregates
@@ -253,15 +254,14 @@ class TestGenerateAll:
         with patch("app.learning.recommendations.generate_ctr_recommendations", bad_gen):
             result = generate_all_recommendations(db, _make_handoff(), learning_run_id=1)
 
-        ctr_result = next(
-            gr for gr in result.generator_results if gr.generator_name == "ctr"
-        )
+        ctr_result = next(gr for gr in result.generator_results if gr.generator_name == "ctr")
         assert ctr_result.status == "failed"
         assert "Simulated generator failure" in ctr_result.error_message
 
     def test_generator_failure_does_not_affect_other_generators(self, db):
         """Remaining generators continue when one fails."""
         from unittest.mock import patch
+
         _insert_aggregate(db, 1, "average_view_duration", 10.0)  # for retention generator
 
         def bad_gen(conn, handoff, learning_run_id):
