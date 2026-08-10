@@ -34,7 +34,7 @@ export function Experiments() {
            <EmptyState
              icon="🧪"
              title="No active experiments"
-             description="Create experiments through the Control Plane CLI to compare content variations."
+             description="Experiments compare content variants across pipelines. Create them via the Control Plane CLI ('ace experiment create'). Analytics data is required before results are meaningful."
            />
          ) : (
            <div>

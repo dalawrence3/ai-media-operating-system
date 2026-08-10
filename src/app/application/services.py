@@ -22,6 +22,8 @@ from app.application.commands import (
     ApproveReviewItemCommand,
     CancelOperationCommand,
     CancelPipelineCommand,
+    CreateChannelCommand,
+    CreatePlatformAccountCommand,
     CreateScheduleCommand,
     DeleteScheduleCommand,
     ExecutePipelineStageCommand,
@@ -98,6 +100,18 @@ class ApplicationService:
     # ------------------------------------------------------------------
     # Mutating commands
     # ------------------------------------------------------------------
+
+    def create_channel(self, cmd: CreateChannelCommand):
+        with self._obs.span("create_channel", workspace_id=cmd.workspace_id):
+            return dispatcher.dispatch(
+                self._conn, cmd, registry=self._registry, auth_hook=self._auth_hook
+            )
+
+    def create_platform_account(self, cmd: CreatePlatformAccountCommand):
+        with self._obs.span("create_platform_account"):
+            return dispatcher.dispatch(
+                self._conn, cmd, registry=self._registry, auth_hook=self._auth_hook
+            )
 
     def start_pipeline(self, cmd: StartPipelineCommand) -> PipelineView:
         with self._obs.span("start_pipeline", workspace_id=cmd.workspace_id):

@@ -11,6 +11,11 @@ import {
   auditView, operationView, experiment, controlEvent,
 } from './fixtures'
 
+export const MOCK_NEW_CHANNEL_ID = 'ch-new-001'
+export const MOCK_NEW_PIPELINE_ID = 'pipe-new-001'
+export const MOCK_NEW_SCHEDULE_ID = 'sched-new-001'
+export const MOCK_NEW_ACCOUNT_ID = 'acct-new-001'
+
 const O = 'http://localhost:5173'
 const B = `${O}/api/v1`
 
@@ -105,6 +110,16 @@ export const handlers = [
   ),
 
   // Channels
+  http.post(`${B}/workspaces/${WS_ID}/channels`, async ({ request }) => {
+    const body = await request.json() as { name: string; slug: string; description?: string }
+    return HttpResponse.json({
+      ...cpChannel,
+      id: MOCK_NEW_CHANNEL_ID,
+      name: body.name,
+      slug: body.slug,
+      description: body.description ?? null,
+    }, { status: 201 })
+  }),
   http.get(`${B}/workspaces/${WS_ID}/channels`, () =>
     HttpResponse.json([cpChannel, cpChannel2]),
   ),
@@ -124,6 +139,25 @@ export const handlers = [
   http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/accounts`, () =>
     HttpResponse.json([cpAccount1, cpAccount2]),
   ),
+  http.post(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/accounts`, async ({ request }) => {
+    const body = await request.json() as {
+      platform_id: string; external_account_id: string; display_name: string
+    }
+    return HttpResponse.json({
+      id: MOCK_NEW_ACCOUNT_ID,
+      channel_id: CH_ID,
+      platform_id: body.platform_id,
+      platform_key: body.platform_id,
+      external_account_id: body.external_account_id,
+      display_name: body.display_name,
+      status: 'disconnected',
+      credential_profile_id: null,
+      actor: 'dev:studio-user',
+      created_at: '2025-01-01T00:00:00',
+      updated_at: '2025-01-01T00:00:00',
+      metadata_json: null,
+    })
+  }),
   http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/strategy`, () =>
     HttpResponse.json({ status: 'unavailable', message: 'No strategy assigned' }),
   ),
@@ -132,6 +166,16 @@ export const handlers = [
   ),
 
   // Pipelines
+  http.post(`${B}/workspaces/${WS_ID}/pipelines`, async ({ request }) => {
+    const body = await request.json() as { channel_id: string; idempotency_key: string }
+    return HttpResponse.json({
+      ...pipelineView,
+      id: MOCK_NEW_PIPELINE_ID,
+      channel_id: body.channel_id,
+      idempotency_key: body.idempotency_key,
+      status: 'pending',
+    })
+  }),
   http.get(`${B}/workspaces/${WS_ID}/pipelines`, () =>
     HttpResponse.json([pipelineView]),
   ),
@@ -171,6 +215,25 @@ export const handlers = [
   ),
 
   // Schedules
+  http.post(`${B}/workspaces/${WS_ID}/schedules`, async ({ request }) => {
+    const body = await request.json() as { name: string; operation_type: string; schedule_type: string; schedule_config: Record<string, unknown> }
+    return HttpResponse.json({
+      id: MOCK_NEW_SCHEDULE_ID,
+      workspace_id: WS_ID,
+      channel_id: null,
+      name: body.name,
+      operation_type: body.operation_type,
+      schedule_type: body.schedule_type,
+      schedule_config: body.schedule_config,
+      timezone: 'UTC',
+      is_active: true,
+      last_run_at: null,
+      next_run_at: null,
+      actor: 'dev:studio-user',
+      created_at: '2025-01-01T00:00:00',
+      updated_at: '2025-01-01T00:00:00',
+    })
+  }),
   http.get(`${B}/workspaces/${WS_ID}/schedules`, () =>
     HttpResponse.json([]),
   ),

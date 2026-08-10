@@ -1,4 +1,4 @@
-/* Pipeline Studio — stage rendering, status states, recovery actions */
+/* Pipeline Studio — stage rendering, status states, recovery actions, start pipeline */
 
 import { describe, it, expect } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -9,8 +9,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { server } from '@/test/server'
 import { Pipelines } from './Pipelines'
 import {
-  WS_ID,
-  pipelineBlocked, pipelineWaitingReview, pipelineFailed,
+  WS_ID, cpChannel,
+  pipelineBlocked, pipelineWaitingReview, pipelineFailed, pipelineView,
 } from '@/test/fixtures'
 
 const B = 'http://localhost:5173/api/v1'
@@ -160,5 +160,67 @@ describe('Pipelines', () => {
       renderPipelines()
       await waitFor(() => screen.getByText('No pipelines'))
     })
+  })
+})
+
+describe('Start Pipeline', () => {
+  it('shows Start Pipeline button in page header', async () => {
+    renderPipelines()
+    await waitFor(() => screen.getByRole('button', { name: /start new pipeline/i }))
+  })
+
+  it('opens start pipeline modal on button click', async () => {
+    const { user } = renderPipelines()
+    await waitFor(() => screen.getByRole('button', { name: /start new pipeline/i }))
+    await user.click(screen.getByRole('button', { name: /start new pipeline/i }))
+    expect(screen.getByRole('dialog', { name: /start pipeline/i })).toBeInTheDocument()
+    expect(screen.getByLabelText(/channel/i)).toBeInTheDocument()
+  })
+
+  it('submit button is disabled when no channel selected', async () => {
+    const { user } = renderPipelines()
+    await waitFor(() => screen.getByRole('button', { name: /start new pipeline/i }))
+    await user.click(screen.getByRole('button', { name: /start new pipeline/i }))
+    expect(screen.getByRole('button', { name: /^start pipeline$/i })).toBeDisabled()
+  })
+
+  it('closes modal on Cancel', async () => {
+    const { user } = renderPipelines()
+    await waitFor(() => screen.getByRole('button', { name: /start new pipeline/i }))
+    await user.click(screen.getByRole('button', { name: /start new pipeline/i }))
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('shows start pipeline action in empty state', async () => {
+    server.use(
+      http.get(`${B}/workspaces/${WS_ID}/pipelines`, () => HttpResponse.json([])),
+    )
+    const { user } = renderPipelines()
+    await waitFor(() => screen.getByText('No pipelines'))
+    const startBtn = screen.getAllByRole('button').find(b => b.textContent?.includes('Start Pipeline'))
+    expect(startBtn).toBeDefined()
+    await user.click(startBtn!)
+    expect(screen.getByRole('dialog', { name: /start pipeline/i })).toBeInTheDocument()
+  })
+
+  it('submits and refreshes list after successful start', async () => {
+    const newPipeline = { ...pipelineView, id: 'pipe-new-001', status: 'pending' }
+    server.use(
+      http.post(`${B}/workspaces/${WS_ID}/pipelines`, async () =>
+        HttpResponse.json(newPipeline),
+      ),
+      http.get(`${B}/workspaces/${WS_ID}/pipelines`, () =>
+        HttpResponse.json([pipelineView, newPipeline]),
+      ),
+    )
+    const { user } = renderPipelines()
+    await waitFor(() => screen.getByRole('button', { name: /start new pipeline/i }))
+    await user.click(screen.getByRole('button', { name: /start new pipeline/i }))
+    // Select a channel in the dropdown
+    const channelSelect = screen.getByLabelText(/channel/i)
+    await user.selectOptions(channelSelect, cpChannel.id)
+    await user.click(screen.getByRole('button', { name: /^start pipeline$/i }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })

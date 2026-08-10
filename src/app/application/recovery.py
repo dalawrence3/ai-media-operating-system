@@ -82,6 +82,7 @@ def recover_pipeline(
     actor: str,
     *,
     from_stage: str | None = None,
+    commit: bool = True,
 ) -> PipelineView:
     """Reset a failed/blocked pipeline from a given stage or its last failed stage.
 
@@ -140,7 +141,8 @@ def recover_pipeline(
         "WHERE id=?",
         (target_stage, now, pipeline_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
     _emit_event(
         conn,
@@ -159,6 +161,8 @@ def replay_event(
     event_id: str,
     workspace_id: str,
     actor: str,
+    *,
+    commit: bool = True,
 ) -> dict[str, Any]:
     """Re-deliver a dead-lettered event to its registered handlers.
 
@@ -196,7 +200,8 @@ def replay_event(
         "WHERE event_id=? AND status IN ('failed', 'dead_lettered')",
         (event_id,),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
 
     _emit_event(
         conn,

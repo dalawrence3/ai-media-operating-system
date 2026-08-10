@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 
 export function useChannels(workspaceId: string) {
@@ -30,5 +30,28 @@ export function useChannelStrategy(workspaceId: string, channelId: string) {
     queryKey: ['channel-strategy', workspaceId, channelId],
     queryFn: () => api.getChannelStrategy(workspaceId, channelId),
     enabled: !!(workspaceId && channelId),
+  })
+}
+
+export function useCreateChannel(workspaceId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name: string; slug: string; description?: string }) =>
+      api.createChannel(workspaceId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['channels', workspaceId] })
+    },
+  })
+}
+
+export function useCreatePlatformAccount(workspaceId: string, channelId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { platform_id: string; external_account_id: string; display_name: string }) =>
+      api.createPlatformAccount(workspaceId, channelId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['channel-accounts', workspaceId, channelId] })
+      void qc.invalidateQueries({ queryKey: ['channel', workspaceId, channelId] })
+    },
   })
 }

@@ -201,6 +201,32 @@ class RejectReviewItemCommand:
 
 
 # ---------------------------------------------------------------------------
+# Channel and platform-account commands
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class CreateChannelCommand:
+    workspace_id: str
+    name: str
+    slug: str
+    actor: str
+    description: str | None = None
+    contract_version: str = COMMAND_CONTRACT_VERSION
+
+
+@dataclass(frozen=True)
+class CreatePlatformAccountCommand:
+    workspace_id: str
+    channel_id: str
+    platform_id: str
+    external_account_id: str
+    display_name: str
+    actor: str
+    contract_version: str = COMMAND_CONTRACT_VERSION
+
+
+# ---------------------------------------------------------------------------
 # Schedule commands
 # ---------------------------------------------------------------------------
 
@@ -267,6 +293,8 @@ class RecoverPipelineCommand:
 # All concrete command types — used by dispatcher for closed-world validation.
 ALL_COMMAND_TYPES: frozenset[type] = frozenset(
     {
+        CreateChannelCommand,
+        CreatePlatformAccountCommand,
         StartPipelineCommand,
         PausePipelineCommand,
         ResumePipelineCommand,
