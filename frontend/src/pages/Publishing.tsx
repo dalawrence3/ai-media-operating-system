@@ -23,12 +23,14 @@ export function Publishing() {
       </div>
       <div className="page-body">
         <UnavailableState
-          title="Publishing — Live integration not enabled"
+          title="Publishing — Live integration not configured"
           description={
-            `Publishing operations require YouTube OAuth credentials and ` +
-            `ACE_PUBLISHING_LIVE_ENABLED=true. ` +
-            `Configure credentials and enable the safety gate, then manage ` +
-            `publishing through the pipeline studio or 'ace publish' CLI.`
+            `Publishing records appear here after a pipeline produces an approved render ` +
+            `and a platform account has credentials configured. ` +
+            `Prerequisites: (1) Channel exists, (2) platform account registered with OAuth credential, ` +
+            `(3) pipeline completes render stage, (4) render passes human review, ` +
+            `(5) ACE_PUBLISHING_LIVE_ENABLED=true. ` +
+            `Manage publishing via the pipeline studio or 'ace publish' CLI.`
           }
           reason="live_disabled"
         />

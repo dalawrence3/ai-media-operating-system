@@ -56,3 +56,18 @@ export function usePipelineMutations(workspaceId: string) {
 
   return { pause, resume, cancel, recover, executeStage }
 }
+
+export function useStartPipeline(workspaceId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: {
+      channel_id: string
+      idempotency_key: string
+      platform_account_id?: string
+      end_stage?: string
+    }) => api.startPipeline(workspaceId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['pipelines', workspaceId] })
+    },
+  })
+}

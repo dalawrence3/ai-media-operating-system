@@ -242,6 +242,10 @@ class ApiClient {
     return this.request<CPChannel[]>('GET', `/workspaces/${workspaceId}/channels`)
   }
 
+  createChannel(workspaceId: string, body: { name: string; slug: string; description?: string }) {
+    return this.request<CPChannel>('POST', `/workspaces/${workspaceId}/channels`, body)
+  }
+
   getChannelSummary(workspaceId: string, channelId: string) {
     return this.request<ChannelView>('GET', `/workspaces/${workspaceId}/channels/${channelId}`)
   }
@@ -250,6 +254,18 @@ class ApiClient {
     return this.request<CPAccount[]>(
       'GET',
       `/workspaces/${workspaceId}/channels/${channelId}/accounts`,
+    )
+  }
+
+  createPlatformAccount(
+    workspaceId: string,
+    channelId: string,
+    body: { platform_id: string; external_account_id: string; display_name: string },
+  ) {
+    return this.request<CPAccount>(
+      'POST',
+      `/workspaces/${workspaceId}/channels/${channelId}/accounts`,
+      body,
     )
   }
 
@@ -329,6 +345,15 @@ class ApiClient {
     )
   }
 
+  startPipeline(workspaceId: string, body: {
+    channel_id: string
+    idempotency_key: string
+    platform_account_id?: string
+    end_stage?: string
+  }) {
+    return this.request<PipelineView>('POST', `/workspaces/${workspaceId}/pipelines`, body)
+  }
+
   // ── Reviews ──────────────────────────────────────────────────────────────
 
   approveReviewItem(
@@ -399,6 +424,17 @@ class ApiClient {
       undefined,
       { is_active: isActive },
     )
+  }
+
+  createSchedule(workspaceId: string, body: {
+    name: string
+    operation_type: string
+    schedule_type: string
+    schedule_config: Record<string, unknown>
+    channel_id?: string
+    timezone?: string
+  }) {
+    return this.request<ScheduleView>('POST', `/workspaces/${workspaceId}/schedules`, body)
   }
 
   // ── Diagnostics ──────────────────────────────────────────────────────────

@@ -87,6 +87,7 @@ def create_schedule(
     actor: str,
     channel_id: str | None = None,
     timezone_name: str = "UTC",
+    commit: bool = True,
 ) -> ScheduleView:
     if schedule_type not in SCHEDULE_TYPES:
         raise InvalidScheduleTypeError(schedule_type)
@@ -119,7 +120,8 @@ def create_schedule(
             now_iso,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_schedule(conn, sched_id)
 
 
@@ -148,7 +150,9 @@ def list_schedules(
     return [_row_to_view(r) for r in rows]
 
 
-def pause_schedule(conn: Any, schedule_id: str, workspace_id: str) -> ScheduleView:
+def pause_schedule(
+    conn: Any, schedule_id: str, workspace_id: str, *, commit: bool = True
+) -> ScheduleView:
     row = conn.execute(
         "SELECT * FROM app_schedule_definitions WHERE id=? AND workspace_id=?",
         (schedule_id, workspace_id),
@@ -159,11 +163,14 @@ def pause_schedule(conn: Any, schedule_id: str, workspace_id: str) -> ScheduleVi
         "UPDATE app_schedule_definitions SET is_active=0, updated_at=? WHERE id=?",
         (_now_iso(), schedule_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_schedule(conn, schedule_id)
 
 
-def resume_schedule(conn: Any, schedule_id: str, workspace_id: str) -> ScheduleView:
+def resume_schedule(
+    conn: Any, schedule_id: str, workspace_id: str, *, commit: bool = True
+) -> ScheduleView:
     row = conn.execute(
         "SELECT * FROM app_schedule_definitions WHERE id=? AND workspace_id=?",
         (schedule_id, workspace_id),
@@ -177,11 +184,12 @@ def resume_schedule(conn: Any, schedule_id: str, workspace_id: str) -> ScheduleV
         "UPDATE app_schedule_definitions SET is_active=1, next_run_at=?, updated_at=? WHERE id=?",
         (next_run.isoformat() if next_run else None, now.isoformat(), schedule_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return get_schedule(conn, schedule_id)
 
 
-def delete_schedule(conn: Any, schedule_id: str, workspace_id: str) -> None:
+def delete_schedule(conn: Any, schedule_id: str, workspace_id: str, *, commit: bool = True) -> None:
     row = conn.execute(
         "SELECT id FROM app_schedule_definitions WHERE id=? AND workspace_id=?",
         (schedule_id, workspace_id),
@@ -189,7 +197,8 @@ def delete_schedule(conn: Any, schedule_id: str, workspace_id: str) -> None:
     if row is None:
         raise ScheduleNotFoundError(schedule_id)
     conn.execute("DELETE FROM app_schedule_definitions WHERE id=?", (schedule_id,))
-    conn.commit()
+    if commit:
+        conn.commit()
 
 
 def record_run(conn: Any, schedule_id: str) -> ScheduleView:

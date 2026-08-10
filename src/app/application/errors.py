@@ -148,3 +148,14 @@ class ExecutorDisabledError(ApplicationError):
 
     def __init__(self, stage: str) -> None:
         super().__init__(f"Stage executor for '{stage}' is disabled")
+
+
+class UnsupportedPlatformError(ApplicationError):
+    """Raised when a platform_id is not in the canonical supported set."""
+
+    def __init__(self, platform_id: str, supported: frozenset[str]) -> None:
+        self.platform_id = platform_id
+        self.supported = supported
+        super().__init__(
+            f"Platform '{platform_id}' is not supported. Supported platforms: {sorted(supported)}"
+        )

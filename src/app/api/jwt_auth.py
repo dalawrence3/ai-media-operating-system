@@ -34,6 +34,9 @@ from app.auth.tokens import TokenExpiredError, TokenInvalidError, decode_access_
 # Maps ApplicationService command type names to the RBAC action string in
 # _PERMISSION_MATRIX.  Unknown commands default to "pipeline:run" (operator).
 _COMMAND_PERMISSION: dict[str, str] = {
+    # Channel and platform-account management
+    "CreateChannelCommand": "channel:create",
+    "CreatePlatformAccountCommand": "platform_account:create",
     # Pipeline lifecycle
     "StartPipelineCommand": "pipeline:create",
     "PausePipelineCommand": "pipeline:cancel",

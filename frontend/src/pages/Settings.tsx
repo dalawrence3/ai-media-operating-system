@@ -5,19 +5,26 @@ import { useState } from 'react'
 import { LoadingState } from '@/components/common/LoadingState'
 import { ErrorState } from '@/components/common/ErrorState'
 import { EmptyState } from '@/components/common/EmptyState'
+import { StatusBadge } from '@/components/common/StatusBadge'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 
-const SECTIONS = ['Workspace', 'Automation', 'Costs', 'Config']
+const SECTIONS = ['Workspace', 'Automation', 'Costs', 'Config'] as const
 
 export function Settings() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const wid = workspaceId ?? ''
-  const [activeSection, setActiveSection] = useState('Workspace')
+  const [activeSection, setActiveSection] = useState<typeof SECTIONS[number]>('Workspace')
 
-  const { data: config, isLoading, error, refetch } = useQuery({
+  const { data: config, isLoading: configLoading, error: configError, refetch: configRefetch } = useQuery({
     queryKey: ['config', wid],
     queryFn: () => api.getEffectiveConfig(wid),
+    enabled: !!wid,
+  })
+
+  const { data: workspace, isLoading: wsLoading, error: wsError, refetch: wsRefetch } = useQuery({
+    queryKey: ['workspace', wid],
+    queryFn: () => api.getWorkspaceSummary(wid),
     enabled: !!wid,
   })
 
@@ -26,6 +33,10 @@ export function Settings() {
       <EmptyState icon="🔧" title="No workspace selected" />
     </div>
   )
+
+  const sectionLoading = activeSection === 'Config' ? configLoading : wsLoading
+  const sectionError = activeSection === 'Config' ? configError : wsError
+  const sectionRefetch = activeSection === 'Config' ? configRefetch : wsRefetch
 
   return (
     <>
@@ -63,8 +74,8 @@ export function Settings() {
 
         {/* Section content */}
         <div>
-          {isLoading ? <LoadingState /> :
-           error ? <ErrorState error={error} retry={refetch} /> : (
+          {sectionLoading ? <LoadingState /> :
+           sectionError ? <ErrorState error={sectionError} retry={sectionRefetch} /> : (
 
             activeSection === 'Config' ? (
               <div className="card">
@@ -76,6 +87,44 @@ export function Settings() {
                   {JSON.stringify(config, null, 2)}
                 </pre>
               </div>
+
+            ) : activeSection === 'Workspace' ? (
+              <div className="card">
+                <h2 className="card-title mb-4">Workspace</h2>
+                {workspace && (
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-secondary">Name</span>
+                      <span className="font-600">{workspace.name}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-secondary">Slug</span>
+                      <span className="font-mono text-sm">{workspace.slug}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-secondary">Status</span>
+                      <StatusBadge status={workspace.status} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-secondary">Automation</span>
+                      <span className="font-mono text-sm">{workspace.automation_level}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-secondary">Channels</span>
+                      <span>{workspace.channel_count}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-secondary">Active Pipelines</span>
+                      <span>{workspace.active_pipeline_count}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm text-secondary">ID</span>
+                      <span className="font-mono text-xs text-muted">{wid}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
             ) : (
               <div className="card">
                 <h2 className="card-title mb-4">{activeSection}</h2>
@@ -86,6 +135,23 @@ export function Settings() {
                     backend configuration endpoints are available.
                   </span>
                 </div>
+                {activeSection === 'Automation' && (
+                  <div className="diagnostic-finding diagnostic-finding-info mt-3">
+                    <span>
+                      Automation level controls whether pipelines advance automatically.
+                      Current level is visible per-channel under Channels → Channel Detail → Strategy Profile.
+                      Set via: <code>ace policy set-automation-level &lt;workspace&gt; &lt;level&gt;</code>
+                    </span>
+                  </div>
+                )}
+                {activeSection === 'Costs' && (
+                  <div className="diagnostic-finding diagnostic-finding-info mt-3">
+                    <span>
+                      Budget and cost summaries are visible under the Dashboard cost tiles.
+                      Limits are configured via: <code>ace budget set &lt;workspace&gt;</code>
+                    </span>
+                  </div>
+                )}
               </div>
             )
           )}

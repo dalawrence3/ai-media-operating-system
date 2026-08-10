@@ -8,12 +8,264 @@ import { ErrorState } from '@/components/common/ErrorState'
 import { EmptyState } from '@/components/common/EmptyState'
 import { StatTile } from '@/components/common/StatTile'
 import { UnavailableState } from '@/components/common/UnavailableState'
-import { useChannels, useChannel, useChannelAccounts, useChannelStrategy } from '@/hooks/useChannel'
+import { Modal } from '@/components/common/Modal'
+import { useChannels, useChannel, useChannelAccounts, useChannelStrategy, useCreateChannel, useCreatePlatformAccount } from '@/hooks/useChannel'
+
+function slugify(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+function CreateChannelModal({ workspaceId, open, onClose }: {
+  workspaceId: string
+  open: boolean
+  onClose: () => void
+}) {
+  const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [slugTouched, setSlugTouched] = useState(false)
+  const [description, setDescription] = useState('')
+  const [apiError, setApiError] = useState<string | null>(null)
+
+  const createChannel = useCreateChannel(workspaceId)
+
+  function handleNameChange(v: string) {
+    setName(v)
+    if (!slugTouched) setSlug(slugify(v))
+  }
+
+  function handleSlugChange(v: string) {
+    setSlugTouched(true)
+    setSlug(v)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setApiError(null)
+    try {
+      await createChannel.mutateAsync({
+        name: name.trim(),
+        slug: slug.trim(),
+        description: description.trim() || undefined,
+      })
+      setName(''); setSlug(''); setSlugTouched(false); setDescription('')
+      onClose()
+    } catch (err) {
+      setApiError((err as Error).message)
+    }
+  }
+
+  function handleClose() {
+    setName(''); setSlug(''); setSlugTouched(false); setDescription(''); setApiError(null)
+    onClose()
+  }
+
+  const isValid = name.trim().length > 0 && slug.trim().length > 0
+
+  return (
+    <Modal
+      open={open}
+      title="New Channel"
+      onClose={handleClose}
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleClose}
+            disabled={createChannel.isPending}
+          >Cancel</button>
+          <button
+            type="submit"
+            form="create-channel-form"
+            className="btn btn-primary"
+            disabled={!isValid || createChannel.isPending}
+          >{createChannel.isPending ? 'Creating…' : 'Create Channel'}</button>
+        </>
+      }
+    >
+      <form id="create-channel-form" onSubmit={handleSubmit}>
+        <div className="form-group">
+          <label htmlFor="channel-name" className="form-label">Channel name <span aria-hidden="true">*</span></label>
+          <input
+            id="channel-name"
+            className="form-input"
+            type="text"
+            value={name}
+            onChange={e => handleNameChange(e.target.value)}
+            required
+            autoFocus
+            aria-required="true"
+            placeholder="My Brand Channel"
+          />
+        </div>
+        <div className="form-group">
+          <label htmlFor="channel-slug" className="form-label">Slug <span aria-hidden="true">*</span></label>
+          <input
+            id="channel-slug"
+            className="form-input"
+            type="text"
+            value={slug}
+            onChange={e => handleSlugChange(e.target.value)}
+            required
+            aria-required="true"
+            placeholder="my-brand-channel"
+            pattern="[a-z0-9][a-z0-9-]*"
+            aria-describedby="slug-hint"
+          />
+          <p id="slug-hint" className="form-hint">Lowercase letters, numbers, and hyphens only.</p>
+        </div>
+        <div className="form-group">
+          <label htmlFor="channel-description" className="form-label">Description</label>
+          <input
+            id="channel-description"
+            className="form-input"
+            type="text"
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="Optional description"
+          />
+        </div>
+        {apiError && (
+          <div role="alert" className="form-error">{apiError}</div>
+        )}
+      </form>
+    </Modal>
+  )
+}
+
+const SUPPORTED_PLATFORMS = [
+  { id: 'youtube', label: 'YouTube' },
+  { id: 'instagram', label: 'Instagram' },
+  { id: 'tiktok', label: 'TikTok' },
+] as const
+
+function AddPlatformAccountModal({ workspaceId, channelId, open, onClose }: {
+  workspaceId: string
+  channelId: string
+  open: boolean
+  onClose: () => void
+}) {
+  const [platformId, setPlatformId] = useState<string>(SUPPORTED_PLATFORMS[0].id)
+  const [externalId, setExternalId] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [apiError, setApiError] = useState<string | null>(null)
+
+  const create = useCreatePlatformAccount(workspaceId, channelId)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setApiError(null)
+    try {
+      await create.mutateAsync({
+        platform_id: platformId,
+        external_account_id: externalId.trim(),
+        display_name: displayName.trim(),
+      })
+      setExternalId(''); setDisplayName(''); setApiError(null)
+      onClose()
+    } catch (err) {
+      setApiError((err as Error).message)
+    }
+  }
+
+  function handleClose() {
+    setPlatformId(SUPPORTED_PLATFORMS[0].id); setExternalId('')
+    setDisplayName(''); setApiError(null)
+    onClose()
+  }
+
+  const isValid = externalId.trim().length > 0 && displayName.trim().length > 0
+
+  return (
+    <Modal
+      open={open}
+      title="Register Platform Account"
+      onClose={handleClose}
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleClose}
+            disabled={create.isPending}
+          >Cancel</button>
+          <button
+            type="submit"
+            form="add-platform-account-form"
+            className="btn btn-primary"
+            disabled={!isValid || create.isPending}
+          >{create.isPending ? 'Registering…' : 'Register Account'}</button>
+        </>
+      }
+    >
+      <form id="add-platform-account-form" onSubmit={handleSubmit}>
+        <div className="diagnostic-finding diagnostic-finding-info mb-4">
+          <span>
+            This registers account metadata only. No credentials are stored here.
+            Status will show <strong>Disconnected</strong> until OAuth is configured separately.
+          </span>
+        </div>
+        <div className="form-group">
+          <label htmlFor="pa-platform" className="form-label">Platform <span aria-hidden="true">*</span></label>
+          <select
+            id="pa-platform"
+            className="field-select"
+            value={platformId}
+            onChange={e => setPlatformId(e.target.value)}
+          >
+            {SUPPORTED_PLATFORMS.map(p => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
+          <label htmlFor="pa-external-id" className="form-label">
+            External account ID <span aria-hidden="true">*</span>
+          </label>
+          <input
+            id="pa-external-id"
+            className="form-input"
+            type="text"
+            value={externalId}
+            onChange={e => setExternalId(e.target.value)}
+            required
+            aria-required="true"
+            autoFocus
+            placeholder="UCxxxxxxxxxxxxxxxx"
+            aria-describedby="pa-external-id-hint"
+          />
+          <p id="pa-external-id-hint" className="form-hint">
+            YouTube channel ID, Instagram handle, or TikTok username.
+          </p>
+        </div>
+        <div className="form-group">
+          <label htmlFor="pa-display-name" className="form-label">
+            Display name <span aria-hidden="true">*</span>
+          </label>
+          <input
+            id="pa-display-name"
+            className="form-input"
+            type="text"
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+            required
+            aria-required="true"
+            placeholder="My YouTube Channel"
+          />
+        </div>
+        {apiError && (
+          <div role="alert" className="form-error">{apiError}</div>
+        )}
+      </form>
+    </Modal>
+  )
+}
 
 function ChannelDetail({ workspaceId, channelId }: { workspaceId: string; channelId: string }) {
   const channel   = useChannel(workspaceId, channelId)
   const accounts  = useChannelAccounts(workspaceId, channelId)
   const strategy  = useChannelStrategy(workspaceId, channelId)
+  const [showAddAccount, setShowAddAccount] = useState(false)
 
   if (channel.isLoading) return <LoadingState message="Loading channel…" />
   if (channel.error) return <ErrorState error={channel.error} retry={channel.refetch} />
@@ -47,13 +299,31 @@ function ChannelDetail({ workspaceId, channelId }: { workspaceId: string; channe
       <section className="section">
         <div className="section-header">
           <h3 className="section-title">Platform Accounts</h3>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowAddAccount(true)}
+            aria-label="Add platform account"
+          >+ Add Platform Account</button>
         </div>
+
+        <AddPlatformAccountModal
+          workspaceId={workspaceId}
+          channelId={channelId}
+          open={showAddAccount}
+          onClose={() => setShowAddAccount(false)}
+        />
+
         {accounts.isLoading ? <LoadingState /> :
          !accounts.data?.length ? (
-           <UnavailableState
-             title="No platform accounts connected"
-             description="Connect a platform account to enable publishing on this channel."
-             reason="provider_setup_required"
+           <EmptyState
+             icon="🔌"
+             title="No platform accounts registered"
+             description="Register a platform account to identify where content will be published. Credentials are configured separately."
+             action={
+               <button className="btn btn-secondary" onClick={() => setShowAddAccount(true)}>
+                 + Add Platform Account
+               </button>
+             }
            />
          ) : (
            <div className="table-wrapper">
@@ -74,7 +344,11 @@ function ChannelDetail({ workspaceId, channelId }: { workspaceId: string; channe
                      <td className="font-600">{a.display_name}</td>
                      <td className="font-mono text-xs text-muted">{a.external_account_id}</td>
                      <td><StatusBadge status={a.status} /></td>
-                     <td className="font-mono text-xs text-muted">{a.credential_profile_id?.slice(0,12) ?? 'No credential'}</td>
+                     <td className="font-mono text-xs text-muted">
+                       {a.credential_profile_id
+                         ? <span className="badge badge-healthy">Credential linked</span>
+                         : <span className="badge badge-warn">No credential</span>}
+                     </td>
                    </tr>
                  ))}
                </tbody>
@@ -112,6 +386,7 @@ export function Channels() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const wid = workspaceId ?? ''
   const [selected, setSelected] = useState<string | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
 
   const { data: channels, isLoading, error, refetch } = useChannels(wid)
 
@@ -131,14 +406,30 @@ export function Channels() {
           <h1 className="page-title">Channels</h1>
           <p className="page-subtitle">Brand / channel workspace management</p>
         </div>
+        <button
+          className="btn btn-primary"
+          onClick={() => setShowCreate(true)}
+          aria-label="Create new channel"
+        >+ New Channel</button>
       </div>
+
+      <CreateChannelModal
+        workspaceId={wid}
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+      />
 
       <div className="page-body">
         {!channels?.length ? (
           <EmptyState
             icon="📡"
             title="No channels yet"
-            description="Create a channel to start building your content operation."
+            description="Create your first channel to start building your content operation."
+            action={
+              <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+                + New Channel
+              </button>
+            }
           />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: selected ? '280px 1fr' : '1fr', gap: 'var(--sp-6)' }}>

@@ -1,15 +1,185 @@
-/* Workflows — read-only view of workspace events/workflows */
+/* Workflows — schedules and event history */
 
+import { useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { LoadingState } from '@/components/common/LoadingState'
 import { ErrorState } from '@/components/common/ErrorState'
 import { EmptyState } from '@/components/common/EmptyState'
-import { useQuery } from '@tanstack/react-query'
+import { Modal } from '@/components/common/Modal'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
+
+const SCHEDULE_TYPES = ['cron', 'interval', 'once', 'after_event'] as const
+const OPERATION_TYPES = [
+  'start_pipeline',
+  'pause_pipeline',
+  'resume_pipeline',
+  'cancel_pipeline',
+] as const
+
+function CreateScheduleModal({ workspaceId, open, onClose }: {
+  workspaceId: string
+  open: boolean
+  onClose: () => void
+}) {
+  const [name, setName] = useState('')
+  const [operationType, setOperationType] = useState<string>(OPERATION_TYPES[0])
+  const [scheduleType, setScheduleType] = useState<string>(SCHEDULE_TYPES[0])
+  const [configRaw, setConfigRaw] = useState('{}')
+  const [timezone, setTimezone] = useState('UTC')
+  const [configError, setConfigError] = useState<string | null>(null)
+  const [apiError, setApiError] = useState<string | null>(null)
+
+  const qc = useQueryClient()
+  const createSchedule = useMutation({
+    mutationFn: (body: Parameters<typeof api.createSchedule>[1]) =>
+      api.createSchedule(workspaceId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['schedules', workspaceId] })
+    },
+  })
+
+  function validateConfig() {
+    try {
+      JSON.parse(configRaw)
+      setConfigError(null)
+      return true
+    } catch {
+      setConfigError('Must be valid JSON')
+      return false
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setApiError(null)
+    if (!validateConfig()) return
+    try {
+      await createSchedule.mutateAsync({
+        name: name.trim(),
+        operation_type: operationType,
+        schedule_type: scheduleType,
+        schedule_config: JSON.parse(configRaw) as Record<string, unknown>,
+        timezone: timezone.trim() || 'UTC',
+      })
+      setName(''); setConfigRaw('{}'); setApiError(null)
+      onClose()
+    } catch (err) {
+      setApiError((err as Error).message)
+    }
+  }
+
+  function handleClose() {
+    setName(''); setOperationType(OPERATION_TYPES[0]); setScheduleType(SCHEDULE_TYPES[0])
+    setConfigRaw('{}'); setTimezone('UTC'); setConfigError(null); setApiError(null)
+    onClose()
+  }
+
+  const isValid = name.trim().length > 0 && !configError
+
+  return (
+    <Modal
+      open={open}
+      title="New Schedule"
+      onClose={handleClose}
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleClose}
+            disabled={createSchedule.isPending}
+          >Cancel</button>
+          <button
+            type="submit"
+            form="create-schedule-form"
+            className="btn btn-primary"
+            disabled={!isValid || createSchedule.isPending}
+          >{createSchedule.isPending ? 'Creating…' : 'Create Schedule'}</button>
+        </>
+      }
+    >
+      <form id="create-schedule-form" onSubmit={handleSubmit}>
+        <div className="form-group">
+          <label htmlFor="sched-name" className="form-label">Schedule name <span aria-hidden="true">*</span></label>
+          <input
+            id="sched-name"
+            className="form-input"
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            required
+            aria-required="true"
+            autoFocus
+            placeholder="Daily publish"
+          />
+        </div>
+        <div className="form-group">
+          <label htmlFor="sched-operation" className="form-label">Operation type</label>
+          <select
+            id="sched-operation"
+            className="field-select"
+            value={operationType}
+            onChange={e => setOperationType(e.target.value)}
+          >
+            {OPERATION_TYPES.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
+          <label htmlFor="sched-type" className="form-label">Schedule type</label>
+          <select
+            id="sched-type"
+            className="field-select"
+            value={scheduleType}
+            onChange={e => setScheduleType(e.target.value)}
+          >
+            {SCHEDULE_TYPES.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
+          <label htmlFor="sched-config" className="form-label">
+            Schedule config <span className="text-muted">(JSON)</span>
+          </label>
+          <textarea
+            id="sched-config"
+            className="form-input"
+            value={configRaw}
+            onChange={e => { setConfigRaw(e.target.value); setConfigError(null) }}
+            onBlur={validateConfig}
+            rows={3}
+            aria-describedby={configError ? 'sched-config-error' : undefined}
+          />
+          {configError && (
+            <p id="sched-config-error" className="form-error" role="alert">{configError}</p>
+          )}
+        </div>
+        <div className="form-group">
+          <label htmlFor="sched-tz" className="form-label">Timezone</label>
+          <input
+            id="sched-tz"
+            className="form-input"
+            type="text"
+            value={timezone}
+            onChange={e => setTimezone(e.target.value)}
+            placeholder="UTC"
+          />
+        </div>
+        {apiError && (
+          <div role="alert" className="form-error">{apiError}</div>
+        )}
+      </form>
+    </Modal>
+  )
+}
 
 export function Workflows() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const wid = workspaceId ?? ''
+  const [showCreate, setShowCreate] = useState(false)
 
   const { data: schedules, isLoading, error, refetch } = useQuery({
     queryKey: ['schedules', wid],
@@ -36,7 +206,18 @@ export function Workflows() {
           <h1 className="page-title">Workflows</h1>
           <p className="page-subtitle">Schedules and event history</p>
         </div>
+        <button
+          className="btn btn-primary"
+          onClick={() => setShowCreate(true)}
+          aria-label="Create new schedule"
+        >+ New Schedule</button>
       </div>
+
+      <CreateScheduleModal
+        workspaceId={wid}
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+      />
 
       <div className="page-body">
         <section className="section">
@@ -46,7 +227,16 @@ export function Workflows() {
           {isLoading ? <LoadingState /> :
            error ? <ErrorState error={error} retry={refetch} /> :
            !schedules?.length ? (
-             <EmptyState icon="🗓" title="No schedules defined" description="Create schedules through the API or CLI." />
+             <EmptyState
+               icon="🗓"
+               title="No schedules defined"
+               description="Create a schedule to automate recurring pipeline operations."
+               action={
+                 <button className="btn btn-primary" onClick={() => setShowCreate(true)}>
+                   + New Schedule
+                 </button>
+               }
+             />
            ) : (
              <div className="table-wrapper">
                <table className="data-table">

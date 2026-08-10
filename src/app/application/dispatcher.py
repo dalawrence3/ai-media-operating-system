@@ -30,6 +30,8 @@ from app.application.commands import (
     ApproveReviewItemCommand,
     CancelOperationCommand,
     CancelPipelineCommand,
+    CreateChannelCommand,
+    CreatePlatformAccountCommand,
     CreateScheduleCommand,
     DeleteScheduleCommand,
     ExecutePipelineStageCommand,
@@ -204,7 +206,13 @@ def dispatch(
     if workspace_id:
         auth_hook(conn, cmd_type.__name__, workspace_id, actor)
 
-    # Step 4–5: policy + pause checks (all mutating pipeline commands).
+    # Step 4–5: policy + pause checks.
+    # Channel/account creation requires an active workspace.
+    if isinstance(cmd, CreateChannelCommand | CreatePlatformAccountCommand):
+        if workspace_id:
+            _check_workspace_not_paused(conn, workspace_id)
+
+    # Pipeline execution commands additionally check channel pause state.
     if isinstance(
         cmd,
         StartPipelineCommand | AdvancePipelineStageCommand | ExecutePipelineStageCommand,
@@ -223,23 +231,31 @@ def dispatch(
             platform_account_id=platform_account_id,
         )
 
-    # Step 9: invoke handler.
-    handler = _HANDLERS[cmd_type]
-    result = handler(conn, cmd, registry=registry)
+    # Steps 9 + 11: invoke handler then emit audit event inside one transaction.
+    # All handlers pass commit=False when available so no intermediate commit
+    # occurs before the event row is written. The dispatcher owns the single
+    # commit that makes both the business mutation and the audit event durable.
+    try:
+        handler = _HANDLERS[cmd_type]
+        result = handler(conn, cmd, registry=registry)
 
-    # Step 11: emit dispatch event.
-    if workspace_id:
-        _emit_event(
-            conn,
-            "command.dispatched",
-            workspace_id,
-            actor,
-            {
-                "command": cmd_type.__name__,
-                "result_type": type(result).__name__,
-            },
-            correlation_id=getattr(cmd, "correlation_id", None),
-        )
+        if workspace_id:
+            _emit_event(
+                conn,
+                "command.dispatched",
+                workspace_id,
+                actor,
+                {
+                    "command": cmd_type.__name__,
+                    "result_type": type(result).__name__,
+                },
+                correlation_id=getattr(cmd, "correlation_id", None),
+            )
+
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
     return result
 
@@ -262,6 +278,7 @@ def register_default_handlers(conn_factory: Callable[[], Any] | None = None) -> 
     from app.application import review as review_svc
     from app.application import scheduler as sched_svc
     from app.application.executor import get_default_executor_registry
+    from app.control_plane import identity
 
     def _start_pipeline(conn: Any, cmd: StartPipelineCommand, **_: Any) -> Any:
         return pipeline_ctrl.start_pipeline(conn, cmd)
@@ -296,7 +313,7 @@ def register_default_handlers(conn_factory: Callable[[], Any] | None = None) -> 
             "WHERE id=? AND workspace_id=?",
             (now, cmd.operation_id, cmd.workspace_id),
         )
-        conn.commit()
+        # No conn.commit() here — dispatcher's try/except block owns the commit boundary.
         return {"operation_id": cmd.operation_id, "status": "pending", "retried_at": now}
 
     def _cancel_operation(conn: Any, cmd: CancelOperationCommand, **_: Any) -> Any:
@@ -307,7 +324,7 @@ def register_default_handlers(conn_factory: Callable[[], Any] | None = None) -> 
             "WHERE id=? AND workspace_id=?",
             (cmd.reason or "cancelled by operator", now, cmd.operation_id, cmd.workspace_id),
         )
-        conn.commit()
+        # No conn.commit() here — dispatcher's try/except block owns the commit boundary.
         return {"operation_id": cmd.operation_id, "status": "cancelled", "cancelled_at": now}
 
     def _approve_review(conn: Any, cmd: ApproveReviewItemCommand, **kwargs: Any) -> Any:
@@ -343,25 +360,55 @@ def register_default_handlers(conn_factory: Callable[[], Any] | None = None) -> 
             actor=cmd.actor,
             channel_id=cmd.channel_id,
             timezone_name=cmd.timezone,
+            commit=False,
         )
 
     def _pause_schedule(conn: Any, cmd: PauseScheduleCommand, **_: Any) -> Any:
-        return sched_svc.pause_schedule(conn, cmd.schedule_id, cmd.workspace_id)
+        return sched_svc.pause_schedule(conn, cmd.schedule_id, cmd.workspace_id, commit=False)
 
     def _resume_schedule(conn: Any, cmd: ResumeScheduleCommand, **_: Any) -> Any:
-        return sched_svc.resume_schedule(conn, cmd.schedule_id, cmd.workspace_id)
+        return sched_svc.resume_schedule(conn, cmd.schedule_id, cmd.workspace_id, commit=False)
 
     def _delete_schedule(conn: Any, cmd: DeleteScheduleCommand, **_: Any) -> None:
-        sched_svc.delete_schedule(conn, cmd.schedule_id, cmd.workspace_id)
+        sched_svc.delete_schedule(conn, cmd.schedule_id, cmd.workspace_id, commit=False)
 
     def _replay_event(conn: Any, cmd: ReplayEventCommand, **_: Any) -> Any:
-        return recovery_svc.replay_event(conn, cmd.event_id, cmd.workspace_id, cmd.actor)
+        return recovery_svc.replay_event(
+            conn, cmd.event_id, cmd.workspace_id, cmd.actor, commit=False
+        )
 
     def _recover_pipeline(conn: Any, cmd: RecoverPipelineCommand, **_: Any) -> Any:
         return recovery_svc.recover_pipeline(
-            conn, cmd.pipeline_id, cmd.workspace_id, cmd.actor, from_stage=cmd.from_stage
+            conn,
+            cmd.pipeline_id,
+            cmd.workspace_id,
+            cmd.actor,
+            from_stage=cmd.from_stage,
+            commit=False,
         )
 
+    def _create_channel(conn: Any, cmd: CreateChannelCommand, **_: Any) -> Any:
+        return identity.create_channel(
+            conn,
+            workspace_id=cmd.workspace_id,
+            name=cmd.name,
+            slug=cmd.slug,
+            actor=cmd.actor,
+            description=cmd.description,
+        )
+
+    def _create_platform_account(conn: Any, cmd: CreatePlatformAccountCommand, **_: Any) -> Any:
+        return identity.create_platform_account(
+            conn,
+            channel_id=cmd.channel_id,
+            platform_id=cmd.platform_id,
+            external_account_id=cmd.external_account_id,
+            display_name=cmd.display_name,
+            actor=cmd.actor,
+        )
+
+    register_handler(CreateChannelCommand, _create_channel, replace=True)
+    register_handler(CreatePlatformAccountCommand, _create_platform_account, replace=True)
     register_handler(StartPipelineCommand, _start_pipeline, replace=True)
     register_handler(PausePipelineCommand, _pause_pipeline, replace=True)
     register_handler(ResumePipelineCommand, _resume_pipeline, replace=True)

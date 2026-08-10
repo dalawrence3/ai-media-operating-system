@@ -6,7 +6,9 @@ import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingState } from '@/components/common/LoadingState'
 import { ErrorState } from '@/components/common/ErrorState'
 import { EmptyState } from '@/components/common/EmptyState'
-import { usePipelines, usePipeline, usePipelineMutations } from '@/hooks/usePipeline'
+import { Modal } from '@/components/common/Modal'
+import { usePipelines, usePipeline, usePipelineMutations, useStartPipeline } from '@/hooks/usePipeline'
+import { useChannels } from '@/hooks/useChannel'
 import type { PipelineStageView, PipelineView } from '@/api/types'
 
 const STAGES = [
@@ -70,6 +72,105 @@ function PipelineStageBar({ stages }: { stages: PipelineStageView[] }) {
         )
       })}
     </div>
+  )
+}
+
+function StartPipelineModal({ workspaceId, open, onClose }: {
+  workspaceId: string
+  open: boolean
+  onClose: () => void
+}) {
+  const [channelId, setChannelId] = useState('')
+  const [endStage, setEndStage] = useState('learning')
+  const [apiError, setApiError] = useState<string | null>(null)
+
+  const { data: channels } = useChannels(workspaceId)
+  const startPipeline = useStartPipeline(workspaceId)
+
+  function generateKey() {
+    return `ui-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setApiError(null)
+    try {
+      await startPipeline.mutateAsync({
+        channel_id: channelId,
+        idempotency_key: generateKey(),
+        end_stage: endStage,
+      })
+      setChannelId(''); setEndStage('learning')
+      onClose()
+    } catch (err) {
+      setApiError((err as Error).message)
+    }
+  }
+
+  function handleClose() {
+    setChannelId(''); setEndStage('learning'); setApiError(null)
+    onClose()
+  }
+
+  const isValid = channelId.length > 0
+
+  return (
+    <Modal
+      open={open}
+      title="Start Pipeline"
+      onClose={handleClose}
+      footer={
+        <>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleClose}
+            disabled={startPipeline.isPending}
+          >Cancel</button>
+          <button
+            type="submit"
+            form="start-pipeline-form"
+            className="btn btn-primary"
+            disabled={!isValid || startPipeline.isPending}
+          >{startPipeline.isPending ? 'Starting…' : 'Start Pipeline'}</button>
+        </>
+      }
+    >
+      <form id="start-pipeline-form" onSubmit={handleSubmit}>
+        <div className="form-group">
+          <label htmlFor="pipeline-channel" className="form-label">Channel <span aria-hidden="true">*</span></label>
+          <select
+            id="pipeline-channel"
+            className="field-select"
+            value={channelId}
+            onChange={e => setChannelId(e.target.value)}
+            required
+            aria-required="true"
+          >
+            <option value="">Select a channel…</option>
+            {channels?.map(ch => (
+              <option key={ch.id} value={ch.id}>{ch.name}</option>
+            ))}
+          </select>
+        </div>
+        <div className="form-group">
+          <label htmlFor="pipeline-end-stage" className="form-label">Run through stage</label>
+          <select
+            id="pipeline-end-stage"
+            className="field-select"
+            value={endStage}
+            onChange={e => setEndStage(e.target.value)}
+          >
+            {STAGES.map(s => (
+              <option key={s} value={s}>{STAGE_LABELS[s]}</option>
+            ))}
+          </select>
+        </div>
+        {apiError && (
+          <div role="alert" className="form-error">{apiError}</div>
+        )}
+      </form>
+    </Modal>
   )
 }
 
@@ -234,6 +335,7 @@ export function Pipelines() {
   const wid = workspaceId ?? ''
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<string>('')
+  const [showStart, setShowStart] = useState(false)
 
   const { data: pipelines, isLoading, error, refetch } = usePipelines(wid, statusFilter || undefined)
 
@@ -252,21 +354,34 @@ export function Pipelines() {
           <h1 className="page-title">Pipelines</h1>
           <p className="page-subtitle">Content production pipeline studio</p>
         </div>
-        <select
-          className="field-select"
-          value={statusFilter}
-          onChange={e => setStatusFilter(e.target.value)}
-          aria-label="Filter by status"
-        >
-          <option value="">All statuses</option>
-          <option value="running">Running</option>
-          <option value="pending">Pending</option>
-          <option value="paused">Paused</option>
-          <option value="failed">Failed</option>
-          <option value="completed">Completed</option>
-          <option value="blocked">Blocked</option>
-        </select>
+        <div className="flex gap-3 items-center">
+          <select
+            className="field-select"
+            value={statusFilter}
+            onChange={e => setStatusFilter(e.target.value)}
+            aria-label="Filter by status"
+          >
+            <option value="">All statuses</option>
+            <option value="running">Running</option>
+            <option value="pending">Pending</option>
+            <option value="paused">Paused</option>
+            <option value="failed">Failed</option>
+            <option value="completed">Completed</option>
+            <option value="blocked">Blocked</option>
+          </select>
+          <button
+            className="btn btn-primary"
+            onClick={() => setShowStart(true)}
+            aria-label="Start new pipeline"
+          >Start Pipeline</button>
+        </div>
       </div>
+
+      <StartPipelineModal
+        workspaceId={wid}
+        open={showStart}
+        onClose={() => setShowStart(false)}
+      />
 
       <div className="page-body">
         {isLoading ? <LoadingState message="Loading pipelines…" /> :
@@ -275,7 +390,14 @@ export function Pipelines() {
            <EmptyState
              icon="▶"
              title="No pipelines"
-             description={statusFilter ? `No pipelines with status "${statusFilter}"` : 'No pipelines found in this workspace.'}
+             description={statusFilter ? `No pipelines with status "${statusFilter}"` : 'Start your first pipeline to kick off content production.'}
+             action={
+               !statusFilter ? (
+                 <button className="btn btn-primary" onClick={() => setShowStart(true)}>
+                   Start Pipeline
+                 </button>
+               ) : undefined
+             }
            />
          ) : (
            <div style={{ display: 'grid', gridTemplateColumns: selected ? '340px 1fr' : '1fr', gap: 'var(--sp-6)' }}>
