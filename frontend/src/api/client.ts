@@ -17,6 +17,8 @@
 
 import type {
   AccountView,
+  AnalyticsAggregate,
+  AnalyticsSnapshot,
   AuditView,
   ChannelView,
   CostView,
@@ -29,7 +31,9 @@ import type {
   ExceptionView,
   HealthView,
   OperationView,
+  OptimizationRecommendation,
   PipelineView,
+  RecommendationReviewEvent,
   ReviewItemView,
   ScheduleView,
   StrategyProfile,
@@ -512,6 +516,61 @@ class ApiClient {
     return this.request<DiagnosticReport>(
       'GET',
       `/workspaces/${workspaceId}/diagnostics/${subject}/${subjectId}`,
+    )
+  }
+
+  // ── Analytics ────────────────────────────────────────────────────────────
+
+  listAnalyticsAggregates(workspaceId: string, metricName?: string, periodType?: string) {
+    return this.request<AnalyticsAggregate[]>(
+      'GET',
+      `/workspaces/${workspaceId}/analytics/aggregates`,
+      undefined,
+      { metric_name: metricName, period_type: periodType },
+    )
+  }
+
+  listAnalyticsSnapshots(workspaceId: string, limit?: number) {
+    return this.request<AnalyticsSnapshot[]>(
+      'GET',
+      `/workspaces/${workspaceId}/analytics/snapshots`,
+      undefined,
+      { limit },
+    )
+  }
+
+  // ── Learning ─────────────────────────────────────────────────────────────
+
+  listRecommendations(workspaceId: string, status?: string, domain?: string) {
+    return this.request<OptimizationRecommendation[]>(
+      'GET',
+      `/workspaces/${workspaceId}/recommendations`,
+      undefined,
+      { status, domain },
+    )
+  }
+
+  acceptRecommendation(
+    workspaceId: string,
+    recommendationId: number,
+    body?: { notes?: string; expected_outcome?: string },
+  ) {
+    return this.request<RecommendationReviewEvent>(
+      'POST',
+      `/workspaces/${workspaceId}/recommendations/${recommendationId}/accept`,
+      body,
+    )
+  }
+
+  rejectRecommendation(
+    workspaceId: string,
+    recommendationId: number,
+    body: { notes: string; expected_outcome?: string },
+  ) {
+    return this.request<RecommendationReviewEvent>(
+      'POST',
+      `/workspaces/${workspaceId}/recommendations/${recommendationId}/reject`,
+      body,
     )
   }
 }

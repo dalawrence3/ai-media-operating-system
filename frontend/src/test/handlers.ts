@@ -308,4 +308,25 @@ export const handlers = [
       contract_version: '1.0',
     }),
   ),
+
+  // Analytics (default: empty — no data seeded yet)
+  http.get(`${B}/workspaces/${WS_ID}/analytics/aggregates`, () =>
+    HttpResponse.json([]),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/analytics/snapshots`, () =>
+    HttpResponse.json([]),
+  ),
+
+  // Learning (default: empty — no data seeded yet)
+  http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+    HttpResponse.json([]),
+  ),
+  http.post(`${B}/workspaces/${WS_ID}/recommendations/:id/accept`, () =>
+    HttpResponse.json({ id: 1, recommendation_id: 1, topic_id: 1, event_type: 'accepted',
+      reviewer: 'dev:studio-user', notes: '', expected_outcome: '', input_hash: 'h', created_at: '2025-01-01T00:00:00' }),
+  ),
+  http.post(`${B}/workspaces/${WS_ID}/recommendations/:id/reject`, () =>
+    HttpResponse.json({ id: 2, recommendation_id: 1, topic_id: 1, event_type: 'rejected',
+      reviewer: 'dev:studio-user', notes: 'not relevant', expected_outcome: '', input_hash: 'h2', created_at: '2025-01-01T00:00:00' }),
+  ),
 ]

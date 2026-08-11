@@ -18,11 +18,12 @@ from __future__ import annotations
 from collections.abc import Generator
 from typing import Any
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 
 from app.api.jwt_auth import CurrentUser, get_current_user, make_jwt_auth_hook
 from app.application.composition import build_application_service
 from app.application.services import ApplicationService
+from app.auth.rbac import has_permission
 from app.core.config import Config
 from app.core.config import get_config as _cfg
 from app.core.database import open_db
@@ -46,6 +47,35 @@ async def get_actor(
 ) -> str:
     """Return the actor string for the authenticated request."""
     return current_user.actor
+
+
+def require_workspace_permission(
+    user: CurrentUser,
+    workspace_id: str,
+    action: str,
+) -> None:
+    """Raise HTTP 403 if the caller lacks the required action in workspace_id.
+
+    Dev users (is_dev=True) are granted all permissions unconditionally.
+    In production JWT mode, workspace membership + role are checked against
+    the RBAC permission matrix.
+    """
+    if user.is_dev:
+        return
+    if not has_permission(action, workspace_id, user.workspace_roles):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Action '{action}' requires workspace membership with sufficient role",
+        )
+
+
+def workspace_topic_ids(conn: Any, workspace_id: str) -> list[int]:
+    """Return distinct topic_ids linked to workspace_id via pipeline executions."""
+    rows = conn.execute(
+        "SELECT DISTINCT topic_id FROM app_pipeline_executions WHERE workspace_id = ?",
+        (workspace_id,),
+    ).fetchall()
+    return [r[0] for r in rows if r[0] is not None]
 
 
 def get_app_service(

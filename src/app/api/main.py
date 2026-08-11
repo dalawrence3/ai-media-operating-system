@@ -24,9 +24,11 @@ from slowapi.errors import RateLimitExceeded
 from app.api.limiter import limiter
 from app.api.routes import (
     accounts,
+    analytics,
     auth,
     channels,
     diagnostics,
+    learning,
     oauth,
     operations,
     pipelines,
@@ -163,6 +165,8 @@ app.include_router(reviews.router, prefix=_PREFIX)
 app.include_router(operations.router, prefix=_PREFIX)
 app.include_router(schedules.router, prefix=_PREFIX)
 app.include_router(diagnostics.router, prefix=_PREFIX)
+app.include_router(analytics.router, prefix=_PREFIX)
+app.include_router(learning.router, prefix=_PREFIX)
 
 
 # ---------------------------------------------------------------------------
