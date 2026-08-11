@@ -251,6 +251,79 @@ export interface YouTubeVerificationResult {
   failure_reason: string | null
 }
 
+/* Analytics */
+export interface AnalyticsAggregate {
+  id: number
+  publication_id: number
+  topic_id: number
+  provider: string
+  period_type: string
+  period_key: string
+  metric_name: string
+  metric_value: number
+  snapshot_count: number
+  calculation_method: string
+  currency_code: string | null
+  source_snapshot_ids_json: string
+  input_hash: string
+  created_at: string
+}
+
+export interface AnalyticsSnapshot {
+  id: number
+  publication_id: number
+  topic_id: number
+  provider: string
+  period_start: string | null
+  period_end: string | null
+  is_period_complete: number
+  currency_code: string | null
+  ingested_at: string
+  created_at: string
+}
+
+/* Learning */
+export interface OptimizationRecommendation {
+  id: number
+  learning_run_id: number
+  topic_id: number
+  publication_id: number | null
+  domain: string
+  subsystem: string
+  measure: string
+  title: string
+  explanation: string
+  expected_improvement: string
+  evidence_json: string
+  evidence_classification: string
+  recommendation_strength: string
+  confidence: string
+  confidence_score: number
+  affected_subsystem: string
+  subsystem_entity_type: string
+  subsystem_entity_id: number | null
+  experiment_id: string | null
+  engine_version: string
+  schema_version: string
+  input_hash: string
+  status: string
+  superseded_at: string | null
+  superseded_by_id: number | null
+  created_at: string
+}
+
+export interface RecommendationReviewEvent {
+  id: number
+  recommendation_id: number
+  topic_id: number
+  event_type: string
+  reviewer: string
+  notes: string
+  expected_outcome: string
+  input_hash: string
+  created_at: string
+}
+
 /* API error shape */
 export interface ApiError {
   detail: string

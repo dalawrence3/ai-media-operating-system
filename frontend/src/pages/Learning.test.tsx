@@ -1,11 +1,15 @@
 /* Learning page — observational semantics, confidence model, accept/reject labeling */
 
 import { describe, it, expect } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { http, HttpResponse } from 'msw'
+import { server } from '@/test/server'
 import { Learning } from './Learning'
-import { WS_ID } from '@/test/fixtures'
+import { WS_ID, recommendation, recommendationAccepted } from '@/test/fixtures'
+
+const B = 'http://localhost:5173/api/v1'
 
 function renderLearning(wsId = WS_ID) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -21,7 +25,7 @@ function renderLearning(wsId = WS_ID) {
 }
 
 describe('Learning', () => {
-  describe('unavailable state', () => {
+  describe('empty state (no recommendations from API)', () => {
     it('shows explicit "no analytics data" unavailable state', async () => {
       renderLearning()
       await waitFor(() => screen.getByText(/no analytics data yet/i))
@@ -33,7 +37,7 @@ describe('Learning', () => {
     })
   })
 
-  describe('confidence and evidence semantics', () => {
+  describe('confidence and evidence semantics (always visible)', () => {
     it('labels confidence as heuristic signal strength — not statistical confidence', async () => {
       renderLearning()
       await waitFor(() => screen.getByText('Confidence Score'))
@@ -44,7 +48,6 @@ describe('Learning', () => {
 
     it('describes recommendations as observational, not causal', async () => {
       renderLearning()
-      // The key disclaimer must be visible: associations, not causes
       await waitFor(() => screen.getByText(/they describe associations, not causes/i))
     })
 
@@ -72,9 +75,89 @@ describe('Learning', () => {
       renderLearning()
       await waitFor(() => screen.getByText('Learning'))
       const body = document.body.textContent ?? ''
-      // The word "causes" is allowed in "not causes" (a denial of causation)
-      // What is NOT allowed is a positive causal claim like "X causes Y" or "causes improvement"
       expect(body).not.toMatch(/\bcauses\s+(?!not\b)\w+/i)
+    })
+  })
+
+  describe('populated state (recommendations returned from API)', () => {
+    it('shows recommendation title when data is available', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+          HttpResponse.json([recommendation]),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByText(recommendation.title))
+    })
+
+    it('shows confidence score for each recommendation', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+          HttpResponse.json([recommendation]),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByText('62%'))
+    })
+
+    it('does not show unavailable state when recommendations exist', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+          HttpResponse.json([recommendation]),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByText(recommendation.title))
+      expect(screen.queryByText(/no analytics data yet/i)).not.toBeInTheDocument()
+    })
+
+    it('shows accept button for pending recommendations', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+          HttpResponse.json([recommendation]),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByTestId(`accept-${recommendation.id}`))
+    })
+
+    it('shows reject button that expands notes textarea', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+          HttpResponse.json([recommendation]),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByTestId(`reject-open-${recommendation.id}`))
+      fireEvent.click(screen.getByTestId(`reject-open-${recommendation.id}`))
+      await waitFor(() => screen.getByTestId(`reject-notes-${recommendation.id}`))
+    })
+
+    it('shows accepted status badge for accepted recommendation', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+          HttpResponse.json([recommendationAccepted]),
+        ),
+      )
+      renderLearning()
+      // Wait for the specific card — the filter bar also renders 'accepted' text
+      // when hasData=true, so use within() to check the badge inside the card.
+      await waitFor(() =>
+        screen.getByTestId(`recommendation-${recommendationAccepted.id}`),
+      )
+      const card = screen.getByTestId(`recommendation-${recommendationAccepted.id}`)
+      expect(within(card).getByText('accepted')).toBeInTheDocument()
+    })
+
+    it('still shows confidence model section when data is loaded', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+          HttpResponse.json([recommendation]),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByText(recommendation.title))
+      expect(screen.getByText('Confidence & Evidence Model')).toBeInTheDocument()
     })
   })
 })

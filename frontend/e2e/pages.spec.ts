@@ -59,15 +59,7 @@ test.describe('Page smoke tests', () => {
     await expect(unavailable.getByRole('heading')).toContainText(/live integration not configured/i)
   })
 
-  test('analytics page shows unavailable state (provider setup required)', async ({ page }) => {
-    if (wsId === '__skip__') test.skip()
-    await gotoWorkspacePage(page, wsId, 'analytics')
-    await expect(page.locator('[data-testid="unavailable-state"]')).toBeVisible({ timeout: 10_000 })
-  })
-
-  test('learning page shows unavailable state (no analytics data)', async ({ page }) => {
-    if (wsId === '__skip__') test.skip()
-    await gotoWorkspacePage(page, wsId, 'learning')
-    await expect(page.locator('[data-testid="unavailable-state"]')).toBeVisible({ timeout: 10_000 })
-  })
+  // Note: analytics and learning pages show populated state when seed data
+  // exists (make seed-dev). Detailed analytics/learning E2E live in
+  // analytics.spec.ts and learning.spec.ts.
 })

@@ -1,11 +1,13 @@
 /* Test fixtures matching backend view model contracts */
 
 import type {
+  AnalyticsAggregate,
   CPWorkspace,
   CPChannel,
   CPAccount,
   WorkspaceView,
   HealthView,
+  OptimizationRecommendation,
   PipelineView,
   ReviewItemView,
   ExceptionView,
@@ -285,4 +287,72 @@ export const controlEvent: ControlEvent = {
   actor: 'dev:studio-user',
   correlation_id: 'corr-001',
   created_at: '2025-01-01T12:00:00',
+}
+
+export const analyticsAggregate: AnalyticsAggregate = {
+  id: 1,
+  publication_id: 1,
+  topic_id: 10,
+  provider: 'youtube_test',
+  period_type: 'lifetime',
+  period_key: 'lifetime',
+  metric_name: 'views',
+  metric_value: 42000,
+  snapshot_count: 5,
+  calculation_method: 'sum',
+  currency_code: null,
+  source_snapshot_ids_json: '[1,2,3,4,5]',
+  input_hash: 'hash-agg-001',
+  created_at: '2025-01-01T00:00:00',
+}
+
+export const analyticsAggregateCtr: AnalyticsAggregate = {
+  ...analyticsAggregate,
+  id: 2,
+  metric_name: 'ctr',
+  metric_value: 0.047,
+  calculation_method: 'latest_observation',
+  input_hash: 'hash-agg-002',
+}
+
+export const recommendation: OptimizationRecommendation = {
+  id: 1,
+  learning_run_id: 1,
+  topic_id: 10,
+  publication_id: null,
+  domain: 'scripts',
+  subsystem: 'hook',
+  measure: 'ctr',
+  title: 'Shorter hooks are associated with higher CTR',
+  explanation: 'Topics with hooks under 5s show CTR 0.047 vs 0.031 for longer hooks across 5 snapshots.',
+  expected_improvement: 'Shortening hooks is associated with improved CTR.',
+  evidence_json: '[]',
+  evidence_classification: 'observational',
+  recommendation_strength: 'actionable',
+  confidence: 'medium',
+  confidence_score: 0.62,
+  affected_subsystem: '',
+  subsystem_entity_type: '',
+  subsystem_entity_id: null,
+  experiment_id: null,
+  engine_version: '1.0',
+  schema_version: '1',
+  input_hash: 'hash-rec-001',
+  status: 'pending',
+  superseded_at: null,
+  superseded_by_id: null,
+  created_at: '2025-01-01T00:00:00',
+}
+
+export const recommendationAccepted: OptimizationRecommendation = {
+  ...recommendation,
+  id: 2,
+  title: 'Slower pacing is associated with higher retention',
+  status: 'accepted',
+  domain: 'narration',
+  subsystem: 'pacing',
+  measure: 'average_view_duration',
+  confidence: 'high',
+  confidence_score: 0.81,
+  input_hash: 'hash-rec-002',
 }

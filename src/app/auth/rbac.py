@@ -61,6 +61,9 @@ _PERMISSION_MATRIX: dict[str, str] = {
     # Analytics
     "analytics:view": Role.ANALYST,
     "analytics:export": Role.REVIEWER,
+    # Recommendations (learning)
+    "recommendations:view": Role.ANALYST,
+    "recommendations:review": Role.REVIEWER,
     # Storage
     "storage:upload": Role.OPERATOR,
     "storage:delete": Role.ADMIN,
