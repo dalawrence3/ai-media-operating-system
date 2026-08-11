@@ -171,3 +171,68 @@ describe('Create Schedule', () => {
     expect(screen.getByRole('dialog', { name: /new schedule/i })).toBeInTheDocument()
   })
 })
+
+describe('Schedule Actions — Pause / Resume / Delete', () => {
+  it('active schedule shows Pause button', async () => {
+    server.use(
+      http.get(`${B}/workspaces/${WS_ID}/schedules`, () =>
+        HttpResponse.json([MOCK_SCHEDULE]),
+      ),
+    )
+    renderWorkflows()
+    await waitFor(() => screen.getByText('Daily publish'))
+    expect(screen.getByRole('button', { name: /pause schedule Daily publish/i })).toBeInTheDocument()
+  })
+
+  it('inactive schedule shows Resume button', async () => {
+    server.use(
+      http.get(`${B}/workspaces/${WS_ID}/schedules`, () =>
+        HttpResponse.json([{ ...MOCK_SCHEDULE, is_active: false }]),
+      ),
+    )
+    renderWorkflows()
+    await waitFor(() => screen.getByText('Daily publish'))
+    expect(screen.getByRole('button', { name: /resume schedule Daily publish/i })).toBeInTheDocument()
+  })
+
+  it('Delete button is visible for each schedule', async () => {
+    server.use(
+      http.get(`${B}/workspaces/${WS_ID}/schedules`, () =>
+        HttpResponse.json([MOCK_SCHEDULE]),
+      ),
+    )
+    renderWorkflows()
+    await waitFor(() => screen.getByText('Daily publish'))
+    expect(screen.getByRole('button', { name: /delete schedule Daily publish/i })).toBeInTheDocument()
+  })
+
+  it('pause API error shows dismissible alert', async () => {
+    server.use(
+      http.get(`${B}/workspaces/${WS_ID}/schedules`, () =>
+        HttpResponse.json([MOCK_SCHEDULE]),
+      ),
+      http.post(`${B}/workspaces/${WS_ID}/schedules/${MOCK_SCHEDULE.id}/pause`, () =>
+        HttpResponse.json({ detail: 'Schedule not found' }, { status: 404 }),
+      ),
+    )
+    const { user } = renderWorkflows()
+    await waitFor(() => screen.getByText('Daily publish'))
+    await user.click(screen.getByRole('button', { name: /pause schedule Daily publish/i }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+  })
+
+  it('resume API error shows dismissible alert', async () => {
+    server.use(
+      http.get(`${B}/workspaces/${WS_ID}/schedules`, () =>
+        HttpResponse.json([{ ...MOCK_SCHEDULE, is_active: false }]),
+      ),
+      http.post(`${B}/workspaces/${WS_ID}/schedules/${MOCK_SCHEDULE.id}/resume`, () =>
+        HttpResponse.json({ detail: 'Conflict' }, { status: 409 }),
+      ),
+    )
+    const { user } = renderWorkflows()
+    await waitFor(() => screen.getByText('Daily publish'))
+    await user.click(screen.getByRole('button', { name: /resume schedule Daily publish/i }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+  })
+})

@@ -20,13 +20,15 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/test/setup.ts'],
+    // Exclude Playwright e2e tests — run those with 'make e2e' instead.
+    exclude: ['node_modules/**', 'dist/**', 'e2e/**', '**/*.spec.ts', '**/*.global-setup.ts'],
     environmentOptions: {
       jsdom: { url: 'http://localhost:5173' },
     },
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
-      exclude: ['node_modules/', 'dist/', 'src/test/'],
+      exclude: ['node_modules/', 'dist/', 'src/test/', 'e2e/'],
     },
   },
 })

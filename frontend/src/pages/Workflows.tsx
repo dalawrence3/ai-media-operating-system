@@ -180,11 +180,35 @@ export function Workflows() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const wid = workspaceId ?? ''
   const [showCreate, setShowCreate] = useState(false)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const qc = useQueryClient()
 
   const { data: schedules, isLoading, error, refetch } = useQuery({
     queryKey: ['schedules', wid],
     queryFn: () => api.listSchedules(wid),
     enabled: !!wid,
+  })
+
+  function onMutError(err: unknown) {
+    setActionError((err as Error).message ?? 'Action failed — please try again.')
+  }
+
+  const pauseMut = useMutation({
+    mutationFn: (id: string) => api.pauseSchedule(wid, id),
+    onSuccess: () => { setActionError(null); void qc.invalidateQueries({ queryKey: ['schedules', wid] }) },
+    onError: onMutError,
+  })
+
+  const resumeMut = useMutation({
+    mutationFn: (id: string) => api.resumeSchedule(wid, id),
+    onSuccess: () => { setActionError(null); void qc.invalidateQueries({ queryKey: ['schedules', wid] }) },
+    onError: onMutError,
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => api.deleteSchedule(wid, id),
+    onSuccess: () => { setActionError(null); void qc.invalidateQueries({ queryKey: ['schedules', wid] }) },
+    onError: onMutError,
   })
 
   const { data: events } = useQuery({
@@ -220,6 +244,18 @@ export function Workflows() {
       />
 
       <div className="page-body">
+        {actionError && (
+          <div role="alert" className="form-error" style={{ marginBottom: '1rem' }}>
+            {actionError}
+            <button
+              type="button"
+              className="btn btn-sm"
+              style={{ marginLeft: '0.75rem' }}
+              onClick={() => setActionError(null)}
+              aria-label="Dismiss error"
+            >✕</button>
+          </div>
+        )}
         <section className="section">
           <div className="section-header">
             <h2 className="section-title">Schedules</h2>
@@ -248,6 +284,7 @@ export function Workflows() {
                      <th>Active</th>
                      <th>Last Run</th>
                      <th>Next Run</th>
+                     <th>Actions</th>
                    </tr>
                  </thead>
                  <tbody>
@@ -259,6 +296,35 @@ export function Workflows() {
                        <td>{s.is_active ? <span className="badge badge-healthy">Active</span> : <span className="badge badge-neutral">Inactive</span>}</td>
                        <td className="text-xs text-muted">{s.last_run_at?.slice(0,16).replace('T',' ') ?? '—'}</td>
                        <td className="text-xs text-muted">{s.next_run_at?.slice(0,16).replace('T',' ') ?? '—'}</td>
+                       <td>
+                         <div className="flex gap-2">
+                           {s.is_active ? (
+                             <button
+                               className="btn btn-secondary btn-sm"
+                               onClick={() => pauseMut.mutate(s.id)}
+                               disabled={pauseMut.isPending}
+                               aria-label={`Pause schedule ${s.name}`}
+                             >Pause</button>
+                           ) : (
+                             <button
+                               className="btn btn-secondary btn-sm"
+                               onClick={() => resumeMut.mutate(s.id)}
+                               disabled={resumeMut.isPending}
+                               aria-label={`Resume schedule ${s.name}`}
+                             >Resume</button>
+                           )}
+                           <button
+                             className="btn btn-danger btn-sm"
+                             onClick={() => {
+                               if (confirm(`Delete schedule "${s.name}"?`)) {
+                                 deleteMut.mutate(s.id)
+                               }
+                             }}
+                             disabled={deleteMut.isPending}
+                             aria-label={`Delete schedule ${s.name}`}
+                           >Delete</button>
+                         </div>
+                       </td>
                      </tr>
                    ))}
                  </tbody>

@@ -485,6 +485,27 @@ class ApiClient {
     return this.request<ScheduleView>('POST', `/workspaces/${workspaceId}/schedules`, body)
   }
 
+  pauseSchedule(workspaceId: string, scheduleId: string) {
+    return this.request<ScheduleView>(
+      'POST',
+      `/workspaces/${workspaceId}/schedules/${scheduleId}/pause`,
+    )
+  }
+
+  resumeSchedule(workspaceId: string, scheduleId: string) {
+    return this.request<ScheduleView>(
+      'POST',
+      `/workspaces/${workspaceId}/schedules/${scheduleId}/resume`,
+    )
+  }
+
+  deleteSchedule(workspaceId: string, scheduleId: string) {
+    return this.request<{ deleted: boolean }>(
+      'DELETE',
+      `/workspaces/${workspaceId}/schedules/${scheduleId}`,
+    )
+  }
+
   // ── Diagnostics ──────────────────────────────────────────────────────────
 
   getDiagnostics(workspaceId: string, subject: string, subjectId: string) {

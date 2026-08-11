@@ -234,6 +234,45 @@ export const handlers = [
   ),
 
   // Schedules
+  http.post(`${B}/workspaces/${WS_ID}/schedules/:scheduleId/pause`, ({ params }) =>
+    HttpResponse.json({
+      id: params.scheduleId,
+      workspace_id: WS_ID,
+      channel_id: null,
+      name: 'Daily publish',
+      operation_type: 'start_pipeline',
+      schedule_type: 'cron',
+      schedule_config: {},
+      timezone: 'UTC',
+      is_active: false,
+      last_run_at: null,
+      next_run_at: null,
+      actor: 'dev:studio-user',
+      created_at: '2025-01-01T00:00:00',
+      updated_at: '2025-01-01T00:00:00',
+    }),
+  ),
+  http.post(`${B}/workspaces/${WS_ID}/schedules/:scheduleId/resume`, ({ params }) =>
+    HttpResponse.json({
+      id: params.scheduleId,
+      workspace_id: WS_ID,
+      channel_id: null,
+      name: 'Daily publish',
+      operation_type: 'start_pipeline',
+      schedule_type: 'cron',
+      schedule_config: {},
+      timezone: 'UTC',
+      is_active: true,
+      last_run_at: null,
+      next_run_at: null,
+      actor: 'dev:studio-user',
+      created_at: '2025-01-01T00:00:00',
+      updated_at: '2025-01-01T00:00:00',
+    }),
+  ),
+  http.delete(`${B}/workspaces/${WS_ID}/schedules/:scheduleId`, () =>
+    HttpResponse.json({ deleted: true }),
+  ),
   http.post(`${B}/workspaces/${WS_ID}/schedules`, async ({ request }) => {
     const body = await request.json() as { name: string; operation_type: string; schedule_type: string; schedule_config: Record<string, unknown> }
     return HttpResponse.json({
