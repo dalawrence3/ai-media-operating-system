@@ -88,10 +88,12 @@ describe('Channels', () => {
       expect(inTable.getByText(cpAccount2.external_account_id)).toBeInTheDocument()
     })
 
-    it('Account B credential shows "No credential" when null', async () => {
+    it('OAuth Connection column shows Connect buttons for YouTube accounts', async () => {
       const { user } = renderChannels()
       await selectChannelAlpha(user)
-      expect(await screen.findByText('No credential')).toBeInTheDocument()
+      // Both YouTube accounts should show a Connect button (disconnected by default in tests)
+      const connectButtons = await screen.findAllByRole('button', { name: /connect/i })
+      expect(connectButtons.length).toBeGreaterThanOrEqual(2)
     })
 
     it('shows empty state when no accounts registered', async () => {

@@ -36,6 +36,8 @@ class SecretsInterface:
         "ACE_SECRET_KEY": "JWT signing secret",
         "ACE_OBJECT_STORAGE_ACCESS_KEY": "Object storage access key",
         "ACE_OBJECT_STORAGE_SECRET_KEY": "Object storage secret key",
+        # YouTube OAuth — path to client secrets JSON, never the secret values themselves.
+        "YOUTUBE_CLIENT_SECRETS_PATH": "YouTube OAuth client secrets file path",
     }
 
     def get(self, env_var: str, *, required: bool = False) -> str:

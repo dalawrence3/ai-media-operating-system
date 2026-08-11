@@ -1,7 +1,7 @@
 /* M14.3 — Channel / Brand Workspace */
 
-import { useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingState } from '@/components/common/LoadingState'
 import { ErrorState } from '@/components/common/ErrorState'
@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { StatTile } from '@/components/common/StatTile'
 import { UnavailableState } from '@/components/common/UnavailableState'
 import { Modal } from '@/components/common/Modal'
-import { useChannels, useChannel, useChannelAccounts, useChannelStrategy, useCreateChannel, useCreatePlatformAccount } from '@/hooks/useChannel'
+import { useChannels, useChannel, useChannelAccounts, useChannelStrategy, useCreateChannel, useCreatePlatformAccount, useAccountConnectionStatus, useStartYouTubeOAuth, useDisconnectYouTubeAccount } from '@/hooks/useChannel'
 
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -261,6 +261,82 @@ function AddPlatformAccountModal({ workspaceId, channelId, open, onClose }: {
   )
 }
 
+function YouTubeOAuthCell({
+  workspaceId,
+  channelId,
+  accountId,
+  accountStatus,
+}: {
+  workspaceId: string
+  channelId: string
+  accountId: string
+  accountStatus: string
+}) {
+  const conn = useAccountConnectionStatus(workspaceId, channelId, accountId)
+  const startOAuth = useStartYouTubeOAuth(workspaceId, channelId, accountId)
+  const disconnect = useDisconnectYouTubeAccount(workspaceId, channelId, accountId)
+
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+
+  if (conn.isLoading) return <span className="text-xs text-muted">Checking…</span>
+
+  const status = conn.data
+
+  if (!status || !status.connected) {
+    const isInvalid = accountStatus === 'credential_invalid'
+    const label = isInvalid ? 'Reconnect' : 'Connect'
+    return (
+      <button
+        className="btn btn-secondary"
+        style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px' }}
+        onClick={() => startOAuth.mutate()}
+        disabled={startOAuth.isPending}
+        title={isInvalid ? 'Credentials invalid — reconnect to YouTube' : 'Connect YouTube account via OAuth'}
+      >
+        {startOAuth.isPending ? 'Redirecting…' : label}
+      </button>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)' }}>
+      <div className="flex items-center gap-2">
+        <span className="badge badge-healthy" style={{ fontSize: 'var(--font-size-xs)' }}>
+          Connected
+        </span>
+      </div>
+      {status.channel_title && (
+        <span className="text-xs text-muted">{status.channel_title}</span>
+      )}
+      {confirmDisconnect ? (
+        <div className="flex gap-2 mt-1">
+          <button
+            className="btn btn-danger"
+            style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px' }}
+            onClick={() => { disconnect.mutate(); setConfirmDisconnect(false) }}
+            disabled={disconnect.isPending}
+          >
+            {disconnect.isPending ? 'Disconnecting…' : 'Confirm Disconnect'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px' }}
+            onClick={() => setConfirmDisconnect(false)}
+          >Cancel</button>
+        </div>
+      ) : (
+        <button
+          className="btn btn-secondary"
+          style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px', marginTop: 'var(--sp-1)' }}
+          onClick={() => setConfirmDisconnect(true)}
+        >
+          Disconnect
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ChannelDetail({ workspaceId, channelId }: { workspaceId: string; channelId: string }) {
   const channel   = useChannel(workspaceId, channelId)
   const accounts  = useChannelAccounts(workspaceId, channelId)
@@ -334,7 +410,7 @@ function ChannelDetail({ workspaceId, channelId }: { workspaceId: string; channe
                    <th>Display Name</th>
                    <th>External ID</th>
                    <th>Status</th>
-                   <th>Credential</th>
+                   <th>OAuth Connection</th>
                  </tr>
                </thead>
                <tbody>
@@ -344,10 +420,17 @@ function ChannelDetail({ workspaceId, channelId }: { workspaceId: string; channe
                      <td className="font-600">{a.display_name}</td>
                      <td className="font-mono text-xs text-muted">{a.external_account_id}</td>
                      <td><StatusBadge status={a.status} /></td>
-                     <td className="font-mono text-xs text-muted">
-                       {a.credential_profile_id
-                         ? <span className="badge badge-healthy">Credential linked</span>
-                         : <span className="badge badge-warn">No credential</span>}
+                     <td>
+                       {a.platform_key === 'youtube' ? (
+                         <YouTubeOAuthCell
+                           workspaceId={workspaceId}
+                           channelId={channelId}
+                           accountId={a.id}
+                           accountStatus={a.status}
+                         />
+                       ) : (
+                         <span className="text-xs text-muted">—</span>
+                       )}
                      </td>
                    </tr>
                  ))}
@@ -384,11 +467,49 @@ function ChannelDetail({ workspaceId, channelId }: { workspaceId: string; channe
 
 export function Channels() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
+  const [searchParams, setSearchParams] = useSearchParams()
   const wid = workspaceId ?? ''
   const [selected, setSelected] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [oauthBanner, setOauthBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   const { data: channels, isLoading, error, refetch } = useChannels(wid)
+
+  // Handle OAuth callback result embedded in query params
+  useEffect(() => {
+    const oauthSuccess = searchParams.get('oauth_success')
+    const oauthError = searchParams.get('oauth_error')
+    const accountId = searchParams.get('account_id')
+    const channelId = searchParams.get('channel_id')
+
+    if (oauthSuccess === 'true') {
+      setOauthBanner({ type: 'success', message: 'YouTube account connected successfully.' })
+      if (channelId) setSelected(channelId)
+      if (accountId) { /* connection status hook will auto-refresh */ }
+      const next = new URLSearchParams(searchParams)
+      next.delete('oauth_success'); next.delete('account_id')
+      setSearchParams(next, { replace: true })
+    } else if (oauthError) {
+      const messages: Record<string, string> = {
+        state_expired: 'OAuth session expired. Please try again.',
+        exchange_failed: 'Google code exchange failed. Please try again.',
+        no_youtube_channel: 'No YouTube channel found for this Google account.',
+        channel_mismatch: 'This Google account is linked to a different YouTube channel.',
+        access_denied: 'Access was denied. Please authorize the app in Google.',
+        missing_params: 'OAuth callback was incomplete. Please try again.',
+        not_configured: 'OAuth is not configured on the server.',
+        internal_error: 'An unexpected error occurred. Please try again.',
+      }
+      setOauthBanner({
+        type: 'error',
+        message: messages[oauthError] ?? `OAuth error: ${oauthError}`,
+      })
+      const next = new URLSearchParams(searchParams)
+      next.delete('oauth_error')
+      setSearchParams(next, { replace: true })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   if (!wid) return (
     <div className="page-body">
@@ -418,6 +539,21 @@ export function Channels() {
         open={showCreate}
         onClose={() => setShowCreate(false)}
       />
+
+      {oauthBanner && (
+        <div
+          role="alert"
+          className={`diagnostic-finding diagnostic-finding-${oauthBanner.type === 'success' ? 'ok' : 'error'} mx-6 mt-4`}
+          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+        >
+          <span>{oauthBanner.message}</span>
+          <button
+            aria-label="Dismiss"
+            onClick={() => setOauthBanner(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 4px' }}
+          >✕</button>
+        </div>
+      )}
 
       <div className="page-body">
         {!channels?.length ? (

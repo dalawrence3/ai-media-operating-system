@@ -51,6 +51,9 @@ _PERMISSION_MATRIX: dict[str, str] = {
     "platform_account:create": Role.ADMIN,
     "platform_account:delete": Role.ADMIN,
     "platform_account:view": Role.OPERATOR,
+    # OAuth account connection (connecting/disconnecting real provider credentials)
+    "platform_account:connect": Role.ADMIN,
+    "platform_account:disconnect": Role.ADMIN,
     # Publishing
     "publish:approve": Role.OPERATOR,
     "publish:reject": Role.REVIEWER,

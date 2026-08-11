@@ -55,3 +55,37 @@ export function useCreatePlatformAccount(workspaceId: string, channelId: string)
     },
   })
 }
+
+export function useAccountConnectionStatus(
+  workspaceId: string,
+  channelId: string,
+  accountId: string,
+) {
+  return useQuery({
+    queryKey: ['account-connection', workspaceId, channelId, accountId],
+    queryFn: () => api.getAccountConnectionStatus(workspaceId, channelId, accountId),
+    enabled: !!(workspaceId && channelId && accountId),
+    refetchInterval: 30_000,
+  })
+}
+
+export function useStartYouTubeOAuth(workspaceId: string, channelId: string, accountId: string) {
+  return useMutation({
+    mutationFn: () => api.startYouTubeOAuth(workspaceId, channelId, accountId),
+    onSuccess: (data) => {
+      // Redirect the user's browser to Google's authorization URL
+      window.location.href = data.authorization_url
+    },
+  })
+}
+
+export function useDisconnectYouTubeAccount(workspaceId: string, channelId: string, accountId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.disconnectYouTubeAccount(workspaceId, channelId, accountId),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['account-connection', workspaceId, channelId, accountId] })
+      void qc.invalidateQueries({ queryKey: ['channel-accounts', workspaceId, channelId] })
+    },
+  })
+}

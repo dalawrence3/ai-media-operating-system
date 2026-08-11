@@ -158,6 +158,25 @@ export const handlers = [
       metadata_json: null,
     })
   }),
+  // OAuth connection status — returns disconnected by default (no live OAuth in tests)
+  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/accounts/:accountId/connection`, () =>
+    HttpResponse.json({
+      account_id: 'mock',
+      connected: false,
+      provider_channel_id: null,
+      channel_title: null,
+      verified_at: null,
+      granted_scopes: [],
+      credential_status: null,
+      health_status: null,
+    }),
+  ),
+  http.post(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/accounts/:accountId/oauth/youtube/start`, () =>
+    HttpResponse.json({ authorization_url: 'https://accounts.google.com/o/oauth2/auth?state=test' }),
+  ),
+  http.delete(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/accounts/:accountId/oauth/youtube`, () =>
+    HttpResponse.json({ status: 'disconnected', account_id: 'mock' }),
+  ),
   http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/strategy`, () =>
     HttpResponse.json({ status: 'unavailable', message: 'No strategy assigned' }),
   ),
