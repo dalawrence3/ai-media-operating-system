@@ -308,11 +308,19 @@ class ApiClient {
       channel_title: string | null
       verified_at: string | null
       granted_scopes: string[]
+      upload_scope_granted: boolean
       credential_status: string | null
       health_status: string | null
     }>(
       'GET',
       `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/connection`,
+    )
+  }
+
+  upgradeYouTubeUploadScope(workspaceId: string, channelId: string, accountId: string) {
+    return this.request<{ authorization_url: string }>(
+      'POST',
+      `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/oauth/youtube/upgrade-upload`,
     )
   }
 

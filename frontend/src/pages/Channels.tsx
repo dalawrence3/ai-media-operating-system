@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { StatTile } from '@/components/common/StatTile'
 import { UnavailableState } from '@/components/common/UnavailableState'
 import { Modal } from '@/components/common/Modal'
-import { useChannels, useChannel, useChannelAccounts, useChannelStrategy, useCreateChannel, useCreatePlatformAccount, useAccountConnectionStatus, useStartYouTubeOAuth, useDisconnectYouTubeAccount, useVerifyYouTubeConnection } from '@/hooks/useChannel'
+import { useChannels, useChannel, useChannelAccounts, useChannelStrategy, useCreateChannel, useCreatePlatformAccount, useAccountConnectionStatus, useStartYouTubeOAuth, useDisconnectYouTubeAccount, useVerifyYouTubeConnection, useUpgradeYouTubeUploadScope } from '@/hooks/useChannel'
 import type { YouTubeVerificationResult } from '@/api/types'
 
 function slugify(name: string): string {
@@ -277,6 +277,7 @@ function YouTubeOAuthCell({
   const startOAuth = useStartYouTubeOAuth(workspaceId, channelId, accountId)
   const disconnect = useDisconnectYouTubeAccount(workspaceId, channelId, accountId)
   const verify = useVerifyYouTubeConnection(workspaceId, channelId, accountId)
+  const upgradeUpload = useUpgradeYouTubeUploadScope(workspaceId, channelId, accountId)
 
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
   const [verificationResult, setVerificationResult] = useState<YouTubeVerificationResult | null>(null)
@@ -310,6 +311,7 @@ function YouTubeOAuthCell({
 
   const verifiedBadge = verificationResult?.verified
   const verificationFailed = verificationResult && !verificationResult.verified
+  const uploadScopeGranted = status?.upload_scope_granted ?? false
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)' }}>
@@ -342,6 +344,32 @@ function YouTubeOAuthCell({
           {verificationResult.failure_reason ?? 'Verification failed.'}
         </span>
       )}
+
+      {/* Upload permission status */}
+      <div className="flex items-center gap-2 mt-1">
+        {uploadScopeGranted ? (
+          <span className="badge badge-healthy" style={{ fontSize: 'var(--font-size-xs)' }}>
+            Upload: Granted
+          </span>
+        ) : (
+          <>
+            <span className="badge badge-degraded" style={{ fontSize: 'var(--font-size-xs)' }}>
+              Upload: Missing
+            </span>
+            {!confirmDisconnect && (
+              <button
+                className="btn btn-secondary"
+                style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px' }}
+                onClick={() => upgradeUpload.mutate()}
+                disabled={upgradeUpload.isPending}
+                title="Reauthorize to add youtube.upload scope"
+              >
+                {upgradeUpload.isPending ? 'Redirecting…' : 'Enable Upload Permission'}
+              </button>
+            )}
+          </>
+        )}
+      </div>
 
       {!confirmDisconnect && (
         <div className="flex gap-2 mt-1" style={{ flexWrap: 'wrap' }}>

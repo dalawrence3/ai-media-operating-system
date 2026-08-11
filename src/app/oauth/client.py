@@ -18,15 +18,22 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
-# Scopes for this milestone: identity verification only.
-# youtube.upload will be added when live publishing is implemented.
+# Scopes for identity verification only (current default).
 YOUTUBE_SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/youtube.readonly",
 ]
 
-# Scope needed for video uploads (future milestone).
+# Scope needed for video uploads.
 YOUTUBE_UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
+
+# Full scopes requested when upgrading an account to upload capability.
+# Includes readonly (for identity verification) and upload.
+YOUTUBE_UPLOAD_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    YOUTUBE_UPLOAD_SCOPE,
+]
 
 
 @dataclass(frozen=True)
@@ -130,6 +137,14 @@ class GoogleOAuthClient(Protocol):
         """
         ...
 
+    def get_oauth_client_secrets(self) -> dict:
+        """Return token_uri, client_id, client_secret for constructing refresh-capable Credentials.
+
+        Real implementation reads from the client secrets JSON file.
+        Fake implementation returns empty dict (no live refresh needed in tests).
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Fake implementation for tests
@@ -154,6 +169,7 @@ class FakeGoogleOAuthClient:
         fake_access_token: str = "fake_access_token_aaa",
         fake_refresh_token: str = "fake_refresh_token_bbb",
         fake_google_sub: str = "1000000000000000001",
+        granted_scopes: list[str] | None = None,
         fail_exchange: Exception | None = None,
         fail_refresh: Exception | None = None,
         fail_revoke: Exception | None = None,
@@ -167,6 +183,9 @@ class FakeGoogleOAuthClient:
         self._access_token = fake_access_token
         self._refresh_token = fake_refresh_token
         self._google_sub = fake_google_sub
+        self._granted_scopes: list[str] = (
+            granted_scopes if granted_scopes is not None else YOUTUBE_SCOPES
+        )
         self._fail_exchange = fail_exchange
         self._fail_refresh = fail_refresh
         self._fail_revoke = fail_revoke
@@ -212,7 +231,7 @@ class FakeGoogleOAuthClient:
             refresh_token=self._refresh_token,
             token_type="Bearer",
             expires_at_utc=datetime.now(UTC) + timedelta(hours=1),
-            scopes=YOUTUBE_SCOPES,
+            scopes=self._granted_scopes,
             google_sub=self._google_sub,
         )
 
@@ -224,7 +243,7 @@ class FakeGoogleOAuthClient:
             refresh_token=None,  # Google often omits on refresh
             token_type="Bearer",
             expires_at_utc=datetime.now(UTC) + timedelta(hours=1),
-            scopes=YOUTUBE_SCOPES,
+            scopes=self._granted_scopes,
             google_sub=self._google_sub,
         )
 
@@ -248,3 +267,7 @@ class FakeGoogleOAuthClient:
             channel_title=self._channel_title,
             verified_at_utc=datetime.now(UTC),
         )
+
+    def get_oauth_client_secrets(self) -> dict:
+        """Return empty secrets — fake client has no real credentials."""
+        return {"token_uri": None, "client_id": None, "client_secret": None}

@@ -22,7 +22,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from app.oauth.client import YOUTUBE_SCOPES, ChannelIdentity, GoogleOAuthClient
+from app.oauth.client import (
+    YOUTUBE_SCOPES,
+    YOUTUBE_UPLOAD_SCOPE,
+    YOUTUBE_UPLOAD_SCOPES,
+    ChannelIdentity,
+    GoogleOAuthClient,
+)
 from app.oauth.errors import (
     OAuthAccountNotFoundError,
     OAuthChannelMismatchError,
@@ -740,6 +746,76 @@ def verify_youtube_connection(
 # ---------------------------------------------------------------------------
 # Private helpers (no CP table writes without going through public functions)
 # ---------------------------------------------------------------------------
+
+
+def has_upload_scope(
+    conn: Any,
+    *,
+    account_id: str,
+    workspace_id: str,
+    channel_id: str,
+    token_store: LocalFileTokenStore | None = None,
+) -> bool:
+    """Return True if the account's stored token includes youtube.upload scope.
+
+    Returns False on any error (token missing, account disconnected, etc.).
+    Does not make any network calls.
+    """
+    from app.control_plane import repository as repo
+
+    store = token_store or get_token_store()
+    try:
+        acct = _get_account_or_raise(conn, account_id, workspace_id, channel_id)
+    except Exception:
+        return False
+    if not acct.credential_profile_id:
+        return False
+    try:
+        cred = repo.get_credential_profile(conn, acct.credential_profile_id)
+        stored = store.read(cred.external_ref)
+        return stored.has_scope(YOUTUBE_UPLOAD_SCOPE)
+    except Exception:
+        return False
+
+
+def start_youtube_upload_oauth(
+    conn: Any,
+    *,
+    account_id: str,
+    user_id: str,
+    workspace_id: str,
+    channel_id: str,
+    oauth_client: GoogleOAuthClient,
+) -> StartFlowResult:
+    """Begin the YouTube OAuth 2.0 scope-upgrade flow to add youtube.upload.
+
+    Generates a new authorization URL requesting YOUTUBE_UPLOAD_SCOPES
+    (readonly + upload). The existing account binding is preserved; only the
+    credential's token file is updated after the user grants consent.
+
+    On callback completion, complete_youtube_oauth() handles the token write
+    and credential update (same flow, broader scopes).
+    """
+    _get_account_or_raise(conn, account_id, workspace_id, channel_id)
+
+    nonce = secrets.token_hex(32)
+    result = oauth_client.get_authorization_url(state_nonce=nonce, scopes=YOUTUBE_UPLOAD_SCOPES)
+
+    claims = OAuthStateClaims(
+        nonce=nonce,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+        account_id=account_id,
+        created_at=time.monotonic(),
+        code_verifier=result.code_verifier,
+    )
+    get_state_store().store(claims)
+
+    return StartFlowResult(
+        authorization_url=result.authorization_url,
+        state_nonce=nonce,
+    )
 
 
 def _update_credential_external_ref(

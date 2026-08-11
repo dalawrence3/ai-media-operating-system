@@ -96,3 +96,12 @@ export function useVerifyYouTubeConnection(workspaceId: string, channelId: strin
     mutationFn: () => api.verifyYouTubeConnection(workspaceId, channelId, accountId),
   })
 }
+
+export function useUpgradeYouTubeUploadScope(workspaceId: string, channelId: string, accountId: string) {
+  return useMutation({
+    mutationFn: () => api.upgradeYouTubeUploadScope(workspaceId, channelId, accountId),
+    onSuccess: (data) => {
+      window.location.href = data.authorization_url
+    },
+  })
+}

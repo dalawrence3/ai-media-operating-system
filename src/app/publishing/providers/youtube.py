@@ -42,6 +42,11 @@ YOUTUBE_PROVIDER_NAME = "youtube"
 YOUTUBE_PROVIDER_VERSION = "1.0.0"
 YOUTUBE_API_VERSION = "v3"
 
+# Supported media types for pre-upload file validation
+SUPPORTED_VIDEO_EXTENSIONS = frozenset(
+    {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".wmv", ".flv", ".3gp", ".ts"}
+)
+
 
 # ── Injected client boundary ──────────────────────────────────────────────────
 
@@ -66,6 +71,94 @@ class YouTubeAPIClient(Protocol):
     def get_video(self, video_id: str, parts: list[str]) -> dict: ...
 
     def health_check(self) -> bool: ...
+
+
+class RealYouTubeAPIClient:
+    """Live YouTube Data API v3 client using an OAuth access token.
+
+    Uses google-api-python-client (already in pyproject.toml dependencies).
+    Resumable upload is used for all video files via MediaFileUpload(resumable=True).
+
+    Token management: the caller is responsible for ensuring the access token
+    is valid and has youtube.upload scope before constructing this client.
+    Use upload_gate.build_authenticated_youtube_provider() as the safe factory,
+    which refreshes the token before construction.
+
+    Credential construction: when refresh_token and client secrets are supplied,
+    the google-auth library can auto-refresh mid-upload if the access token
+    expires during a long chunked upload. Provide them via build_authenticated_youtube_provider()
+    rather than constructing this client directly.
+
+    Idempotency: YouTube videos.insert is NOT idempotent. A network failure
+    after partial upload may result in an orphaned video on the channel.
+    The caller must handle duplicate-upload risk (e.g. by checking for existing
+    publications before retrying). This is documented but cannot be avoided
+    within YouTube API semantics.
+    """
+
+    def __init__(
+        self,
+        access_token: str,
+        *,
+        refresh_token: str | None = None,
+        token_uri: str | None = None,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+    ) -> None:
+        try:
+            from google.oauth2.credentials import Credentials  # type: ignore[import]
+            from googleapiclient.discovery import build  # type: ignore[import]
+        except ImportError as exc:
+            raise ImportError(
+                "google-api-python-client is required for live YouTube uploads. "
+                "Run: pip install google-api-python-client"
+            ) from exc
+        credentials = Credentials(
+            token=access_token,
+            refresh_token=refresh_token,
+            token_uri=token_uri,
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+        self._service = build("youtube", "v3", credentials=credentials)
+
+    def insert_video(self, snippet: dict, status: dict, file_path: str) -> dict:
+        try:
+            from googleapiclient.http import MediaFileUpload  # type: ignore[import]
+        except ImportError as exc:
+            raise ImportError("google-api-python-client is required.") from exc
+
+        import mimetypes
+
+        mime_type, _ = mimetypes.guess_type(file_path)
+        media = MediaFileUpload(
+            file_path,
+            mimetype=mime_type or "video/*",
+            resumable=True,
+        )
+        request = self._service.videos().insert(
+            part="snippet,status",
+            body={"snippet": snippet, "status": status},
+            media_body=media,
+        )
+        response = None
+        while response is None:
+            _, response = request.next_chunk()
+        return response  # type: ignore[return-value]
+
+    def update_video(self, video_id: str, snippet: dict, status: dict) -> dict:
+        body: dict = {"id": video_id, "status": status}
+        if snippet:
+            body["snippet"] = snippet
+        parts = "status,snippet" if snippet else "status"
+        return self._service.videos().update(part=parts, body=body).execute()
+
+    def get_video(self, video_id: str, parts: list[str]) -> dict:
+        return self._service.videos().list(part=",".join(parts), id=video_id).execute()
+
+    def health_check(self) -> bool:
+        result = self._service.channels().list(part="id", mine=True).execute()
+        return bool(result.get("items"))
 
 
 class FakeYouTubeAPIClient:
@@ -176,7 +269,16 @@ class YouTubePublishingProvider:
     ) -> PublishResult:
         from datetime import UTC, datetime
 
-        status_body: dict = {"privacyStatus": visibility}
+        # Hard-lock: mirror the upload() check so the publish step cannot
+        # change an already-uploaded private video to a different privacy status.
+        if visibility != "private":
+            from app.publishing.errors import PublishingValidationError
+
+            raise PublishingValidationError(
+                f"YouTube publish step is locked to 'private'. "
+                f"Requested visibility {visibility!r} is not permitted."
+            )
+        status_body: dict = {"privacyStatus": "private"}
         if scheduled_at:
             status_body["publishAt"] = scheduled_at
             pub_status = "scheduled"
@@ -250,10 +352,57 @@ class YouTubePublishingProvider:
         return snippet
 
     def _build_status(self, package: UploadPackage) -> dict:
+        # Hard-lock: this milestone only supports private uploads.
+        # Public and unlisted are not yet permitted; reject to prevent accidents.
+        if package.visibility != "private":
+            from app.publishing.errors import PublishingValidationError
+
+            raise PublishingValidationError(
+                f"YouTube uploads are currently locked to 'private'. "
+                f"Requested visibility {package.visibility!r} is not permitted. "
+                "Only private uploads are supported in this milestone."
+            )
         status: dict = {
-            "privacyStatus": package.visibility,
+            "privacyStatus": "private",
             "selfDeclaredMadeForKids": package.made_for_kids,
         }
         if package.scheduled_at:
             status["publishAt"] = package.scheduled_at
         return status
+
+
+# ── Account-bound provider factory ───────────────────────────────────────────
+
+
+def build_youtube_provider_for_account(
+    conn: object,
+    *,
+    account_id: str,
+    workspace_id: str,
+    channel_id: str,
+    oauth_client: object,
+    token_store: object | None = None,
+) -> YouTubePublishingProvider:
+    """Resolve credentials, run pre-flight checks, and return a live provider.
+
+    Gate sequence (fail closed):
+      1. ACE_PUBLISHING_LIVE_ENABLED must be True.
+      2. Account must be connected with an active credential profile.
+      3. Token must be readable and refreshed if expired.
+      4. youtube.upload scope must be in the stored token's granted scopes.
+      5. Live channel identity must match the registered external_account_id.
+
+    On any failure, raises a specific error from app.publishing.errors.
+    No upload is attempted; the returned provider is safe to pass to
+    start_publishing_job().
+    """
+    from app.publishing.upload_gate import build_authenticated_youtube_provider
+
+    return build_authenticated_youtube_provider(
+        conn,
+        account_id=account_id,
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+        oauth_client=oauth_client,
+        token_store=token_store,
+    )

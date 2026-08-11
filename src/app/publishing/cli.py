@@ -174,6 +174,18 @@ def publish_start(
     provider_name: Annotated[
         str, typer.Option("--provider", help="Provider name (default: fake).")
     ] = "fake",
+    account_id: Annotated[
+        str | None,
+        typer.Option("--account-id", help="Platform account ID (required for --provider youtube)."),
+    ] = None,
+    workspace_id: Annotated[
+        str | None,
+        typer.Option("--workspace-id", help="Workspace ID (required for --provider youtube)."),
+    ] = None,
+    channel_id: Annotated[
+        str | None,
+        typer.Option("--channel-id", help="Channel ID (required for --provider youtube)."),
+    ] = None,
 ) -> None:
     """Upload and publish the video for a publishing plan."""
     from app.publishing.errors import (
@@ -184,7 +196,6 @@ def publish_start(
     )
     from app.publishing.orchestrator import start_publishing_job
     from app.publishing.providers.fake import FakePublishingProvider
-    from app.publishing.providers.youtube import YouTubePublishingProvider
     from app.publishing.repository import get_publishing_plan
 
     conn = _get_db()
@@ -221,7 +232,33 @@ def publish_start(
             raise typer.Exit(1)
 
     if provider_name == "youtube":
-        provider = YouTubePublishingProvider()
+        if not account_id or not workspace_id or not channel_id:
+            typer.echo(
+                "Error: --account-id, --workspace-id, and --channel-id are required"
+                " for --provider youtube.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        from app.publishing.providers.youtube import build_youtube_provider_for_account
+
+        cfg = get_config()
+        from app.oauth.client_google import RealGoogleOAuthClient
+
+        oauth_client = RealGoogleOAuthClient(
+            client_secrets_path=cfg.youtube_client_secrets_path,
+            redirect_uri=cfg.youtube_redirect_uri,
+        )
+        try:
+            provider = build_youtube_provider_for_account(
+                conn,
+                account_id=account_id,
+                workspace_id=workspace_id,
+                channel_id=channel_id,
+                oauth_client=oauth_client,
+            )
+        except Exception as exc:
+            typer.echo(f"Error: Upload pre-flight gate failed: {exc}", err=True)
+            raise typer.Exit(1) from None
     else:
         provider = FakePublishingProvider()
 
