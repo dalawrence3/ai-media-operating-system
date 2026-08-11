@@ -34,6 +34,7 @@ import type {
   ScheduleView,
   StrategyProfile,
   WorkspaceView,
+  YouTubeVerificationResult,
 } from './types'
 
 const BASE_URL = '/api/v1'
@@ -312,6 +313,13 @@ class ApiClient {
     }>(
       'GET',
       `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/connection`,
+    )
+  }
+
+  verifyYouTubeConnection(workspaceId: string, channelId: string, accountId: string) {
+    return this.request<YouTubeVerificationResult>(
+      'POST',
+      `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/oauth/youtube/verify`,
     )
   }
 

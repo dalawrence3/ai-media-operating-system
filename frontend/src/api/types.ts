@@ -241,6 +241,16 @@ export interface Experiment {
   created_at: string
 }
 
+export interface YouTubeVerificationResult {
+  account_id: string
+  verified: boolean
+  registered_channel_id: string
+  live_channel_id: string | null
+  channel_title: string | null
+  verified_at: string | null
+  failure_reason: string | null
+}
+
 /* API error shape */
 export interface ApiError {
   detail: string
