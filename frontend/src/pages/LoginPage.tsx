@@ -53,7 +53,7 @@ export function LoginPage() {
             color: 'var(--text-primary, #e8eaf0)',
           }}
         >
-          AI Media OS — Studio
+          Sign in — AI Media OS
         </h1>
 
         <form onSubmit={handleSubmit} noValidate>

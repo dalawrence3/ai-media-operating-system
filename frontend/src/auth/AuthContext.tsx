@@ -72,6 +72,23 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 // Provider
 // ---------------------------------------------------------------------------
 
+// E2E dev-auth bypass: injected by Playwright fixtures before React mounts.
+// Skips JWT bootstrap so workspace routes render without a real login.
+// import.meta.env.DEV is substituted to `false` by Vite at production build time,
+// making the entire expression dead code that tree-shaking removes.
+// Setting window.__ACE_E2E_DEV_AUTH in a production build has no effect.
+const isE2EDevAuth =
+  import.meta.env.DEV &&
+  typeof window !== 'undefined' &&
+  (window as unknown as Record<string, unknown>).__ACE_E2E_DEV_AUTH === true
+
+const E2E_DEV_USER: AuthUser = {
+  userId: 0,
+  email: 'dev@local',
+  actor: 'dev:studio-user',
+  workspaceRoles: {},
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [accessToken, setAccessToken] = useState<string | null>(null)
@@ -229,6 +246,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [accessToken])
+
+  // E2E bypass: render immediately as authenticated with a synthetic dev user.
+  // The API client still sends X-Dev-Actor (token is null → DEV fallback fires).
+  if (isE2EDevAuth) {
+    return (
+      <AuthContext.Provider
+        value={{
+          user: E2E_DEV_USER,
+          accessToken: null,
+          isAuthenticated: true,
+          isLoading: false,
+          login: async () => {},
+          logout: async () => {},
+          refresh: async () => null,
+        }}
+      >
+        {children}
+      </AuthContext.Provider>
+    )
+  }
 
   return (
     <AuthContext.Provider

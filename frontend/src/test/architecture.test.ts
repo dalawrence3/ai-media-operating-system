@@ -114,4 +114,25 @@ describe('Architecture boundary', () => {
     expect(content).toContain("'dev:studio-user'")
     expect(content).not.toMatch(/Authorization:\s*Bearer [a-zA-Z0-9+/=]{20,}/)
   })
+
+  it('E2E dev-auth bypass is gated behind import.meta.env.DEV (dead code in prod builds)', () => {
+    // Vite substitutes import.meta.env.DEV → false at production build time.
+    // The entire bypass expression short-circuits and is tree-shaken away.
+    // This test guards against accidentally removing that gate in the future.
+    const authPath = join(FRONTEND_SRC, 'auth', 'AuthContext.tsx')
+    const content = readFileSync(authPath, 'utf-8')
+
+    // The bypass constant must exist.
+    expect(content).toContain('isE2EDevAuth')
+
+    // The DEV gate must be &&-chained so that Vite's build-time substitution of
+    // import.meta.env.DEV → false causes short-circuit, making the bypass dead code.
+    expect(content).toContain('import.meta.env.DEV &&')
+
+    // The DEV gate must appear within the constant expression, before the window
+    // flag check — not just in a comment. A regex spanning both strings verifies this.
+    expect(content).toMatch(
+      /const isE2EDevAuth[\s\S]{0,200}import\.meta\.env\.DEV[\s\S]{0,200}__ACE_E2E_DEV_AUTH/,
+    )
+  })
 })

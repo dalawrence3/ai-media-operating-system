@@ -17,9 +17,9 @@ const REASON_ICONS: Record<string, string> = {
 export function UnavailableState({ title, description, reason }: Props) {
   const icon = reason ? (REASON_ICONS[reason] ?? '⚠️') : '⚠️'
   return (
-    <div className="unavailable-state">
+    <div className="unavailable-state" data-testid="unavailable-state">
       <span style={{ fontSize: 32 }} aria-hidden="true">{icon}</span>
-      <p className="unavailable-state-title">{title}</p>
+      <h2 className="unavailable-state-title">{title}</h2>
       {description && <p className="unavailable-state-desc">{description}</p>}
     </div>
   )

@@ -12,8 +12,17 @@ dist/
 .pytest_cache/
 .ruff_cache/
 
-# Environment / secrets
+# Environment / secrets — NEVER commit real credentials
 .env
+.env.local
+
+# Dev server process IDs
+.pids/
+
+# Playwright artifacts
+frontend/playwright-report/
+frontend/test-results/
+frontend/playwright/.cache/
 
 # Google OAuth client secrets — NEVER commit these
 client_secret*.json
