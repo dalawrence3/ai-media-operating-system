@@ -283,6 +283,38 @@ class ApiClient {
     )
   }
 
+  // ── OAuth ─────────────────────────────────────────────────────────────────
+
+  startYouTubeOAuth(workspaceId: string, channelId: string, accountId: string) {
+    return this.request<{ authorization_url: string }>(
+      'POST',
+      `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/oauth/youtube/start`,
+    )
+  }
+
+  disconnectYouTubeAccount(workspaceId: string, channelId: string, accountId: string) {
+    return this.request<{ status: string; account_id: string }>(
+      'DELETE',
+      `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/oauth/youtube`,
+    )
+  }
+
+  getAccountConnectionStatus(workspaceId: string, channelId: string, accountId: string) {
+    return this.request<{
+      account_id: string
+      connected: boolean
+      provider_channel_id: string | null
+      channel_title: string | null
+      verified_at: string | null
+      granted_scopes: string[]
+      credential_status: string | null
+      health_status: string | null
+    }>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/connection`,
+    )
+  }
+
   // ── Accounts ─────────────────────────────────────────────────────────────
 
   getAccountSummary(workspaceId: string, accountId: string) {

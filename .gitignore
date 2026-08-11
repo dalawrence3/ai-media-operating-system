@@ -15,6 +15,16 @@ dist/
 # Environment / secrets
 .env
 
+# Google OAuth client secrets — NEVER commit these
+client_secret*.json
+client_secrets*.json
+*_client_secret.json
+*_client_secrets.json
+credentials.json
+
+# OAuth token files (written by LocalFileTokenStore)
+oauth_tokens/
+
 # Data (introduced in later phases)
 *.db
 *.sqlite3

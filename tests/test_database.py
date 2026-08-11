@@ -1381,3 +1381,60 @@ def test_migration_v13_to_v14(tmp_path: Path) -> None:
     assert "render_manifest_scenes" in tables
     assert "resolved_assets" in tables
     conn2.close()
+
+
+# ---------------------------------------------------------------------------
+# SQLite cross-thread safety regression tests (FastAPI thread-pool teardown)
+# ---------------------------------------------------------------------------
+
+
+def test_open_db_allows_cross_thread_use(tmp_path: Path) -> None:
+    """Regression: open_db must use check_same_thread=False.
+
+    FastAPI runs sync route handlers in a threadpool via anyio.  Generator
+    dependency teardown (conn.close) can execute in a different thread than
+    where the connection was opened.  Without check_same_thread=False the
+    teardown raises sqlite3.ProgrammingError.
+    """
+    import threading
+
+    conn = open_db(tmp_path / "threading.db")
+    errors: list[Exception] = []
+
+    def use_from_another_thread() -> None:
+        try:
+            conn.execute("SELECT 1").fetchone()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t = threading.Thread(target=use_from_another_thread)
+    t.start()
+    t.join()
+    conn.close()
+
+    assert not errors, f"Cross-thread DB use raised: {errors[0]}"
+
+
+def test_open_db_close_from_another_thread(tmp_path: Path) -> None:
+    """Regression: conn.close() from a different thread must not raise.
+
+    This mirrors the FastAPI generator dependency teardown pattern where the
+    finally-block executes in the async event loop thread, not the thread
+    that originally called get_db().
+    """
+    import threading
+
+    conn = open_db(tmp_path / "threading_close.db")
+    errors: list[Exception] = []
+
+    def close_from_another_thread() -> None:
+        try:
+            conn.close()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    t = threading.Thread(target=close_from_another_thread)
+    t.start()
+    t.join()
+
+    assert not errors, f"Cross-thread conn.close() raised: {errors[0]}"

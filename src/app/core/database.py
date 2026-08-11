@@ -2662,7 +2662,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
 def open_db(path: Path) -> sqlite3.Connection:
     """Open (or create) the SQLite database, enforce FK constraints, and run migrations."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    # check_same_thread=False: FastAPI runs sync handlers in a threadpool via anyio;
+    # the generator dependency teardown (conn.close) can execute in a different thread
+    # than where the connection was opened.  The connection is never shared across
+    # concurrent requests — it is per-request — so disabling the check is safe.
+    conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

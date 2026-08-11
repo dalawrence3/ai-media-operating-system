@@ -27,6 +27,7 @@ from app.api.routes import (
     auth,
     channels,
     diagnostics,
+    oauth,
     operations,
     pipelines,
     reviews,
@@ -156,6 +157,7 @@ app.include_router(auth.router, prefix=_PREFIX)
 app.include_router(workspaces.router, prefix=_PREFIX)
 app.include_router(channels.router, prefix=_PREFIX)
 app.include_router(accounts.router, prefix=_PREFIX)
+app.include_router(oauth.router, prefix=_PREFIX)
 app.include_router(pipelines.router, prefix=_PREFIX)
 app.include_router(reviews.router, prefix=_PREFIX)
 app.include_router(operations.router, prefix=_PREFIX)
