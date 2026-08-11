@@ -976,3 +976,249 @@ class TestDisconnectedAccountRejected:
                 )
         finally:
             reset_config()
+
+
+# ---------------------------------------------------------------------------
+# 14. RealGoogleOAuthClient scope passthrough regression tests
+# ---------------------------------------------------------------------------
+
+
+class TestRealOAuthClientScopePassthrough:
+    """Regression for the defect that caused the live scope upgrade to silently fail.
+
+    _make_flow() hardcoded YOUTUBE_SCOPES and ignored the `scopes` parameter
+    received by get_authorization_url(). Google would see only the already-granted
+    readonly scope, skip showing a new consent screen, and redirect back without
+    granting youtube.upload.
+    """
+
+    def _make_real_client(self, tmp_path):
+        import json
+
+        from app.oauth.client_google import RealGoogleOAuthClient
+
+        secrets_file = tmp_path / "client_secrets.json"
+        secrets_file.write_text(
+            json.dumps(
+                {
+                    "web": {
+                        "client_id": "fake_client_id",
+                        "client_secret": "fake_client_secret",
+                        "redirect_uris": ["http://localhost/callback"],
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                    }
+                }
+            )
+        )
+        return RealGoogleOAuthClient(
+            client_secrets_path=str(secrets_file),
+            redirect_uri="http://localhost/callback",
+        )
+
+    def _capture_flow(self, client):
+        """Replace _Flow on the instance with a capturing stub; return the capture list."""
+        from unittest.mock import MagicMock
+
+        captured_scopes: list[list[str]] = []
+        mock_instance = MagicMock()
+        mock_instance.authorization_url.return_value = (
+            "https://accounts.google.com/auth?mock=1",
+            "state",
+        )
+        mock_instance.code_verifier = None
+
+        class _CapturingFlow:
+            @classmethod
+            def from_client_secrets_file(cls, path, scopes, state=None, **kw):
+                captured_scopes.append(list(scopes))
+                return mock_instance
+
+        client._Flow = _CapturingFlow
+        return captured_scopes
+
+    def test_upload_scopes_reach_flow_constructor(self, tmp_path):
+        """get_authorization_url(scopes=YOUTUBE_UPLOAD_SCOPES) must pass those scopes
+        to Flow.from_client_secrets_file — not silently swap them for readonly."""
+        from app.oauth.client import YOUTUBE_UPLOAD_SCOPE, YOUTUBE_UPLOAD_SCOPES
+
+        client = self._make_real_client(tmp_path)
+        captured = self._capture_flow(client)
+
+        client.get_authorization_url(state_nonce="nonce1", scopes=YOUTUBE_UPLOAD_SCOPES)
+
+        assert len(captured) == 1
+        assert YOUTUBE_UPLOAD_SCOPE in captured[0], (
+            f"youtube.upload must be forwarded to Flow.from_client_secrets_file; got {captured[0]}"
+        )
+
+    def test_readonly_scopes_do_not_include_upload_scope(self, tmp_path):
+        """Normal connect flow must pass only YOUTUBE_SCOPES — no youtube.upload."""
+        from app.oauth.client import YOUTUBE_SCOPES, YOUTUBE_UPLOAD_SCOPE
+
+        client = self._make_real_client(tmp_path)
+        captured = self._capture_flow(client)
+
+        client.get_authorization_url(state_nonce="nonce2", scopes=YOUTUBE_SCOPES)
+
+        assert len(captured) == 1
+        assert YOUTUBE_UPLOAD_SCOPE not in captured[0], (
+            f"youtube.upload must NOT appear in readonly connect flow; got {captured[0]}"
+        )
+
+    def test_different_scope_sets_produce_different_flow_scopes(self, tmp_path):
+        """Two calls with different scope sets must each reach the Flow with the correct set."""
+        from app.oauth.client import YOUTUBE_SCOPES, YOUTUBE_UPLOAD_SCOPE, YOUTUBE_UPLOAD_SCOPES
+
+        client = self._make_real_client(tmp_path)
+        captured = self._capture_flow(client)
+
+        client.get_authorization_url(state_nonce="n1", scopes=YOUTUBE_SCOPES)
+        client.get_authorization_url(state_nonce="n2", scopes=YOUTUBE_UPLOAD_SCOPES)
+
+        assert YOUTUBE_UPLOAD_SCOPE not in captured[0]
+        assert YOUTUBE_UPLOAD_SCOPE in captured[1]
+
+
+# ---------------------------------------------------------------------------
+# 15. Callback scope persistence — has_upload_scope reflects stored grants
+# ---------------------------------------------------------------------------
+
+
+class TestCallbackPersistsGrantedScopes:
+    """Verify that complete_youtube_oauth() stores whatever scopes Google grants,
+    and that has_upload_scope() accurately reflects those stored scopes.
+
+    These are the end-to-end tests for the upgrade success/failure path.
+    """
+
+    def _run_oauth(
+        self, db, token_store, ws_id, ch_id, acc_id, reg_ch_id, granted_scopes, *, upgrade=False
+    ):
+        from app.oauth.flow import (
+            complete_youtube_oauth,
+            start_youtube_oauth,
+            start_youtube_upload_oauth,
+        )
+
+        client = FakeGoogleOAuthClient(
+            fake_channel_id=reg_ch_id,
+            granted_scopes=granted_scopes,
+        )
+        start_fn = start_youtube_upload_oauth if upgrade else start_youtube_oauth
+        r = start_fn(
+            db,
+            account_id=acc_id,
+            user_id="u",
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            oauth_client=client,
+        )
+        complete_youtube_oauth(
+            db,
+            code="code",
+            state_nonce=r.state_nonce,
+            oauth_client=client,
+            token_store=token_store,
+        )
+
+    def test_callback_with_readonly_only_leaves_upload_missing(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        from app.oauth.flow import has_upload_scope
+
+        ws_id, ch_id, acc_id, reg_ch_id = _make_connected_account(db, token_store)
+        # Re-auth callback granting only readonly (no upgrade)
+        self._run_oauth(db, token_store, ws_id, ch_id, acc_id, reg_ch_id, YOUTUBE_SCOPES)
+
+        assert (
+            has_upload_scope(
+                db,
+                account_id=acc_id,
+                workspace_id=ws_id,
+                channel_id=ch_id,
+                token_store=token_store,
+            )
+            is False
+        ), "Upload scope must not be granted when callback returns only youtube.readonly"
+
+    def test_upgrade_callback_with_upload_scope_sets_granted(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        from app.oauth.flow import has_upload_scope
+
+        ws_id, ch_id, acc_id, reg_ch_id = _make_connected_account(db, token_store)
+        # Upgrade callback granting both readonly and upload
+        self._run_oauth(
+            db, token_store, ws_id, ch_id, acc_id, reg_ch_id, YOUTUBE_UPLOAD_SCOPES, upgrade=True
+        )
+
+        assert (
+            has_upload_scope(
+                db,
+                account_id=acc_id,
+                workspace_id=ws_id,
+                channel_id=ch_id,
+                token_store=token_store,
+            )
+            is True
+        ), "Upload scope must be granted when upgrade callback returns youtube.upload"
+
+    def test_initial_connect_followed_by_upgrade_callback(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        """Readonly connect then upgrade callback → upload granted."""
+        from app.oauth.flow import has_upload_scope
+
+        ws_id, ch_id, acc_id, reg_ch_id = _make_connected_account(
+            db, token_store, granted_scopes=YOUTUBE_SCOPES
+        )
+        # Confirm not yet granted
+        assert not has_upload_scope(
+            db,
+            account_id=acc_id,
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            token_store=token_store,
+        )
+        # Simulate successful upgrade callback
+        self._run_oauth(
+            db, token_store, ws_id, ch_id, acc_id, reg_ch_id, YOUTUBE_UPLOAD_SCOPES, upgrade=True
+        )
+        # Now granted
+        assert has_upload_scope(
+            db,
+            account_id=acc_id,
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            token_store=token_store,
+        )
+
+
+# ---------------------------------------------------------------------------
+# 16. Scope constant safety — no over-broad YouTube scopes
+# ---------------------------------------------------------------------------
+
+
+class TestScopeConstantSafety:
+    """Verify scope constants don't include over-broad or dangerous YouTube scopes."""
+
+    def test_upload_scopes_excludes_broad_youtube_manage_scope(self):
+        """YOUTUBE_UPLOAD_SCOPES must not include youtube (manage all) or youtube.force-ssl."""
+        broad = {
+            "https://www.googleapis.com/auth/youtube",
+            "https://www.googleapis.com/auth/youtube.force-ssl",
+        }
+        included = broad & set(YOUTUBE_UPLOAD_SCOPES)
+        assert not included, f"Unexpected broad scopes in YOUTUBE_UPLOAD_SCOPES: {included}"
+
+    def test_upgrade_adds_exactly_one_new_scope(self):
+        """The upgrade adds exactly youtube.upload and nothing else beyond YOUTUBE_SCOPES."""
+        added = set(YOUTUBE_UPLOAD_SCOPES) - set(YOUTUBE_SCOPES)
+        assert added == {YOUTUBE_UPLOAD_SCOPE}, (
+            f"Expected only youtube.upload to be added; got extra: {added}"
+        )
+
+    def test_initial_connect_scopes_excludes_upload(self):
+        """YOUTUBE_SCOPES (initial connect) must not contain youtube.upload."""
+        assert YOUTUBE_UPLOAD_SCOPE not in YOUTUBE_SCOPES

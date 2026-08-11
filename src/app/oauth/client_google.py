@@ -82,10 +82,10 @@ class RealGoogleOAuthClient:
         self._client_secrets_path = client_secrets_path
         self._redirect_uri = redirect_uri
 
-    def _make_flow(self, state: str | None = None) -> object:
+    def _make_flow(self, state: str | None = None, scopes: list[str] | None = None) -> object:
         flow = self._Flow.from_client_secrets_file(  # type: ignore[attr-defined]
             self._client_secrets_path,
-            scopes=YOUTUBE_SCOPES,
+            scopes=scopes if scopes is not None else YOUTUBE_SCOPES,
             state=state,
         )
         flow.redirect_uri = self._redirect_uri
@@ -96,7 +96,7 @@ class RealGoogleOAuthClient:
         state_nonce: str,
         scopes: list[str],
     ) -> AuthorizationURLResult:
-        flow = self._make_flow()
+        flow = self._make_flow(scopes=scopes)
         # access_type=offline → ensures a refresh_token is included in the response
         # prompt=consent → forces consent screen (ensures refresh_token on reconnect)
         auth_url, _ = flow.authorization_url(  # type: ignore[attr-defined]
