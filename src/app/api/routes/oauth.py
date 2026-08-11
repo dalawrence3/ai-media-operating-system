@@ -45,7 +45,9 @@ from app.oauth.flow import (
     complete_youtube_oauth,
     disconnect_youtube_account,
     get_connection_status,
+    has_upload_scope,
     start_youtube_oauth,
+    start_youtube_upload_oauth,
     verify_youtube_connection,
 )
 
@@ -329,6 +331,53 @@ def verify_youtube_connection_route(
     }
 
 
+@router.post(f"{_ACCT_PREFIX}/oauth/youtube/upgrade-upload")
+def upgrade_youtube_upload_scope_route(
+    workspace_id: str,
+    channel_id: str,
+    account_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Any = Depends(get_db),
+    oauth_client: Any = Depends(get_oauth_client),
+) -> dict[str, str]:
+    """Begin the YouTube OAuth 2.0 scope upgrade to add youtube.upload permission.
+
+    This is the entry point for adding upload capability to a connected account
+    that currently only has youtube.readonly scope. The user is redirected to
+    Google's consent screen to grant the additional permission.
+
+    The existing account binding (channel ID, credential profile) is preserved.
+    Only the token file is updated after the user grants consent.
+
+    Returns the Google authorization URL. The frontend redirects the user's
+    browser to this URL. The existing callback endpoint handles the response.
+
+    Required role: workspace owner or admin.
+    """
+    try:
+        _require_connect_permission(current_user, workspace_id)
+    except OAuthInsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        result = start_youtube_upload_oauth(
+            db,
+            account_id=account_id,
+            user_id=current_user.actor,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            oauth_client=oauth_client,
+        )
+    except OAuthAccountNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OAuthNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Scope upgrade start failed: {exc}") from exc
+
+    return {"authorization_url": result.authorization_url}
+
+
 @router.get(f"{_ACCT_PREFIX}/connection")
 def get_account_connection_status(
     workspace_id: str,
@@ -357,6 +406,12 @@ def get_account_connection_status(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    upload_scope_granted = has_upload_scope(
+        db,
+        account_id=account_id,
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+    )
     return {
         "account_id": status.account_id,
         "connected": status.connected,
@@ -364,9 +419,129 @@ def get_account_connection_status(
         "channel_title": status.channel_title,
         "verified_at": status.verified_at_utc.isoformat() if status.verified_at_utc else None,
         "granted_scopes": status.granted_scopes,
+        "upload_scope_granted": upload_scope_granted,
         "credential_status": status.credential_status,
         "health_status": status.health_status,
     }
+
+
+@router.post(f"{_ACCT_PREFIX}/publishing/run")
+def run_youtube_publishing_job_route(
+    workspace_id: str,
+    channel_id: str,
+    account_id: str,
+    body: dict[str, Any],
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Any = Depends(get_db),
+    oauth_client: Any = Depends(get_oauth_client),
+) -> dict[str, Any]:
+    """Trigger a YouTube private upload for an approved publishing plan.
+
+    Requires the account to have youtube.upload scope, ACE_PUBLISHING_LIVE_ENABLED=true,
+    and a matching live channel identity. The video file path is resolved server-side
+    from the publishing plan's approved render — it is never accepted from the caller.
+
+    Request body: {"plan_id": <int>}
+
+    Gate sequence (fail closed):
+      1. JWT auth + admin/owner RBAC
+      2. ACE_PUBLISHING_LIVE_ENABLED=true
+      3. youtube.upload scope on stored token
+      4. Live channel identity matches registered external_account_id
+      5. Approved render artifact resolved from plan (not from caller)
+      6. Privacy hard-locked to 'private' at provider level
+
+    Returns: job_id, status, publication (if successful).
+
+    Required role: workspace owner or admin.
+    """
+    try:
+        _require_connect_permission(current_user, workspace_id)
+    except OAuthInsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    plan_id = body.get("plan_id")
+    if not isinstance(plan_id, int):
+        raise HTTPException(status_code=422, detail="'plan_id' must be an integer.")
+
+    from app.media.repository import get_approved_render, get_render_manifest
+    from app.publishing.errors import (
+        ActiveJobExistsError,
+        LivePublishingNotEnabledError,
+        MaxRetriesExceededError,
+        PublishingPlanNotFoundError,
+        PublishingValidationError,
+        UploadAccountMismatchError,
+        UploadFileError,
+        UploadScopeNotGrantedError,
+    )
+    from app.publishing.orchestrator import start_publishing_job
+    from app.publishing.providers.youtube import build_youtube_provider_for_account
+    from app.publishing.repository import get_publishing_plan
+
+    plan = get_publishing_plan(db, plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Publishing plan {plan_id} not found.")
+
+    manifest = get_render_manifest(db, plan.render_manifest_id)
+    approved_render = get_approved_render(db, manifest.scene_manifest_id) if manifest else None
+    if approved_render is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No approved render found for plan {plan_id}.",
+        )
+
+    try:
+        provider = build_youtube_provider_for_account(
+            db,
+            account_id=account_id,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            oauth_client=oauth_client,
+        )
+    except LivePublishingNotEnabledError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except UploadScopeNotGrantedError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except UploadAccountMismatchError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except OAuthAccountNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Provider build failed: {exc}") from exc
+
+    try:
+        job, publication = start_publishing_job(
+            db,
+            plan_id,
+            provider,
+            output_path=approved_render.output_path,
+            output_sha256=approved_render.output_sha256,
+        )
+    except PublishingPlanNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ActiveJobExistsError, MaxRetriesExceededError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (UploadFileError, PublishingValidationError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Publishing job failed: plan_id=%s account=%s", plan_id, account_id)
+        raise HTTPException(status_code=500, detail=f"Publishing failed: {exc}") from exc
+
+    result: dict[str, Any] = {
+        "job_id": job.id,
+        "status": job.status,
+        "attempt_number": job.attempt_number,
+    }
+    if publication:
+        result["publication"] = {
+            "id": publication.id,
+            "provider_video_id": publication.provider_video_id,
+            "provider_url": publication.provider_url,
+            "visibility": publication.visibility,
+            "pub_status": publication.status,
+        }
+    return result
 
 
 # ---------------------------------------------------------------------------

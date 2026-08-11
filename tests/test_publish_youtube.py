@@ -117,12 +117,13 @@ class TestYouTubePublish:
             provider_video_id="yt_fake_vid_001",
             provider_url="https://www.youtube.com/watch?v=yt_fake_vid_001",
         )
-        result = p.publish(upload, scheduled_at="2099-01-01T12:00:00Z", visibility="public")
+        result = p.publish(upload, scheduled_at="2099-01-01T12:00:00Z", visibility="private")
         assert result.status == "scheduled"
         assert result.scheduled_at == "2099-01-01T12:00:00Z"
         assert result.published_at is None
 
-    def test_publish_sets_visibility(self):
+    def test_publish_sets_private_visibility(self):
+        """publish() hard-locks privacyStatus to 'private' regardless of caller."""
         received_status: dict = {}
 
         class CapturingClient(FakeYouTubeAPIClient):
@@ -132,8 +133,17 @@ class TestYouTubePublish:
 
         p = YouTubePublishingProvider(api_client=CapturingClient())
         upload = UploadResult(provider_video_id="vid1", provider_url=None)
-        p.publish(upload, visibility="public")
-        assert received_status.get("privacyStatus") == "public"
+        p.publish(upload, visibility="private")
+        assert received_status.get("privacyStatus") == "private"
+
+    def test_publish_rejects_public_visibility(self):
+        """publish() must hard-lock to 'private' — cannot be used to make a video public."""
+        from app.publishing.errors import PublishingValidationError
+
+        p = _provider()
+        upload = UploadResult(provider_video_id="vid1", provider_url=None)
+        with pytest.raises(PublishingValidationError, match="locked to 'private'"):
+            p.publish(upload, visibility="public")
 
 
 class TestYouTubeHealth:

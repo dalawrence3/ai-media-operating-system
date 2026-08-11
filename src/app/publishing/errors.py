@@ -85,3 +85,15 @@ class SecretLeakError(PublishingError):
 
 class LivePublishingNotEnabledError(PublishingError):
     """Live publishing attempted without ACE_PUBLISHING_LIVE_ENABLED=true."""
+
+
+class UploadScopeNotGrantedError(PublishingError):
+    """youtube.upload OAuth scope not present in the account's granted scopes."""
+
+
+class UploadAccountMismatchError(PublishingError):
+    """Live YouTube channel ID does not match the registered external_account_id."""
+
+
+class UploadFileError(PublishingError):
+    """Video file is missing, empty, or not a supported media type."""

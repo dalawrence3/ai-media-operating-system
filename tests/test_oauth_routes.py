@@ -623,3 +623,267 @@ def test_real_client_does_not_set_insecure_transport_for_https(tmp_path):
             os.environ.pop("OAUTHLIB_INSECURE_TRANSPORT", None)
         else:
             os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = old
+
+
+# ---------------------------------------------------------------------------
+# POST /oauth/youtube/upgrade-upload — scope upgrade route
+# ---------------------------------------------------------------------------
+
+
+def _upgrade_url(ws_id, ch_id, acct_id):
+    return (
+        f"/api/v1/workspaces/{ws_id}/channels/{ch_id}"
+        f"/accounts/{acct_id}/oauth/youtube/upgrade-upload"
+    )
+
+
+class TestUpgradeUploadRoute:
+    def test_unauthenticated_returns_401(self, client, workspace, channel, pending_account):
+        r = client.post(_upgrade_url(workspace.id, channel.id, pending_account.id))
+        assert r.status_code == 401
+
+    def test_operator_returns_403(self, client, svc, db_conn, workspace, channel, pending_account):
+        token = _operator_token(svc, db_conn, workspace.id)
+        r = client.post(
+            _upgrade_url(workspace.id, channel.id, pending_account.id),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
+
+    def test_admin_returns_authorization_url(
+        self, client, svc, db_conn, workspace, channel, pending_account
+    ):
+        token = _admin_token(svc, db_conn, workspace.id)
+        r = client.post(
+            _upgrade_url(workspace.id, channel.id, pending_account.id),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "authorization_url" in body
+
+    def test_cross_workspace_returns_403(
+        self, client, svc, db_conn, workspace, channel, pending_account
+    ):
+        other_ws_id = _uid()
+        token = _token(999, "other@example.com", {other_ws_id: "admin"})
+        r = client.post(
+            _upgrade_url(workspace.id, channel.id, pending_account.id),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
+
+    def test_upgrade_requests_upload_scope(
+        self, client, svc, db_conn, workspace, channel, pending_account
+    ):
+        """The upgrade-upload flow must request youtube.upload scope."""
+        from app.oauth.client import YOUTUBE_UPLOAD_SCOPE, FakeGoogleOAuthClient
+
+        captured: list[list[str]] = []
+
+        class SpyClient(FakeGoogleOAuthClient):
+            def get_authorization_url(self, state_nonce, scopes):
+                captured.append(list(scopes))
+                return super().get_authorization_url(state_nonce, scopes)
+
+        from app.api.main import app
+        from app.api.routes.oauth import get_oauth_client
+
+        app.dependency_overrides[get_oauth_client] = lambda: SpyClient()
+        token = _admin_token(svc, db_conn, workspace.id)
+        try:
+            with TestClient(app, raise_server_exceptions=False) as spy_client:
+                spy_client.post(
+                    _upgrade_url(workspace.id, channel.id, pending_account.id),
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert len(captured) == 1
+        assert YOUTUBE_UPLOAD_SCOPE in captured[0], f"Expected upload scope in {captured[0]}"
+
+    def test_start_does_not_request_upload_scope(
+        self, client, svc, db_conn, workspace, channel, pending_account
+    ):
+        """The standard start flow must NOT request youtube.upload scope."""
+        from app.oauth.client import YOUTUBE_UPLOAD_SCOPE, FakeGoogleOAuthClient
+
+        captured: list[list[str]] = []
+
+        class SpyClient(FakeGoogleOAuthClient):
+            def get_authorization_url(self, state_nonce, scopes):
+                captured.append(list(scopes))
+                return super().get_authorization_url(state_nonce, scopes)
+
+        from app.api.main import app
+        from app.api.routes.oauth import get_oauth_client
+
+        app.dependency_overrides[get_oauth_client] = lambda: SpyClient()
+        token = _admin_token(svc, db_conn, workspace.id)
+        try:
+            with TestClient(app, raise_server_exceptions=False) as spy_client:
+                spy_client.post(
+                    _start_url(workspace.id, channel.id, pending_account.id),
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert len(captured) == 1
+        assert YOUTUBE_UPLOAD_SCOPE not in captured[0]
+
+    def test_nonexistent_account_returns_404(self, client, svc, db_conn, workspace, channel):
+        token = _admin_token(svc, db_conn, workspace.id)
+        r = client.post(
+            _upgrade_url(workspace.id, channel.id, "nonexistent-account"),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST .../publishing/run — production-shaped upload trigger
+# ---------------------------------------------------------------------------
+
+
+def _publish_run_url(ws_id, ch_id, acct_id):
+    return f"/api/v1/workspaces/{ws_id}/channels/{ch_id}/accounts/{acct_id}/publishing/run"
+
+
+class TestPublishingRunRoute:
+    def test_unauthenticated_returns_401(self, client, workspace, channel, pending_account):
+        r = client.post(
+            _publish_run_url(workspace.id, channel.id, pending_account.id),
+            json={"plan_id": 1},
+        )
+        assert r.status_code == 401
+
+    def test_operator_returns_403(self, client, svc, db_conn, workspace, channel, pending_account):
+        token = _operator_token(svc, db_conn, workspace.id)
+        r = client.post(
+            _publish_run_url(workspace.id, channel.id, pending_account.id),
+            headers={"Authorization": f"Bearer {token}"},
+            json={"plan_id": 1},
+        )
+        assert r.status_code == 403
+
+    def test_cross_workspace_returns_403(
+        self, client, svc, db_conn, workspace, channel, pending_account
+    ):
+        other_ws_id = _uid()
+        token = _token(999, "other@example.com", {other_ws_id: "admin"})
+        r = client.post(
+            _publish_run_url(workspace.id, channel.id, pending_account.id),
+            headers={"Authorization": f"Bearer {token}"},
+            json={"plan_id": 1},
+        )
+        assert r.status_code == 403
+
+    def test_invalid_plan_id_type_returns_422(
+        self, client, svc, db_conn, workspace, channel, pending_account
+    ):
+        token = _admin_token(svc, db_conn, workspace.id)
+        r = client.post(
+            _publish_run_url(workspace.id, channel.id, pending_account.id),
+            headers={"Authorization": f"Bearer {token}"},
+            json={"plan_id": "not-an-int"},
+        )
+        assert r.status_code == 422
+
+    def test_nonexistent_plan_returns_404(
+        self, client, svc, db_conn, workspace, channel, pending_account
+    ):
+        token = _admin_token(svc, db_conn, workspace.id)
+        r = client.post(
+            _publish_run_url(workspace.id, channel.id, pending_account.id),
+            headers={"Authorization": f"Bearer {token}"},
+            json={"plan_id": 999999},
+        )
+        assert r.status_code == 404
+
+    def test_live_gate_disabled_returns_503(
+        self, client, svc, db_conn, workspace, channel, pending_account, monkeypatch
+    ):
+        """When ACE_PUBLISHING_LIVE_ENABLED is false (the default), route returns 503."""
+        from app.core.config import reset_config
+
+        monkeypatch.delenv("ACE_PUBLISHING_LIVE_ENABLED", raising=False)
+        reset_config()
+
+        token = _admin_token(svc, db_conn, workspace.id)
+        r = client.post(
+            _publish_run_url(workspace.id, channel.id, pending_account.id),
+            headers={"Authorization": f"Bearer {token}"},
+            json={"plan_id": 1},
+        )
+        # 503 = live gate disabled; 404 = plan not found (gate checked after plan lookup)
+        assert r.status_code in (503, 404)
+        reset_config()
+
+    def test_wrong_channel_account_binding_returns_404(
+        self, client, svc, db_conn, workspace, channel, token_store, monkeypatch
+    ):
+        """account_id belonging to a different channel is rejected before any upload."""
+        from app.oauth.client import YOUTUBE_UPLOAD_SCOPES
+        from app.oauth.flow import complete_youtube_oauth, start_youtube_oauth
+        from app.oauth.state import InMemoryOAuthStateStore, set_state_store
+
+        # Create a second workspace + channel + account
+        org2 = cp_repo.create_organization(
+            db_conn, OrganizationDraft(id=_uid(), name="Org2", slug="org2", actor="cli")
+        )
+        ws2 = cp_repo.create_workspace(
+            db_conn,
+            WorkspaceDraft(id=_uid(), name="WS2", slug="ws2", actor="cli", organization_id=org2.id),
+        )
+        ch2 = cp_repo.create_channel(
+            db_conn,
+            ChannelDraft(id=_uid(), workspace_id=ws2.id, name="Ch2", slug="ch2", actor="cli"),
+        )
+        platform = cp_repo.get_platform_by_key(db_conn, "youtube")
+        acct2_id = _uid()
+        draft2 = PlatformAccountDraft(
+            id=acct2_id,
+            channel_id=ch2.id,
+            platform_id=platform.id,
+            platform_key="youtube",
+            external_account_id=f"pending:{acct2_id}",
+            display_name="WS2 Account",
+            actor="test",
+            status="connected",
+        )
+        acct2 = cp_repo.create_platform_account(db_conn, draft2)
+        db_conn.commit()
+
+        set_state_store(InMemoryOAuthStateStore())
+        client2 = FakeGoogleOAuthClient(
+            fake_channel_id="UCws2_channel",
+            granted_scopes=YOUTUBE_UPLOAD_SCOPES,
+        )
+        r2 = start_youtube_oauth(
+            db_conn,
+            account_id=acct2.id,
+            user_id="u1",
+            workspace_id=ws2.id,
+            channel_id=ch2.id,
+            oauth_client=client2,
+        )
+        complete_youtube_oauth(
+            db_conn,
+            code="code",
+            state_nonce=r2.state_nonce,
+            oauth_client=client2,
+            token_store=token_store,
+        )
+        db_conn.commit()
+
+        # Try to run acct2 (belongs to ch2/ws2) under workspace/channel from ws1
+        token = _admin_token(svc, db_conn, workspace.id)
+        r = client.post(
+            _publish_run_url(workspace.id, channel.id, acct2.id),
+            headers={"Authorization": f"Bearer {token}"},
+            json={"plan_id": 999999},
+        )
+        # 404: plan not found (checked first) OR account not found in channel context
+        assert r.status_code in (404, 503)

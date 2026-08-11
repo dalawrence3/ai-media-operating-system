@@ -198,6 +198,29 @@ class RealGoogleOAuthClient:
         except Exception as exc:
             raise OAuthProviderError(f"Token revocation request failed: {exc}") from exc
 
+    def get_oauth_client_secrets(self) -> dict:
+        """Return token_uri, client_id, client_secret from the secrets file.
+
+        Used by build_authenticated_youtube_provider to construct Credentials
+        with refresh capability for long-running uploads.
+        """
+        import json
+
+        try:
+            secrets_data = json.loads(open(self._client_secrets_path).read())
+            web = secrets_data.get("web") or secrets_data.get("installed") or {}
+            return {
+                "token_uri": web.get("token_uri", "https://oauth2.googleapis.com/token"),
+                "client_id": web.get("client_id"),
+                "client_secret": web.get("client_secret"),
+            }
+        except Exception:
+            return {
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "client_id": None,
+                "client_secret": None,
+            }
+
     def get_channel_identity(self, access_token: str) -> ChannelIdentity:
         try:
             from google.oauth2.credentials import Credentials  # type: ignore[import]
