@@ -18,7 +18,7 @@ import json
 import secrets
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app.oauth.errors import (
     OAuthStateExpiredError,
@@ -42,6 +42,11 @@ class OAuthStateClaims:
     account_id: str
     created_at: float  # Unix timestamp
     code_verifier: str | None = None  # PKCE RFC 7636; None when PKCE not used
+    # Exact scopes requested in the authorization URL — mirrored into the token-exchange
+    # flow so oauthlib does not raise a scope-change error when Google returns the full
+    # granted set. Stored alongside code_verifier so both survive the same round trip.
+    # Empty list for state records created before this field existed (backward-compat).
+    requested_scopes: list[str] = field(default_factory=list)
 
     def is_expired(self) -> bool:
         return (time.monotonic() - self.created_at) > STATE_TTL_SECONDS
@@ -55,6 +60,7 @@ class OAuthStateClaims:
             "account_id": self.account_id,
             "created_at": self.created_at,
             "code_verifier": self.code_verifier,
+            "requested_scopes": list(self.requested_scopes),
         }
 
     @classmethod
@@ -67,6 +73,7 @@ class OAuthStateClaims:
             account_id=d["account_id"],
             created_at=float(d["created_at"]),
             code_verifier=d.get("code_verifier"),  # None for records predating PKCE
+            requested_scopes=list(d.get("requested_scopes", [])),  # [] for pre-existing records
         )
 
 
@@ -192,11 +199,14 @@ def generate_state(
     channel_id: str,
     account_id: str,
     code_verifier: str | None = None,
+    requested_scopes: list[str] | None = None,
 ) -> str:
     """Generate a cryptographically random state nonce and store the binding.
 
     Returns the nonce string to include in the authorization URL.
     code_verifier is the PKCE verifier to bind to this nonce; None when PKCE is not used.
+    requested_scopes must match the scopes used to build the authorization URL so the
+    token-exchange flow can reconstruct the Flow with identical scopes.
     """
     nonce = secrets.token_hex(32)  # 256 bits of randomness
     claims = OAuthStateClaims(
@@ -207,6 +217,7 @@ def generate_state(
         account_id=account_id,
         created_at=time.monotonic(),
         code_verifier=code_verifier,
+        requested_scopes=list(requested_scopes) if requested_scopes else [],
     )
     get_state_store().store(claims)
     return nonce

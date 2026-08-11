@@ -136,8 +136,9 @@ def start_youtube_oauth(
     nonce = secrets.token_hex(32)  # 256 bits
     result = oauth_client.get_authorization_url(state_nonce=nonce, scopes=YOUTUBE_SCOPES)
 
-    # Bind the PKCE verifier to this nonce in the server-side state store.
-    # The state is one-time-use and TTL-scoped; the verifier expires with it.
+    # Bind the PKCE verifier AND the requested scopes to this nonce.
+    # Both are consumed once at callback time: code_verifier for PKCE, requested_scopes
+    # to reconstruct the Flow with identical scopes for the token exchange.
     claims = OAuthStateClaims(
         nonce=nonce,
         user_id=user_id,
@@ -146,6 +147,7 @@ def start_youtube_oauth(
         account_id=account_id,
         created_at=time.monotonic(),
         code_verifier=result.code_verifier,
+        requested_scopes=YOUTUBE_SCOPES,
     )
     get_state_store().store(claims)
 
@@ -191,11 +193,16 @@ def complete_youtube_oauth(
 
     acct = _get_account_or_raise(conn, account_id, workspace_id, channel_id)
 
-    # Step 2: Exchange authorization code for tokens (pass PKCE verifier from state)
+    # Step 2: Exchange authorization code for tokens.
+    # Pass both the PKCE verifier and the original requested_scopes from state so the
+    # real client can reconstruct the Flow with matching scopes, preventing oauthlib's
+    # "Scope has changed from ... to ..." error when the granted set differs from the
+    # default readonly set.
     token = oauth_client.exchange_code(
         code=code,
         state_nonce=state_nonce,
         code_verifier=claims.code_verifier,
+        requested_scopes=claims.requested_scopes if claims.requested_scopes else None,
     )
 
     # Step 3: Verify YouTube channel identity
@@ -809,6 +816,7 @@ def start_youtube_upload_oauth(
         account_id=account_id,
         created_at=time.monotonic(),
         code_verifier=result.code_verifier,
+        requested_scopes=YOUTUBE_UPLOAD_SCOPES,
     )
     get_state_store().store(claims)
 
