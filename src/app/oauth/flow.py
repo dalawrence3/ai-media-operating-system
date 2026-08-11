@@ -36,6 +36,24 @@ from app.oauth.store import LocalFileTokenStore, StoredTokenPayload, get_token_s
 
 
 @dataclass(frozen=True)
+class VerificationResult:
+    """Result of a live YouTube connection verification.
+
+    verified=True only when the live YouTube channel ID exactly matches
+    the registered external_account_id. Never exposed: tokens, raw channel
+    URL, internal IDs beyond what the frontend needs.
+    """
+
+    account_id: str
+    verified: bool
+    registered_channel_id: str
+    live_channel_id: str | None
+    channel_title: str | None
+    verified_at_utc: datetime | None
+    failure_reason: str | None
+
+
+@dataclass(frozen=True)
 class StartFlowResult:
     authorization_url: str
     state_nonce: str
@@ -537,6 +555,188 @@ def verify_connection(
     return status
 
 
+def verify_youtube_connection(
+    conn: Any,
+    *,
+    account_id: str,
+    workspace_id: str,
+    channel_id: str,
+    oauth_client: GoogleOAuthClient,
+    token_store: LocalFileTokenStore | None = None,
+) -> VerificationResult:
+    """Live connection verification: call YouTube Data API, compare Channel IDs.
+
+    Succeeds only when all of the following hold:
+      1. Account is connected, platform is youtube, no pending placeholder ID.
+      2. Credential profile is active.
+      3. Token can be read (and refreshed when expired).
+      4. YouTube channels.list(mine=True) returns a channel identity.
+      5. Returned Channel ID matches registered external_account_id exactly.
+
+    Fails closed on mismatch — never rewrites external_account_id.
+    Persists last_verified_at in metadata on success.
+    Records health event in all terminal cases.
+    """
+    from app.control_plane import repository as repo
+    from app.control_plane.health import record_health
+
+    store = token_store or get_token_store()
+    acct = _get_account_or_raise(conn, account_id, workspace_id, channel_id)
+
+    registered_id = acct.external_account_id
+
+    if acct.platform_key != "youtube":
+        return VerificationResult(
+            account_id=account_id,
+            verified=False,
+            registered_channel_id=registered_id,
+            live_channel_id=None,
+            channel_title=None,
+            verified_at_utc=None,
+            failure_reason="Account is not a YouTube account.",
+        )
+
+    if registered_id.startswith("pending:"):
+        return VerificationResult(
+            account_id=account_id,
+            verified=False,
+            registered_channel_id=registered_id,
+            live_channel_id=None,
+            channel_title=None,
+            verified_at_utc=None,
+            failure_reason="Account has not completed OAuth — no registered Channel ID.",
+        )
+
+    if acct.status != "connected" or acct.credential_profile_id is None:
+        return VerificationResult(
+            account_id=account_id,
+            verified=False,
+            registered_channel_id=registered_id,
+            live_channel_id=None,
+            channel_title=None,
+            verified_at_utc=None,
+            failure_reason="Account is not connected or has no credential profile.",
+        )
+
+    try:
+        cred = repo.get_credential_profile(conn, acct.credential_profile_id)
+    except Exception:
+        return VerificationResult(
+            account_id=account_id,
+            verified=False,
+            registered_channel_id=registered_id,
+            live_channel_id=None,
+            channel_title=None,
+            verified_at_utc=None,
+            failure_reason="Credential profile could not be loaded.",
+        )
+
+    if cred.status != "active":
+        return VerificationResult(
+            account_id=account_id,
+            verified=False,
+            registered_channel_id=registered_id,
+            live_channel_id=None,
+            channel_title=None,
+            verified_at_utc=None,
+            failure_reason=f"Credential is not active (status: {cred.status}).",
+        )
+
+    try:
+        stored = refresh_account_token(
+            conn,
+            account_id=account_id,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            oauth_client=oauth_client,
+            token_store=store,
+        )
+    except (OAuthRefreshError, OAuthTokenStoreError):
+        return VerificationResult(
+            account_id=account_id,
+            verified=False,
+            registered_channel_id=registered_id,
+            live_channel_id=None,
+            channel_title=None,
+            verified_at_utc=None,
+            failure_reason=(
+                "Token could not be loaded or refreshed — account may need reconnection."
+            ),
+        )
+
+    try:
+        identity = oauth_client.get_channel_identity(stored.access_token)
+    except OAuthChannelVerificationError as exc:
+        record_health(
+            conn,
+            entity_type="platform_account",
+            entity_id=account_id,
+            status="degraded",
+            recorded_by="system:verify_connection",
+            detail=str(exc),
+        )
+        return VerificationResult(
+            account_id=account_id,
+            verified=False,
+            registered_channel_id=registered_id,
+            live_channel_id=None,
+            channel_title=None,
+            verified_at_utc=None,
+            failure_reason="YouTube channel identity lookup failed.",
+        )
+
+    # Fail closed on mismatch — do NOT rewrite external_account_id
+    if identity.channel_id != registered_id:
+        record_health(
+            conn,
+            entity_type="platform_account",
+            entity_id=account_id,
+            status="degraded",
+            recorded_by="system:verify_connection",
+            detail=(
+                f"Channel ID mismatch: registered={registered_id}, "
+                f"live={identity.channel_id}. Verification failed."
+            ),
+        )
+        return VerificationResult(
+            account_id=account_id,
+            verified=False,
+            registered_channel_id=registered_id,
+            live_channel_id=identity.channel_id,
+            channel_title=identity.channel_title,
+            verified_at_utc=None,
+            failure_reason=(
+                "Channel ID mismatch: the live credential belongs to a different channel. "
+                "The registered ID has not been changed."
+            ),
+        )
+
+    # Verified — persist timestamp in metadata
+    verified_at = identity.verified_at_utc
+    _persist_verification_timestamp(
+        conn, account_id, acct.metadata_json, verified_at, identity.channel_id
+    )
+
+    record_health(
+        conn,
+        entity_type="platform_account",
+        entity_id=account_id,
+        status="healthy",
+        recorded_by="system:verify_connection",
+        detail=f"Live verification succeeded: {identity.channel_id}",
+    )
+
+    return VerificationResult(
+        account_id=account_id,
+        verified=True,
+        registered_channel_id=registered_id,
+        live_channel_id=identity.channel_id,
+        channel_title=identity.channel_title,
+        verified_at_utc=verified_at,
+        failure_reason=None,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Private helpers (no CP table writes without going through public functions)
 # ---------------------------------------------------------------------------
@@ -589,3 +789,25 @@ def _mark_account_credential_invalid(conn: Any, account_id: str, actor: str) -> 
     from app.control_plane import repository as repo
 
     repo.update_platform_account_status(conn, account_id, "credential_invalid", actor)
+
+
+def _persist_verification_timestamp(
+    conn: Any,
+    account_id: str,
+    existing_metadata_json: str | None,
+    verified_at: datetime,
+    verified_channel_id: str,
+) -> None:
+    meta: dict = {}
+    if existing_metadata_json:
+        try:
+            meta = json.loads(existing_metadata_json)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    meta["last_verified_at"] = verified_at.isoformat()
+    meta["last_verified_channel_id"] = verified_channel_id
+    conn.execute(
+        "UPDATE cp_platform_accounts SET metadata_json = ?, updated_at = ? WHERE id = ?",
+        (json.dumps(meta), datetime.now(UTC).isoformat(), account_id),
+    )
+    conn.commit()

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
+import type { YouTubeVerificationResult } from '@/api/types'
 
 export function useChannels(workspaceId: string) {
   return useQuery({
@@ -87,5 +88,11 @@ export function useDisconnectYouTubeAccount(workspaceId: string, channelId: stri
       void qc.invalidateQueries({ queryKey: ['account-connection', workspaceId, channelId, accountId] })
       void qc.invalidateQueries({ queryKey: ['channel-accounts', workspaceId, channelId] })
     },
+  })
+}
+
+export function useVerifyYouTubeConnection(workspaceId: string, channelId: string, accountId: string) {
+  return useMutation<YouTubeVerificationResult, Error>({
+    mutationFn: () => api.verifyYouTubeConnection(workspaceId, channelId, accountId),
   })
 }

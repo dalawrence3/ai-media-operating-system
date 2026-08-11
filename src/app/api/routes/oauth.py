@@ -46,6 +46,7 @@ from app.oauth.flow import (
     disconnect_youtube_account,
     get_connection_status,
     start_youtube_oauth,
+    verify_youtube_connection,
 )
 
 logger = get_logger(__name__)
@@ -275,6 +276,57 @@ def disconnect_youtube_oauth_route(
         raise HTTPException(status_code=500, detail=f"Disconnect failed: {exc}") from exc
 
     return {"status": "disconnected", "account_id": account_id}
+
+
+@router.post(f"{_ACCT_PREFIX}/oauth/youtube/verify")
+def verify_youtube_connection_route(
+    workspace_id: str,
+    channel_id: str,
+    account_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Any = Depends(get_db),
+    oauth_client: Any = Depends(get_oauth_client),
+) -> dict[str, Any]:
+    """Live YouTube connection verification.
+
+    Calls the YouTube Data API with the account's persisted credential,
+    refreshing the access token if expired. Compares the returned YouTube
+    Channel ID against the registered external_account_id.
+
+    Returns a sanitized result — no tokens are exposed.
+    Fails closed on Channel ID mismatch; never rewrites external_account_id.
+
+    Required role: workspace owner or admin.
+    """
+    try:
+        _require_connect_permission(current_user, workspace_id)
+    except OAuthInsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        result = verify_youtube_connection(
+            db,
+            account_id=account_id,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            oauth_client=oauth_client,
+        )
+    except OAuthAccountNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Verification failed: {exc}") from exc
+
+    return {
+        "account_id": result.account_id,
+        "verified": result.verified,
+        "registered_channel_id": result.registered_channel_id,
+        "live_channel_id": result.live_channel_id,
+        "channel_title": result.channel_title,
+        "verified_at": result.verified_at_utc.isoformat() if result.verified_at_utc else None,
+        "failure_reason": result.failure_reason,
+    }
 
 
 @router.get(f"{_ACCT_PREFIX}/connection")

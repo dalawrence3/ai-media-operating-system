@@ -9,7 +9,8 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { StatTile } from '@/components/common/StatTile'
 import { UnavailableState } from '@/components/common/UnavailableState'
 import { Modal } from '@/components/common/Modal'
-import { useChannels, useChannel, useChannelAccounts, useChannelStrategy, useCreateChannel, useCreatePlatformAccount, useAccountConnectionStatus, useStartYouTubeOAuth, useDisconnectYouTubeAccount } from '@/hooks/useChannel'
+import { useChannels, useChannel, useChannelAccounts, useChannelStrategy, useCreateChannel, useCreatePlatformAccount, useAccountConnectionStatus, useStartYouTubeOAuth, useDisconnectYouTubeAccount, useVerifyYouTubeConnection } from '@/hooks/useChannel'
+import type { YouTubeVerificationResult } from '@/api/types'
 
 function slugify(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
@@ -275,8 +276,10 @@ function YouTubeOAuthCell({
   const conn = useAccountConnectionStatus(workspaceId, channelId, accountId)
   const startOAuth = useStartYouTubeOAuth(workspaceId, channelId, accountId)
   const disconnect = useDisconnectYouTubeAccount(workspaceId, channelId, accountId)
+  const verify = useVerifyYouTubeConnection(workspaceId, channelId, accountId)
 
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  const [verificationResult, setVerificationResult] = useState<YouTubeVerificationResult | null>(null)
 
   if (conn.isLoading) return <span className="text-xs text-muted">Checking…</span>
 
@@ -298,17 +301,70 @@ function YouTubeOAuthCell({
     )
   }
 
+  function handleVerify() {
+    setVerificationResult(null)
+    verify.mutate(undefined, {
+      onSuccess: (result) => setVerificationResult(result),
+    })
+  }
+
+  const verifiedBadge = verificationResult?.verified
+  const verificationFailed = verificationResult && !verificationResult.verified
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--sp-1)' }}>
       <div className="flex items-center gap-2">
-        <span className="badge badge-healthy" style={{ fontSize: 'var(--font-size-xs)' }}>
-          Connected
-        </span>
+        {verifiedBadge ? (
+          <span className="badge badge-healthy" style={{ fontSize: 'var(--font-size-xs)' }}>
+            Verified
+          </span>
+        ) : (
+          <span className="badge badge-healthy" style={{ fontSize: 'var(--font-size-xs)' }}>
+            Connected
+          </span>
+        )}
       </div>
-      {status.channel_title && (
+
+      {verifiedBadge && verificationResult.channel_title && (
+        <span className="text-xs text-muted">{verificationResult.channel_title}</span>
+      )}
+      {!verifiedBadge && status.channel_title && (
         <span className="text-xs text-muted">{status.channel_title}</span>
       )}
-      {confirmDisconnect ? (
+      {verifiedBadge && verificationResult.verified_at && (
+        <span className="text-xs text-muted" title={verificationResult.verified_at}>
+          Verified {new Date(verificationResult.verified_at).toLocaleString()}
+        </span>
+      )}
+
+      {verificationFailed && (
+        <span className="text-xs" style={{ color: 'var(--color-error, #c00)' }}>
+          {verificationResult.failure_reason ?? 'Verification failed.'}
+        </span>
+      )}
+
+      {!confirmDisconnect && (
+        <div className="flex gap-2 mt-1" style={{ flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px' }}
+            onClick={handleVerify}
+            disabled={verify.isPending}
+            title="Make a live YouTube API call to confirm this credential is valid"
+          >
+            {verify.isPending ? 'Verifying…' : 'Verify Connection'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px' }}
+            onClick={() => setConfirmDisconnect(true)}
+          >
+            Disconnect
+          </button>
+        </div>
+      )}
+
+      {confirmDisconnect && (
         <div className="flex gap-2 mt-1">
           <button
             className="btn btn-danger"
@@ -324,14 +380,6 @@ function YouTubeOAuthCell({
             onClick={() => setConfirmDisconnect(false)}
           >Cancel</button>
         </div>
-      ) : (
-        <button
-          className="btn btn-secondary"
-          style={{ fontSize: 'var(--font-size-xs)', padding: '2px 8px', marginTop: 'var(--sp-1)' }}
-          onClick={() => setConfirmDisconnect(true)}
-        >
-          Disconnect
-        </button>
       )}
     </div>
   )
