@@ -122,9 +122,15 @@ class RealGoogleOAuthClient:
         code: str,
         state_nonce: str,
         code_verifier: str | None = None,
+        requested_scopes: list[str] | None = None,
     ) -> TokenPayload:
         try:
-            flow = self._make_flow(state=state_nonce)
+            # Reconstruct the Flow with the same scopes used to build the authorization URL.
+            # oauthlib compares the flow's declared scopes against Google's token response; if
+            # the flow uses YOUTUBE_SCOPES but Google returns YOUTUBE_UPLOAD_SCOPES, the library
+            # raises "Scope has changed from ... to ..." and the exchange fails. Passing the
+            # original requested_scopes eliminates that mismatch.
+            flow = self._make_flow(state=state_nonce, scopes=requested_scopes)
             # code_verifier must match the code_challenge sent in the authorization URL.
             # Omitting it causes Google to reject with (invalid_grant) Missing code verifier.
             flow.fetch_token(code=code, code_verifier=code_verifier)  # type: ignore[attr-defined]

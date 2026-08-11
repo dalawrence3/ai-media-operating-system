@@ -102,11 +102,15 @@ class GoogleOAuthClient(Protocol):
         code: str,
         state_nonce: str,
         code_verifier: str | None = None,
+        requested_scopes: list[str] | None = None,
     ) -> TokenPayload:
         """Exchange an authorization code for access + refresh tokens.
 
         code_verifier is the PKCE verifier (RFC 7636); must match the code_challenge
         sent in the authorization URL. Google enforces this for all Web Application flows.
+        requested_scopes must be the exact scope list used to generate the authorization URL.
+        The real implementation uses them to reconstruct the Flow for token exchange so
+        oauthlib's scope-change check compares against the correct expected set.
         Raises OAuthCodeExchangeError on any Google-side failure.
         """
         ...
@@ -195,6 +199,7 @@ class FakeGoogleOAuthClient:
         self._identity_call_count = 0
         self.revoke_calls: list[str] = []
         self.last_received_code_verifier: str | None = None  # set by exchange_code for spy tests
+        self.last_received_requested_scopes: list[str] | None = None  # spy for scope tests
 
     def get_authorization_url(
         self,
@@ -222,8 +227,10 @@ class FakeGoogleOAuthClient:
         code: str,
         state_nonce: str,
         code_verifier: str | None = None,
+        requested_scopes: list[str] | None = None,
     ) -> TokenPayload:
         self.last_received_code_verifier = code_verifier  # spy for PKCE tests
+        self.last_received_requested_scopes = requested_scopes  # spy for scope tests
         if self._fail_exchange is not None:
             raise self._fail_exchange
         return TokenPayload(

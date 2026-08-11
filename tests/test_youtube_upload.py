@@ -1222,3 +1222,358 @@ class TestScopeConstantSafety:
     def test_initial_connect_scopes_excludes_upload(self):
         """YOUTUBE_SCOPES (initial connect) must not contain youtube.upload."""
         assert YOUTUBE_UPLOAD_SCOPE not in YOUTUBE_SCOPES
+
+
+# ---------------------------------------------------------------------------
+# 17. requested_scopes stored in OAuthStateClaims and passed to exchange_code
+# ---------------------------------------------------------------------------
+
+
+class TestOAuthStateRequestedScopes:
+    """OAuthStateClaims must carry requested_scopes through the full round trip,
+    just like code_verifier.  These tests verify the state-store side.
+    """
+
+    def test_start_oauth_persists_readonly_scopes(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        """start_youtube_oauth() stores YOUTUBE_SCOPES in state claims."""
+        from app.oauth.flow import start_youtube_oauth
+        from app.oauth.state import validate_state
+
+        ws_id, ch_id, acc_id, _ = _make_connected_account(db, token_store)
+
+        reset_state_store()
+        set_state_store(InMemoryOAuthStateStore())
+        result = start_youtube_oauth(
+            db,
+            account_id=acc_id,
+            user_id="u",
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            oauth_client=FakeGoogleOAuthClient(),
+        )
+        claims = validate_state(result.state_nonce)
+        assert set(claims.requested_scopes) == set(YOUTUBE_SCOPES)
+        assert YOUTUBE_UPLOAD_SCOPE not in claims.requested_scopes
+
+    def test_start_upload_oauth_persists_upload_scopes(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        """start_youtube_upload_oauth() stores YOUTUBE_UPLOAD_SCOPES in state claims."""
+        from app.oauth.flow import start_youtube_upload_oauth
+        from app.oauth.state import validate_state
+
+        ws_id, ch_id, acc_id, _ = _make_connected_account(db, token_store)
+
+        reset_state_store()
+        set_state_store(InMemoryOAuthStateStore())
+        result = start_youtube_upload_oauth(
+            db,
+            account_id=acc_id,
+            user_id="u",
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            oauth_client=FakeGoogleOAuthClient(),
+        )
+        claims = validate_state(result.state_nonce)
+        assert YOUTUBE_UPLOAD_SCOPE in claims.requested_scopes
+        assert set(claims.requested_scopes) == set(YOUTUBE_UPLOAD_SCOPES)
+
+    def test_requested_scopes_survive_dict_round_trip(self) -> None:
+        """OAuthStateClaims.to_dict() / from_dict() preserves requested_scopes."""
+        from app.oauth.state import OAuthStateClaims
+
+        original = OAuthStateClaims(
+            nonce="n1",
+            user_id="u1",
+            workspace_id="ws1",
+            channel_id="ch1",
+            account_id="acc1",
+            created_at=1234567890.0,
+            code_verifier="pkce_verifier_abc",
+            requested_scopes=list(YOUTUBE_UPLOAD_SCOPES),
+        )
+        restored = OAuthStateClaims.from_dict(original.to_dict())
+        assert set(restored.requested_scopes) == set(YOUTUBE_UPLOAD_SCOPES)
+        assert restored.code_verifier == "pkce_verifier_abc"
+
+    def test_old_state_without_requested_scopes_returns_empty(self) -> None:
+        """State records that predate this field deserialize with requested_scopes=[]."""
+        from app.oauth.state import OAuthStateClaims
+
+        old_dict = {
+            "nonce": "n1",
+            "user_id": "u1",
+            "workspace_id": "ws1",
+            "channel_id": "ch1",
+            "account_id": "acc1",
+            "created_at": 1234567890.0,
+            "code_verifier": "old_verifier",
+            # no requested_scopes key
+        }
+        claims = OAuthStateClaims.from_dict(old_dict)
+        assert claims.requested_scopes == []
+
+    def test_pkce_and_requested_scopes_survive_same_round_trip(self) -> None:
+        """Both code_verifier and requested_scopes survive serialization together."""
+        from app.oauth.state import OAuthStateClaims
+
+        original = OAuthStateClaims(
+            nonce="n2",
+            user_id="u2",
+            workspace_id="ws2",
+            channel_id="ch2",
+            account_id="acc2",
+            created_at=9999.0,
+            code_verifier="super_secret_pkce_verifier",
+            requested_scopes=list(YOUTUBE_UPLOAD_SCOPES),
+        )
+        d = original.to_dict()
+        restored = OAuthStateClaims.from_dict(d)
+        assert restored.code_verifier == "super_secret_pkce_verifier"
+        assert set(restored.requested_scopes) == set(YOUTUBE_UPLOAD_SCOPES)
+
+    def test_two_simultaneous_flows_store_independent_scopes(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        """Two concurrent flows store their own scopes; consuming one doesn't affect the other."""
+        from app.oauth.flow import start_youtube_oauth, start_youtube_upload_oauth
+        from app.oauth.state import validate_state
+
+        ws_id, ch_id, acc_id, _ = _make_connected_account(db, token_store)
+        ws2_id, ch2_id, acc2_id, _ = _make_connected_account(db, token_store, channel_id_suffix="2")
+
+        reset_state_store()
+        store = InMemoryOAuthStateStore()
+        set_state_store(store)
+
+        # Start normal connect flow for account 1
+        r1 = start_youtube_oauth(
+            db,
+            account_id=acc_id,
+            user_id="u",
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            oauth_client=FakeGoogleOAuthClient(),
+        )
+        # Start upload upgrade flow for account 2 (different scope set)
+        r2 = start_youtube_upload_oauth(
+            db,
+            account_id=acc2_id,
+            user_id="u",
+            workspace_id=ws2_id,
+            channel_id=ch2_id,
+            oauth_client=FakeGoogleOAuthClient(),
+        )
+
+        claims1 = validate_state(r1.state_nonce)
+        claims2 = validate_state(r2.state_nonce)
+
+        assert YOUTUBE_UPLOAD_SCOPE not in claims1.requested_scopes
+        assert YOUTUBE_UPLOAD_SCOPE in claims2.requested_scopes
+
+
+# ---------------------------------------------------------------------------
+# 18. exchange_code() receives requested_scopes via complete_youtube_oauth
+# ---------------------------------------------------------------------------
+
+
+class TestExchangeCodeReceivesRequestedScopes:
+    """complete_youtube_oauth() must pass claims.requested_scopes to exchange_code(),
+    so RealGoogleOAuthClient can reconstruct the Flow with matching scopes.
+    """
+
+    def _spy_exchange(self, db, token_store, ws_id, ch_id, acc_id, reg_ch_id, *, upgrade=False):
+        """Run start+complete; return the FakeGoogleOAuthClient spy after the call."""
+        from app.oauth.flow import (
+            complete_youtube_oauth,
+            start_youtube_oauth,
+            start_youtube_upload_oauth,
+        )
+
+        spy = FakeGoogleOAuthClient(
+            fake_channel_id=reg_ch_id,
+            granted_scopes=YOUTUBE_UPLOAD_SCOPES if upgrade else YOUTUBE_SCOPES,
+        )
+        start_fn = start_youtube_upload_oauth if upgrade else start_youtube_oauth
+        r = start_fn(
+            db,
+            account_id=acc_id,
+            user_id="u",
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            oauth_client=spy,
+        )
+        complete_youtube_oauth(
+            db,
+            code="code",
+            state_nonce=r.state_nonce,
+            oauth_client=spy,
+            token_store=token_store,
+        )
+        return spy
+
+    def test_readonly_flow_passes_readonly_scopes_to_exchange(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        ws_id, ch_id, acc_id, reg_ch_id = _make_connected_account(db, token_store)
+        spy = self._spy_exchange(db, token_store, ws_id, ch_id, acc_id, reg_ch_id, upgrade=False)
+
+        assert spy.last_received_requested_scopes is not None
+        assert set(spy.last_received_requested_scopes) == set(YOUTUBE_SCOPES)
+        assert YOUTUBE_UPLOAD_SCOPE not in spy.last_received_requested_scopes
+
+    def test_upload_upgrade_passes_upload_scopes_to_exchange(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        ws_id, ch_id, acc_id, reg_ch_id = _make_connected_account(db, token_store)
+        spy = self._spy_exchange(db, token_store, ws_id, ch_id, acc_id, reg_ch_id, upgrade=True)
+
+        assert spy.last_received_requested_scopes is not None
+        assert YOUTUBE_UPLOAD_SCOPE in spy.last_received_requested_scopes
+        assert set(spy.last_received_requested_scopes) == set(YOUTUBE_UPLOAD_SCOPES)
+
+    def test_two_concurrent_flows_scopes_do_not_cross_contaminate(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        """Two simultaneous flows with different scope sets exchange with their own scopes."""
+        from app.oauth.flow import (
+            complete_youtube_oauth,
+            start_youtube_oauth,
+            start_youtube_upload_oauth,
+        )
+        from app.oauth.state import InMemoryOAuthStateStore, reset_state_store, set_state_store
+
+        ws_id, ch_id, acc_id, reg_ch_id = _make_connected_account(db, token_store)
+        ws2_id, ch2_id, acc2_id, reg_ch2_id = _make_connected_account(
+            db, token_store, channel_id_suffix="x2"
+        )
+
+        # Both flows are live in the state store simultaneously
+        reset_state_store()
+        set_state_store(InMemoryOAuthStateStore())
+
+        spy1 = FakeGoogleOAuthClient(fake_channel_id=reg_ch_id, granted_scopes=YOUTUBE_SCOPES)
+        spy2 = FakeGoogleOAuthClient(
+            fake_channel_id=reg_ch2_id, granted_scopes=YOUTUBE_UPLOAD_SCOPES
+        )
+
+        r1 = start_youtube_oauth(
+            db,
+            account_id=acc_id,
+            user_id="u",
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            oauth_client=spy1,
+        )
+        r2 = start_youtube_upload_oauth(
+            db,
+            account_id=acc2_id,
+            user_id="u",
+            workspace_id=ws2_id,
+            channel_id=ch2_id,
+            oauth_client=spy2,
+        )
+
+        # Complete both callbacks — state store still has both nonces
+        complete_youtube_oauth(
+            db, code="c1", state_nonce=r1.state_nonce, oauth_client=spy1, token_store=token_store
+        )
+        complete_youtube_oauth(
+            db, code="c2", state_nonce=r2.state_nonce, oauth_client=spy2, token_store=token_store
+        )
+
+        assert YOUTUBE_UPLOAD_SCOPE not in (spy1.last_received_requested_scopes or [])
+        assert YOUTUBE_UPLOAD_SCOPE in (spy2.last_received_requested_scopes or [])
+
+    def test_replayed_state_cannot_reuse_requested_scopes(
+        self, db: sqlite3.Connection, token_store: LocalFileTokenStore
+    ) -> None:
+        """State is consumed on first callback; a replay raises OAuthStateNotFoundError."""
+        from app.oauth.errors import OAuthStateNotFoundError
+        from app.oauth.flow import complete_youtube_oauth, start_youtube_oauth
+
+        ws_id, ch_id, acc_id, reg_ch_id = _make_connected_account(db, token_store)
+        client = FakeGoogleOAuthClient(fake_channel_id=reg_ch_id)
+        r = start_youtube_oauth(
+            db,
+            account_id=acc_id,
+            user_id="u",
+            workspace_id=ws_id,
+            channel_id=ch_id,
+            oauth_client=client,
+        )
+
+        # First callback consumes the state
+        complete_youtube_oauth(
+            db, code="c", state_nonce=r.state_nonce, oauth_client=client, token_store=token_store
+        )
+        # Second attempt with the same nonce must be rejected
+        with pytest.raises(OAuthStateNotFoundError):
+            complete_youtube_oauth(
+                db,
+                code="c",
+                state_nonce=r.state_nonce,
+                oauth_client=client,
+                token_store=token_store,
+            )
+
+    def test_real_client_exchange_uses_requested_scopes_for_flow(self, tmp_path) -> None:
+        """RealGoogleOAuthClient.exchange_code(requested_scopes=…) passes those scopes
+        to _make_flow() so the Flow is initialized with the correct set."""
+        import json
+        from unittest.mock import MagicMock
+
+        from app.oauth.client import YOUTUBE_UPLOAD_SCOPE, YOUTUBE_UPLOAD_SCOPES
+        from app.oauth.client_google import RealGoogleOAuthClient
+
+        secrets_file = tmp_path / "client_secrets.json"
+        secrets_file.write_text(
+            json.dumps(
+                {
+                    "web": {
+                        "client_id": "fake",
+                        "client_secret": "fake",
+                        "redirect_uris": ["http://localhost/callback"],
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                    }
+                }
+            )
+        )
+        client = RealGoogleOAuthClient(
+            client_secrets_path=str(secrets_file),
+            redirect_uri="http://localhost/callback",
+        )
+
+        captured_scopes: list[list[str]] = []
+
+        mock_creds = MagicMock()
+        mock_creds.token = "mock_token"
+        mock_creds.refresh_token = "mock_refresh"
+        mock_creds.expiry = None
+        mock_creds.scopes = frozenset(YOUTUBE_UPLOAD_SCOPES)
+
+        mock_flow = MagicMock()
+        mock_flow.credentials = mock_creds
+
+        class _CapturingFlow:
+            @classmethod
+            def from_client_secrets_file(cls, path, scopes, state=None, **kw):
+                captured_scopes.append(list(scopes))
+                return mock_flow
+
+        client._Flow = _CapturingFlow
+
+        client.exchange_code(
+            code="fake_code",
+            state_nonce="fake_nonce",
+            code_verifier="fake_verifier",
+            requested_scopes=YOUTUBE_UPLOAD_SCOPES,
+        )
+
+        assert len(captured_scopes) == 1
+        assert YOUTUBE_UPLOAD_SCOPE in captured_scopes[0], (
+            f"exchange_code must forward requested_scopes to _make_flow; got {captured_scopes[0]}"
+        )
