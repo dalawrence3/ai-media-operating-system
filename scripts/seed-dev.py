@@ -136,23 +136,53 @@ for ch in channels:
 
 conn.commit()
 
-# ── Dev topic (required for analytics / learning workspace link) ───────────────
+# ── Dev topics (workspace-scoped; required for topic management UI) ─────────────
 NOW = "2026-08-01T00:00:00"
 
-existing_topics = conn.execute(
-    "SELECT id FROM topics WHERE title = '[DEV] AI Content Strategy'"
-).fetchone()
+SEED_TOPICS = [
+    {
+        "title": "[DEV] AI Content Strategy",
+        "angle": "Focus on practical use cases",
+        "tag": "primary",
+    },
+    {
+        "title": "[DEV] Future of Renewable Energy",
+        "angle": "Solar and wind cost trends",
+        "tag": "secondary",
+    },
+    {
+        "title": "[DEV] Quantum Computing Explained",
+        "angle": "Accessible intro for general audience",
+        "tag": "tertiary",
+    },
+]
 
-if existing_topics:
-    topic_id = existing_topics[0]
-    print(f"[seed] Topic already exists: id={topic_id}")
-else:
-    cur = conn.execute(
-        "INSERT INTO topics (title, angle, status, created_at, updated_at) VALUES (?,?,?,?,?)",
-        ("[DEV] AI Content Strategy", "Focus on practical use cases", "active", NOW, NOW),
-    )
-    topic_id = cur.lastrowid
-    print(f"[seed] Created topic: id={topic_id}")
+topic_ids: dict[str, int] = {}
+
+for t_def in SEED_TOPICS:
+    row = conn.execute(
+        "SELECT id FROM topics WHERE title = ?",
+        (t_def["title"],),
+    ).fetchone()
+    if row:
+        tid = row[0]
+        print(f"[seed] Topic already exists: {t_def['title']} id={tid}")
+        # Backfill workspace_id if missing (V21 migration may not have set it)
+        conn.execute(
+            "UPDATE topics SET workspace_id = ? WHERE id = ? AND workspace_id IS NULL",
+            (ws.id, tid),
+        )
+    else:
+        cur = conn.execute(
+            "INSERT INTO topics (title, angle, status, workspace_id, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (t_def["title"], t_def["angle"], "active", ws.id, NOW, NOW),
+        )
+        tid = cur.lastrowid
+        print(f"[seed] Created topic: {t_def['title']} id={tid}")
+    topic_ids[t_def["tag"]] = tid
+
+topic_id = topic_ids["primary"]
 
 # ── Pipeline execution linking workspace → topic ───────────────────────────────
 existing_exec = conn.execute(
@@ -162,6 +192,7 @@ existing_exec = conn.execute(
 
 if existing_exec:
     print("[seed] Pipeline execution already exists for workspace→topic link")
+    exec_id = existing_exec["id"]
 else:
     exec_id = str(uuid.uuid4())
     conn.execute(
@@ -186,6 +217,36 @@ else:
         ),
     )
     print(f"[seed] Created pipeline execution linking workspace → topic {topic_id}")
+
+# Stage log entries with representative artifacts (idempotent — INSERT OR IGNORE)
+STAGE_LOGS = [
+    ("research", "completed", "research_brief", f"rb-{exec_id[:8]}", 1_800, None),
+    ("script_generation", "completed", "script", f"sc-{exec_id[:8]}", 3_200, None),
+    ("production_plan", "completed", "production_plan", f"pp-{exec_id[:8]}", 900, None),
+    ("narration", "blocked", None, None, None, None),
+    ("learning", "completed", "learning_run", f"lr-{exec_id[:8]}", 2_100, None),
+]
+existing_logs = conn.execute(
+    "SELECT COUNT(*) FROM app_pipeline_stage_log WHERE pipeline_id = ?", (exec_id,)
+).fetchone()[0]
+if existing_logs:
+    print(f"[seed] Stage log entries already exist for pipeline {exec_id[:8]} ({existing_logs} rows)")
+else:
+    for (stage, status, atype, aid, dur_ms, err) in STAGE_LOGS:
+        conn.execute(
+            """INSERT OR IGNORE INTO app_pipeline_stage_log
+                   (id, pipeline_id, stage, attempt_number, status,
+                    artifact_type, artifact_id,
+                    error_message, duration_ms, started_at, completed_at, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                str(uuid.uuid4()),
+                exec_id, stage, 1, status,
+                atype, aid, err, dur_ms,
+                NOW, NOW if status == "completed" else None, NOW,
+            ),
+        )
+    print(f"[seed] Created {len(STAGE_LOGS)} stage log entries for pipeline {exec_id[:8]}")
 
 # ── Analytics aggregates ───────────────────────────────────────────────────────
 existing_aggs = conn.execute(

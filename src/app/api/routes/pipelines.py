@@ -251,6 +251,28 @@ def get_stage_history(
     return [dict(r) for r in rows]
 
 
+@router.get("/{pipeline_id}/stages/{stage}/artifact")
+def get_stage_artifact(
+    workspace_id: str,
+    pipeline_id: str,
+    stage: str,
+    svc: ApplicationService = Depends(get_app_service),
+) -> dict[str, Any]:
+    """Return safe artifact metadata + content preview for a completed stage.
+
+    Validates workspace → pipeline ownership. Resolves artifact content
+    server-side; never exposes raw filesystem paths or secrets.
+    """
+    try:
+        return svc.get_stage_artifact(
+            workspace_id=workspace_id, pipeline_id=pipeline_id, stage=stage
+        )
+    except PermissionError:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/{pipeline_id}/diagnostics/{stage}")
 def get_pipeline_diagnostics(
     workspace_id: str,
@@ -261,7 +283,10 @@ def get_pipeline_diagnostics(
     try:
         report = svc.get_diagnostics(
             GetDiagnosticsQuery(
-                workspace_id=workspace_id, subject="pipeline_stage", subject_id=pipeline_id
+                workspace_id=workspace_id,
+                subject="pipeline",
+                subject_id=pipeline_id,
+                stage=stage,
             )
         )
         return report.model_dump()

@@ -84,6 +84,17 @@ def validate_start_command(conn: Any, cmd: StartPipelineCommand) -> None:
     if ch.status == "paused":
         raise ChannelPausedError(cmd.channel_id)
 
+    # topic_id must belong to the workspace — guards against cross-workspace guessing.
+    if cmd.topic_id is not None:
+        topic_row = conn.execute(
+            "SELECT workspace_id FROM topics WHERE id = ?",
+            (cmd.topic_id,),
+        ).fetchone()
+        if topic_row is None:
+            raise ValueError(f"Topic {cmd.topic_id} not found")
+        if topic_row["workspace_id"] != cmd.workspace_id:
+            raise CrossWorkspaceAccessError("Topic", str(cmd.topic_id), cmd.workspace_id)
+
     # Stage names are valid.
     valid_stages = set(PIPELINE_STAGES)
     if cmd.start_stage not in valid_stages:

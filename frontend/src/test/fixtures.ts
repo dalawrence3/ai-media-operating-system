@@ -17,6 +17,8 @@ import type {
   DiagnosticReport,
   Experiment,
   ControlEvent,
+  TopicView,
+  StageArtifact,
 } from '@/api/types'
 
 export const WS_ID = 'ws-test-001'
@@ -355,4 +357,77 @@ export const recommendationAccepted: OptimizationRecommendation = {
   confidence: 'high',
   confidence_score: 0.81,
   input_hash: 'hash-rec-002',
+}
+
+export const TOPIC_ID = 7
+
+export const topicView: TopicView = {
+  id: TOPIC_ID,
+  title: 'AI in Healthcare',
+  angle: 'Focus on diagnostics use-cases',
+  status: 'active',
+  workspace_id: WS_ID,
+  created_at: '2025-06-01T10:00:00',
+  updated_at: '2025-06-01T10:00:00',
+}
+
+export const topicView2: TopicView = {
+  id: 8,
+  title: 'Future of Renewable Energy',
+  angle: '',
+  status: 'active',
+  workspace_id: WS_ID,
+  created_at: '2025-06-02T09:00:00',
+  updated_at: '2025-06-02T09:00:00',
+}
+
+export const stageArtifactResolved: StageArtifact = {
+  pipeline_id: PIPE_ID,
+  stage: 'research',
+  workspace_id: WS_ID,
+  artifact_id: 'art-001',
+  artifact_type: 'research_brief',
+  stage_status: 'completed',
+  attempt_number: 1,
+  started_at: '2025-01-01T00:01:00',
+  completed_at: '2025-01-01T00:01:01',
+  duration_ms: 1200,
+  error_message: null,
+  resolved: true,
+  content_type: 'research_brief',
+  content: { query: 'AI in Healthcare', summary: 'Brief summary of research findings' },
+  truncated: false,
+}
+
+export const stageArtifactUnresolved: StageArtifact = {
+  pipeline_id: PIPE_ID,
+  stage: 'narration',
+  workspace_id: WS_ID,
+  artifact_id: null,
+  artifact_type: null,
+  stage_status: 'running',
+  attempt_number: 1,
+  started_at: null,
+  completed_at: null,
+  duration_ms: null,
+  error_message: null,
+  resolved: false,
+  reason: 'no_artifact',
+}
+
+export const stageDiagnosticReport: DiagnosticReport = {
+  subject: 'pipeline',
+  subject_id: PIPE_ID,
+  workspace_id: WS_ID,
+  status: 'warn',
+  findings: [
+    {
+      category: 'pipeline_stage',
+      severity: 'warning',
+      message: 'Stage running longer than expected',
+      detail: { stage: 'research', elapsed_ms: 3500 },
+    },
+  ],
+  generated_at: '2025-01-01T12:00:00',
+  contract_version: '1.0',
 }

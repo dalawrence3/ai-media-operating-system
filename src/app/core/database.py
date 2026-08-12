@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -2323,6 +2323,25 @@ CREATE INDEX IF NOT EXISTS idx_oso_source
 """
 
 
+# Phase 21 DDL — workspace scoping for topics (index only; column added conditionally).
+_DDL_V21_TOPIC_WORKSPACE_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_topics_workspace_id ON topics (workspace_id);
+"""
+
+
+def _apply_v21_topic_workspace(conn: sqlite3.Connection) -> None:
+    """Add workspace_id column to topics if the table exists and lacks the column."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='topics'"
+    ).fetchone()
+    if not table_exists:
+        return
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(topics)").fetchall()}
+    if "workspace_id" not in existing_cols:
+        conn.execute("ALTER TABLE topics ADD COLUMN workspace_id TEXT")
+    conn.executescript(_DDL_V21_TOPIC_WORKSPACE_INDEX)
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -2365,6 +2384,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -2389,6 +2409,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2412,6 +2433,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2434,6 +2456,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2455,6 +2478,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2475,6 +2499,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2494,6 +2519,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2512,6 +2538,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2529,6 +2556,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2545,6 +2573,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2560,6 +2589,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2574,6 +2604,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2587,6 +2618,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2599,6 +2631,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2610,6 +2643,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2620,6 +2654,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2629,6 +2664,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2637,6 +2673,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V18_CONTROL_PLANE)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2644,11 +2681,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 18 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
     elif current == 19:
         logger.info("Migrating schema from version 19 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
+        _apply_v21_topic_workspace(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 20:
+        logger.info("Migrating schema from version 20 to %d", SCHEMA_VERSION)
+        _apply_v21_topic_workspace(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

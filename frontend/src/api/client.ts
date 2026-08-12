@@ -36,7 +36,9 @@ import type {
   RecommendationReviewEvent,
   ReviewItemView,
   ScheduleView,
+  StageArtifact,
   StrategyProfile,
+  TopicView,
   WorkspaceView,
   YouTubeVerificationResult,
 } from './types'
@@ -401,9 +403,36 @@ class ApiClient {
     channel_id: string
     idempotency_key: string
     platform_account_id?: string
+    topic_id?: number | null
     end_stage?: string
   }) {
     return this.request<PipelineView>('POST', `/workspaces/${workspaceId}/pipelines`, body)
+  }
+
+  advancePipelineStage(
+    workspaceId: string,
+    pipelineId: string,
+    body: { stage: string; artifact_id?: string; artifact_type?: string },
+  ) {
+    return this.request<PipelineView>(
+      'POST',
+      `/workspaces/${workspaceId}/pipelines/${pipelineId}/advance`,
+      body,
+    )
+  }
+
+  getStageArtifact(workspaceId: string, pipelineId: string, stage: string) {
+    return this.request<StageArtifact>(
+      'GET',
+      `/workspaces/${workspaceId}/pipelines/${pipelineId}/stages/${stage}/artifact`,
+    )
+  }
+
+  getPipelineDiagnostics(workspaceId: string, pipelineId: string, stage: string) {
+    return this.request<DiagnosticReport>(
+      'GET',
+      `/workspaces/${workspaceId}/pipelines/${pipelineId}/diagnostics/${stage}`,
+    )
   }
 
   // ── Reviews ──────────────────────────────────────────────────────────────
@@ -508,6 +537,16 @@ class ApiClient {
       'DELETE',
       `/workspaces/${workspaceId}/schedules/${scheduleId}`,
     )
+  }
+
+  // ── Topics ───────────────────────────────────────────────────────────────
+
+  listTopics(workspaceId: string) {
+    return this.request<TopicView[]>('GET', `/workspaces/${workspaceId}/topics`)
+  }
+
+  createTopic(workspaceId: string, body: { title: string; angle?: string }) {
+    return this.request<TopicView>('POST', `/workspaces/${workspaceId}/topics`, body)
   }
 
   // ── Diagnostics ──────────────────────────────────────────────────────────
