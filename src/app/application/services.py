@@ -209,6 +209,23 @@ class ApplicationService:
             raise CrossWorkspaceAccessError("Pipeline", pipeline_id, workspace_id)
         return pipeline_state.get_stage_history(self._conn, pipeline_id, stage)
 
+    def get_stage_artifact(self, workspace_id: str, pipeline_id: str, stage: str) -> dict[str, Any]:
+        """Return safe artifact metadata + content preview for a pipeline stage.
+
+        Validates workspace ownership, resolves artifact content by type from
+        the appropriate domain table. Never exposes filesystem paths or secrets.
+        """
+        from app.application import artifact_resolver
+
+        pv = pipeline_state.get_pipeline(self._conn, pipeline_id)
+        if pv.workspace_id != workspace_id:
+            from app.application.errors import CrossWorkspaceAccessError
+
+            raise CrossWorkspaceAccessError("Pipeline", pipeline_id, workspace_id)
+        return artifact_resolver.resolve_stage_artifact(
+            self._conn, pipeline_id=pipeline_id, stage=stage, workspace_id=workspace_id
+        )
+
     def replay_event(self, cmd: ReplayEventCommand) -> dict[str, Any]:
         with self._obs.span("replay_event"):
             return dispatcher.dispatch(
@@ -358,7 +375,9 @@ class ApplicationService:
             subject = q.subject
             subject_id = q.subject_id
             if subject == "pipeline":
-                return diag_svc.explain_pipeline(self._conn, subject_id, q.workspace_id)
+                return diag_svc.explain_pipeline(
+                    self._conn, subject_id, q.workspace_id, stage=q.stage
+                )
             if subject == "workspace":
                 return diag_svc.explain_workspace_health(self._conn, q.workspace_id)
             if subject == "policy":

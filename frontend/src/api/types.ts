@@ -324,6 +324,37 @@ export interface RecommendationReviewEvent {
   created_at: string
 }
 
+/* Topics */
+export interface TopicView {
+  id: number
+  title: string
+  angle: string
+  status: string
+  workspace_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+/* Stage artifact — from GET /pipelines/{id}/stages/{stage}/artifact */
+export interface StageArtifact {
+  pipeline_id: string
+  stage: string
+  workspace_id: string
+  artifact_id: string | null
+  artifact_type: string | null
+  stage_status: string
+  attempt_number: number
+  started_at: string | null
+  completed_at: string | null
+  duration_ms: number | null
+  error_message: string | null
+  resolved: boolean
+  reason?: string
+  content_type?: string
+  content?: Record<string, unknown>
+  truncated?: boolean
+}
+
 /* API error shape */
 export interface ApiError {
   detail: string

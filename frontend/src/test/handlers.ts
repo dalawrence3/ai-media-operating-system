@@ -9,6 +9,8 @@ import {
   cpChannel, cpChannel2, cpAccount1, cpAccount2,
   pipelineView, reviewItem, exceptionView, costView,
   auditView, operationView, experiment, controlEvent,
+  topicView, topicView2, stageArtifactResolved, stageDiagnosticReport,
+  TOPIC_ID, PIPE_ID,
 } from './fixtures'
 
 export const MOCK_NEW_CHANNEL_ID = 'ch-new-001'
@@ -308,6 +310,38 @@ export const handlers = [
       contract_version: '1.0',
     }),
   ),
+
+  // Topics
+  http.get(`${B}/workspaces/${WS_ID}/topics`, () =>
+    HttpResponse.json([topicView, topicView2]),
+  ),
+  http.post(`${B}/workspaces/${WS_ID}/topics`, async ({ request }) => {
+    const body = await request.json() as { title: string; angle?: string }
+    return HttpResponse.json({
+      ...topicView,
+      id: TOPIC_ID + 100,
+      title: body.title,
+      angle: body.angle ?? '',
+    }, { status: 201 })
+  }),
+
+  // Pipeline artifact + pipeline-scoped diagnostics + advance
+  http.get(`${B}/workspaces/${WS_ID}/pipelines/${PIPE_ID}/stages/:stage/artifact`, ({ params }) => {
+    if (params.stage === 'research') return HttpResponse.json(stageArtifactResolved)
+    return HttpResponse.json({
+      pipeline_id: PIPE_ID, stage: params.stage, workspace_id: WS_ID,
+      artifact_id: null, artifact_type: null, stage_status: 'not_started',
+      attempt_number: 0, started_at: null, completed_at: null, duration_ms: null, error_message: null,
+      resolved: false, reason: 'no_artifact',
+    })
+  }),
+  http.get(`${B}/workspaces/${WS_ID}/pipelines/${PIPE_ID}/diagnostics/:stage`, () =>
+    HttpResponse.json(stageDiagnosticReport),
+  ),
+  http.post(`${B}/workspaces/${WS_ID}/pipelines/${PIPE_ID}/advance`, async ({ request }) => {
+    const body = await request.json() as { stage: string }
+    return HttpResponse.json({ ...pipelineView, current_stage: body.stage, status: 'running' })
+  }),
 
   // Analytics (default: empty — no data seeded yet)
   http.get(`${B}/workspaces/${WS_ID}/analytics/aggregates`, () =>

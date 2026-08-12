@@ -56,11 +56,11 @@ def _columns(conn: sqlite3.Connection, table: str) -> list[str]:
 
 class TestSchemaVersion:
     def test_constant_is_19(self):
-        assert SCHEMA_VERSION == 20
+        assert SCHEMA_VERSION == 21
 
     def test_db_reports_19(self, db_conn):
         ver = db_conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert ver == 20
+        assert ver == 21
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +397,7 @@ class TestIncrementalMigration:
 
         conn = open_db(path)
         ver = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert ver == 20
+        assert ver == 21
         tables = {
             r[0]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()

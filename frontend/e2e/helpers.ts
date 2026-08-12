@@ -95,6 +95,26 @@ export async function gotoAndReady(
   await waitForAppReady(page)
 }
 
+// ── Dev fixture helpers ──────────────────────────────────────────────────────
+
+/**
+ * Reset seeded learning recommendations back to pending status.
+ * Calls the dev-only backend endpoint; no-ops gracefully if not available.
+ * Use in beforeEach for mutation tests so every run starts with fresh state.
+ */
+export async function resetLearningFixtures(baseURL: string | undefined): Promise<void> {
+  const backendBase = (baseURL ?? `http://localhost:${BACKEND_PORT}`).replace(
+    `:5173`,
+    `:${BACKEND_PORT}`,
+  )
+  await fetch(`${backendBase}/api/v1/dev/reset-learning-fixtures`, {
+    method: 'POST',
+    headers: { 'X-Dev-Actor': 'dev:studio-user' },
+  }).catch(() => {
+    /* non-fatal — test will skip via hasPending guard if state is wrong */
+  })
+}
+
 // ── URL helpers ─────────────────────────────────────────────────────────────
 
 /**

@@ -82,6 +82,7 @@ class GetDiagnosticsQuery:
     workspace_id: str
     subject: str
     subject_id: str
+    stage: str | None = None
     contract_version: str = QUERY_CONTRACT_VERSION
 
 

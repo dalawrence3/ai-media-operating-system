@@ -25,8 +25,15 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def explain_pipeline(conn: Any, pipeline_id: str, workspace_id: str) -> DiagnosticReport:
-    """Explain why a pipeline is in its current state."""
+def explain_pipeline(
+    conn: Any, pipeline_id: str, workspace_id: str, stage: str | None = None
+) -> DiagnosticReport:
+    """Explain why a pipeline (or a specific stage) is in its current state.
+
+    When `stage` is supplied, findings are filtered to that stage only.
+    Note: the backend does not yet store stage-level diagnostic records; findings
+    are derived from pipeline state and limited to what is visible in the stage log.
+    """
     from app.application import state as pipeline_state
 
     findings: list[DiagnosticFinding] = []
@@ -69,6 +76,63 @@ def explain_pipeline(conn: Any, pipeline_id: str, workspace_id: str) -> Diagnost
             contract_version=APPLICATION_CONTRACT_VERSION,
         )
 
+    # Stage-scoped views: only produce findings for the requested stage.
+    # If the stage has not yet been reached, surface that fact explicitly.
+    if stage is not None:
+        stage_view = next((s for s in pv.stages if s.stage == stage), None)
+        if stage_view is None:
+            findings.append(
+                DiagnosticFinding(
+                    category="stage_not_reached",
+                    severity="info",
+                    message=f"Stage '{stage}' has not been reached yet",
+                    detail={"requested_stage": stage, "current_stage": pv.current_stage},
+                )
+            )
+        elif stage_view.status == "failed":
+            findings.append(
+                DiagnosticFinding(
+                    category="stage_failed",
+                    severity="error",
+                    message=f"Stage '{stage}' failed: {stage_view.error_message}",
+                    detail={"stage": stage, "error": stage_view.error_message},
+                )
+            )
+        elif stage_view.status == "waiting_for_review":
+            findings.append(
+                DiagnosticFinding(
+                    category="waiting_for_review",
+                    severity="info",
+                    message=f"Stage '{stage}' is waiting for human review",
+                    detail={"stage": stage},
+                )
+            )
+        elif stage_view.status == "blocked":
+            findings.append(
+                DiagnosticFinding(
+                    category="stage_blocked",
+                    severity="warn",
+                    message=f"Stage '{stage}' is blocked: requires provider/live-gate setup",
+                    detail={"stage": stage, "blocked_reason": pv.blocked_reason},
+                )
+            )
+        if not findings:
+            overall = "ok"
+        elif stage_view and stage_view.status == "failed":
+            overall = "error"
+        else:
+            overall = "warn"
+        return DiagnosticReport(
+            subject="pipeline",
+            subject_id=pipeline_id,
+            workspace_id=workspace_id,
+            status=overall,
+            findings=findings,
+            generated_at=_now_iso(),
+            contract_version=APPLICATION_CONTRACT_VERSION,
+        )
+
+    # Pipeline-level (no stage filter): report overall pipeline state.
     if pv.status == "failed":
         failed_stages = [s for s in pv.stages if s.status == "failed"]
         for s in failed_stages:

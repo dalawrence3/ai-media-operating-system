@@ -27,6 +27,7 @@ from app.api.routes import (
     analytics,
     auth,
     channels,
+    dev,
     diagnostics,
     learning,
     oauth,
@@ -34,6 +35,7 @@ from app.api.routes import (
     pipelines,
     reviews,
     schedules,
+    topics,
     workspaces,
 )
 from app.core.config import get_config
@@ -165,8 +167,12 @@ app.include_router(reviews.router, prefix=_PREFIX)
 app.include_router(operations.router, prefix=_PREFIX)
 app.include_router(schedules.router, prefix=_PREFIX)
 app.include_router(diagnostics.router, prefix=_PREFIX)
+app.include_router(topics.router, prefix=_PREFIX)
 app.include_router(analytics.router, prefix=_PREFIX)
 app.include_router(learning.router, prefix=_PREFIX)
+
+if cfg.ace_env == "development":
+    app.include_router(dev.router, prefix=_PREFIX)
 
 
 # ---------------------------------------------------------------------------
