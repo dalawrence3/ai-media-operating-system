@@ -307,7 +307,14 @@ class ProductionPlanExecutor:
             from app.production.renderer import build_production_plan
             from app.production.repository import get_or_create_production_plan
 
-            draft = build_production_plan(approved_script)
+            max_seg_dur: int | None = None
+            profile_name = req.effective_config.get("production_profile")
+            if profile_name:
+                from app.profiles.registry import get_profile
+
+                max_seg_dur = get_profile(profile_name).max_segment_duration_s
+
+            draft = build_production_plan(approved_script, max_segment_duration_s=max_seg_dur)
             plan, _ = get_or_create_production_plan(conn, draft)
         except Exception as exc:
             return StageExecutionResult(
@@ -422,61 +429,22 @@ def register_default_executors(registry: StageExecutorRegistry, *, replace: bool
     Called by the composition root at startup.
     Pass replace=True when re-registering (e.g. tests resetting the registry).
     """
-    registry.register(
-        "research",
-        ExternalProviderRequiredExecutor(
-            "research",
-            "Requires live HTTP source ingestion and LLM claim extraction providers. "
-            "Phase 15 cloud infrastructure provides these.",
-        ),
-        replace=replace,
+    from app.application.stage_executors import (
+        CaptionsExecutor,
+        NarrationExecutor,
+        RenderingExecutor,
+        ResearchExecutor,
+        ScriptGenerationExecutor,
+        VisualIntelligenceExecutor,
     )
-    registry.register(
-        "script_generation",
-        ProviderRequiredExecutor(
-            "script_generation",
-            "Requires an AIProvider (e.g. ClaudeProvider) injected via effective_config. "
-            "Phase 14 studio layer supplies the configured provider.",
-        ),
-        replace=replace,
-    )
+
+    registry.register("research", ResearchExecutor(), replace=replace)
+    registry.register("script_generation", ScriptGenerationExecutor(), replace=replace)
     registry.register("production_plan", ProductionPlanExecutor(), replace=replace)
-    registry.register(
-        "narration",
-        ProviderRequiredExecutor(
-            "narration",
-            "Requires a TTSProvider and artifacts_path. "
-            "Phase 14 studio layer supplies these at runtime.",
-        ),
-        replace=replace,
-    )
-    registry.register(
-        "captions",
-        ProviderRequiredExecutor(
-            "captions",
-            "Requires approved narration audio artifacts on disk (artifacts_path). "
-            "Phase 14 studio layer supplies the artifacts root.",
-        ),
-        replace=replace,
-    )
-    registry.register(
-        "visual_intelligence",
-        ProviderRequiredExecutor(
-            "visual_intelligence",
-            "Requires approved narration run and caption run artifacts in the DB. "
-            "Phase 14 studio layer ensures these are present before execution.",
-        ),
-        replace=replace,
-    )
-    registry.register(
-        "rendering",
-        ProviderRequiredExecutor(
-            "rendering",
-            "Requires all upstream approved artifacts plus a render backend (ffmpeg). "
-            "Phase 15 rendering infrastructure provides this.",
-        ),
-        replace=replace,
-    )
+    registry.register("narration", NarrationExecutor(), replace=replace)
+    registry.register("captions", CaptionsExecutor(), replace=replace)
+    registry.register("visual_intelligence", VisualIntelligenceExecutor(), replace=replace)
+    registry.register("rendering", RenderingExecutor(), replace=replace)
     registry.register(
         "publishing",
         ExternalProviderRequiredExecutor(

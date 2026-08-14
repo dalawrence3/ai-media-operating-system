@@ -170,15 +170,28 @@ class FFmpegRenderBackend:
                             f"expected {expected_sha!r}, got {actual_sha!r}. "
                             "Asset may have been modified or corrupted."
                         )
-                cmd = self._image_clip_cmd(
-                    asset_path=asset_path,
-                    output=clip_path,
-                    duration_s=duration_s,
-                    width=draft.width,
-                    height=draft.height,
-                    fps=draft.fps,
-                    video_codec=video_codec,
-                )
+                _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+
+                if asset_path.suffix.lower() in _VIDEO_EXTS:
+                    cmd = self._video_clip_cmd(
+                        asset_path=asset_path,
+                        output=clip_path,
+                        duration_s=duration_s,
+                        width=draft.width,
+                        height=draft.height,
+                        fps=draft.fps,
+                        video_codec=video_codec,
+                    )
+                else:
+                    cmd = self._image_clip_cmd(
+                        asset_path=asset_path,
+                        output=clip_path,
+                        duration_s=duration_s,
+                        width=draft.width,
+                        height=draft.height,
+                        fps=draft.fps,
+                        video_codec=video_codec,
+                    )
             else:
                 cmd = self._placeholder_clip_cmd(
                     output=clip_path,
@@ -324,6 +337,41 @@ class FFmpegRenderBackend:
             str(output),
         ]
 
+    def _video_clip_cmd(
+        self,
+        *,
+        asset_path: Path,
+        output: Path,
+        duration_s: float,
+        width: int,
+        height: int,
+        fps: int,
+        video_codec: str,
+    ) -> list[str]:
+        # Fill frame (scale so short dim >= target), center-crop to exact size.
+        # Works for landscape (16:9) → portrait (9:16) crops.
+        vf = (
+            f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},"
+            f"setsar=1,fps={fps},format=yuv420p"
+        )
+        return [
+            self._ffmpeg,
+            "-y",
+            "-stream_loop",
+            "-1",  # loop if clip shorter than duration (prevents freeze)
+            "-i",
+            str(asset_path),
+            "-t",
+            f"{duration_s:.3f}",
+            "-vf",
+            vf,
+            "-c:v",
+            video_codec,
+            "-an",
+            str(output),
+        ]
+
     def _placeholder_clip_cmd(
         self,
         *,
@@ -335,14 +383,8 @@ class FFmpegRenderBackend:
         video_codec: str,
         label: str,
     ) -> list[str]:
-        # Escape special characters for FFmpeg drawtext
-        safe_label = label.replace("'", "\\'").replace(":", "\\:").replace(",", "\\,")
-        vf = (
-            f"color=color={PLACEHOLDER_BG_COLOR}:size={width}x{height}:rate={fps},"
-            f"drawtext=text='{safe_label}':fontcolor=white:fontsize=36:"
-            f"x=(w-text_w)/2:y=(h-text_h)/2,"
-            f"format=yuv420p"
-        )
+        # Plain solid-colour placeholder — no drawtext (requires libfreetype).
+        vf = f"color=color={PLACEHOLDER_BG_COLOR}:size={width}x{height}:rate={fps},format=yuv420p"
         return [
             self._ffmpeg,
             "-y",

@@ -147,6 +147,7 @@ def test_input_hash_uses_sorted_canonical_json() -> None:
             "script_format": kwargs["script_format"],
             "evidence_hash": kwargs["evidence_hash"],
             "requires_evidence_review": kwargs["requires_evidence_review"],
+            "max_segment_duration_s": kwargs.get("max_segment_duration_s"),
         },
         sort_keys=True,
         separators=(",", ":"),

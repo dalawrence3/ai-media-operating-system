@@ -38,10 +38,12 @@ def compute_production_plan_input_hash(
     script_format: str,
     evidence_hash: str,
     requires_evidence_review: bool,
+    max_segment_duration_s: int | None = None,
 ) -> str:
     """SHA-256 of compact sorted JSON covering all behaviour-affecting inputs.
 
     Changing any version constant or any script attribute produces a new hash.
+    max_segment_duration_s is included so split and unsplit plans have distinct hashes.
     """
     payload = {
         "script_id": script_id,
@@ -53,5 +55,6 @@ def compute_production_plan_input_hash(
         "script_format": script_format,
         "evidence_hash": evidence_hash,
         "requires_evidence_review": requires_evidence_review,
+        "max_segment_duration_s": max_segment_duration_s,
     }
     return hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()

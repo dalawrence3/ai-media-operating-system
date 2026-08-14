@@ -101,6 +101,8 @@ def generate_script(
     allow_no_evidence: bool = False,
     replace_run_id: int | None = None,
     target_duration_s: int = SHORT_FORM_DEFAULT_DURATION_S,
+    min_words: int | None = None,
+    max_words: int | None = None,
     tone: str = DEFAULT_TONE,
     audience: str = DEFAULT_AUDIENCE,
     temperature: float = DEFAULT_TEMPERATURE,
@@ -204,6 +206,8 @@ def generate_script(
     try:
         # Format prompt (using sorted evidence for canonical ordering — invariant 4)
         target_words = round(target_duration_s * 150 / 60)
+        eff_min_words = min_words if min_words is not None else SHORT_FORM_MIN_WORDS
+        eff_max_words = max_words if max_words is not None else SHORT_FORM_MAX_WORDS
         user_text = prompt.format_user(
             topic_title=topic.title,
             topic_angle=topic.angle,
@@ -212,8 +216,8 @@ def generate_script(
             target_words=str(target_words),
             tone=tone,
             audience_desc=audience or "general audience",
-            min_words=str(SHORT_FORM_MIN_WORDS),
-            max_words=str(SHORT_FORM_MAX_WORDS),
+            min_words=str(eff_min_words),
+            max_words=str(eff_max_words),
         )
 
         request = AIRequest(
@@ -222,11 +226,11 @@ def generate_script(
                 target_words=target_words,
                 tone=tone,
                 audience_desc=audience or "general audience",
-                min_words=SHORT_FORM_MIN_WORDS,
-                max_words=SHORT_FORM_MAX_WORDS,
+                min_words=eff_min_words,
+                max_words=eff_max_words,
             ),
             user=user_text,
-            model=provider.name,
+            model=None,
             temperature=temperature,
             max_tokens=max_tokens,
             prompt_name=prompt_name,
