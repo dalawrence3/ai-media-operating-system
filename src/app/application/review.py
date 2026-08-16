@@ -125,8 +125,17 @@ def _approve_pipeline_review(
     if not waiting:
         return {"status": "no_action", "pipeline_id": pipeline_id}
 
-    stage_name = waiting[0].stage
-    pipeline_state.advance_stage(conn, pipeline_id, stage_name)
+    waiting_stage = waiting[0]
+    stage_name = waiting_stage.stage
+    # Preserve the artifact_id/type that the executor stored when the stage
+    # transitioned to waiting_for_review; without this they would be nulled out.
+    pipeline_state.advance_stage(
+        conn,
+        pipeline_id,
+        stage_name,
+        artifact_id=waiting_stage.artifact_id,
+        artifact_type=waiting_stage.artifact_type,
+    )
     pipeline_state.update_pipeline_status(conn, pipeline_id, "running", current_stage=stage_name)
 
     return {

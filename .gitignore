@@ -24,6 +24,9 @@ frontend/playwright-report/
 frontend/test-results/
 frontend/playwright/.cache/
 
+# Top-level pytest / Playwright output dir
+test-results/
+
 # Google OAuth client secrets — NEVER commit these
 client_secret*.json
 client_secrets*.json

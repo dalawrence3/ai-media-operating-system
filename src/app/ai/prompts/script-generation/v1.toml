@@ -25,8 +25,9 @@ Rules you must follow exactly:
 5. The script must include exactly one hook section and at most one cta section.
    Valid section types are: hook, intro, body, transition, conclusion, cta.
 
-6. Target duration: {target_duration_s} seconds (approximately {target_words} words at
-   150 words per minute). This is guidance, not a hard constraint — stay within 15–90 seconds.
+6. Target duration: {target_duration_s} seconds. Write between {min_words} and {max_words} words
+   (approximately {target_words} words at 150 wpm). The word count is a hard constraint —
+   count your words before finalising and trim or expand as needed.
 
 7. Tone: {tone}. Audience: {audience_desc}.
 
