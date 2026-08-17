@@ -278,33 +278,27 @@ class YouTubePublishingProvider:
                 f"YouTube publish step is locked to 'private'. "
                 f"Requested visibility {visibility!r} is not permitted."
             )
-        status_body: dict = {"privacyStatus": "private"}
+
+        # videos.insert already set privacyStatus=private (and publishAt when scheduled_at
+        # is supplied via _build_status).  videos.update requires the 'youtube' or
+        # 'youtube.force-ssl' scope — scopes we intentionally do not hold and do not need
+        # for a private-only upload workflow.  Skip the update entirely.
         if scheduled_at:
-            status_body["publishAt"] = scheduled_at
-            pub_status = "scheduled"
-            pub_at = None
-        else:
-            pub_status = "published"
-            pub_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
-
-        try:
-            response = self._client.update_video(
-                video_id=result.provider_video_id,
-                snippet={},
-                status=status_body,
+            return PublishResult(
+                provider_video_id=result.provider_video_id,
+                provider_url=result.provider_url,
+                status="scheduled",
+                published_at=None,
+                scheduled_at=scheduled_at,
+                provider_response=result.provider_response,
             )
-        except Exception as exc:
-            from app.publishing.errors import ProviderUploadError
-
-            raise ProviderUploadError(f"YouTube publish step failed: {exc}") from exc
-
         return PublishResult(
             provider_video_id=result.provider_video_id,
             provider_url=result.provider_url,
-            status=pub_status,
-            published_at=pub_at,
-            scheduled_at=scheduled_at,
-            provider_response=response,
+            status="published",
+            published_at=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S"),
+            scheduled_at=None,
+            provider_response=result.provider_response,
         )
 
     def health(self) -> ProviderHealthReport:
