@@ -167,7 +167,12 @@ class RealGoogleOAuthClient:
                 token_uri="https://oauth2.googleapis.com/token",
                 client_id=web["client_id"],
                 client_secret=web["client_secret"],
-                scopes=YOUTUBE_SCOPES,
+                # No scopes= here: google-auth sends 'scope' in the refresh
+                # POST body when this is set, explicitly restricting the issued
+                # access token.  Omitting it lets Google return a token for the
+                # full original grant (including youtube.upload when present).
+                # Stored grant scopes are preserved by refresh_account_token via
+                # update_tokens(), which keeps existing.scopes intact.
             )
             credentials.refresh(Request())
         except Exception as exc:
@@ -182,7 +187,9 @@ class RealGoogleOAuthClient:
             refresh_token=credentials.refresh_token,
             token_type="Bearer",
             expires_at_utc=expires_at or (datetime.now(UTC) + timedelta(hours=1)),
-            scopes=list(credentials.scopes or YOUTUBE_SCOPES),
+            # Google does not return scopes in refresh responses; report empty so
+            # callers rely on the stored grant scopes preserved by update_tokens().
+            scopes=list(credentials.scopes or []),
             google_sub=None,
         )
 
