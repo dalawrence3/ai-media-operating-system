@@ -62,6 +62,14 @@ class UnknownPeriodTypeError(AnalyticsError):
         self.period_type = period_type
 
 
+class AnalyticsScopeNotGrantedError(AnalyticsError):
+    """Raised when yt-analytics.readonly is absent from the stored OAuth grant.
+
+    The account must complete the analytics scope upgrade flow before
+    fetch_metrics() can be called against the YouTube Analytics API.
+    """
+
+
 class ProviderAdapterError(AnalyticsError):
     """Raised when an analytics provider adapter fails."""
 

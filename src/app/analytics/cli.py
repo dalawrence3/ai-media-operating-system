@@ -46,16 +46,44 @@ def _default_provider():
 @analytics_app.command("ingest")
 def analytics_ingest(
     publication_id: Annotated[int, typer.Argument(help="Publication ID.")],
-    provider_video_id: Annotated[str, typer.Argument(help="Provider-side video identifier.")],
-    publishing_plan_id: Annotated[int, typer.Option("--plan", help="Publishing plan ID.")],
-    publishing_job_id: Annotated[int, typer.Option("--job", help="Publishing job ID.")],
-    render_manifest_id: Annotated[int, typer.Option("--render", help="Render manifest ID.")],
-    scene_manifest_id: Annotated[int, typer.Option("--scene", help="Scene manifest ID.")],
-    production_plan_id: Annotated[int, typer.Option("--production", help="Production plan ID.")],
-    script_id: Annotated[int, typer.Option("--script", help="Script ID.")],
-    topic_id: Annotated[int, typer.Option("--topic", help="Topic ID.")],
-    narration_run_id: Annotated[int, typer.Option("--narration", help="Narration run ID.")],
-    caption_run_id: Annotated[int, typer.Option("--caption", help="Caption run ID.")],
+    provider_video_id: Annotated[
+        str | None,
+        typer.Argument(
+            help="Provider-side video ID. Derived from the publication when --provider youtube."
+        ),
+    ] = None,
+    publishing_plan_id: Annotated[
+        int | None, typer.Option("--plan", help="Publishing plan ID (auto-derived for youtube).")
+    ] = None,
+    publishing_job_id: Annotated[
+        int | None, typer.Option("--job", help="Publishing job ID (auto-derived for youtube).")
+    ] = None,
+    render_manifest_id: Annotated[
+        int | None,
+        typer.Option("--render", help="Render manifest ID (auto-derived for youtube)."),
+    ] = None,
+    scene_manifest_id: Annotated[
+        int | None,
+        typer.Option("--scene", help="Scene manifest ID (auto-derived for youtube)."),
+    ] = None,
+    production_plan_id: Annotated[
+        int | None,
+        typer.Option("--production", help="Production plan ID (auto-derived for youtube)."),
+    ] = None,
+    script_id: Annotated[
+        int | None, typer.Option("--script", help="Script ID (auto-derived for youtube).")
+    ] = None,
+    topic_id: Annotated[
+        int | None, typer.Option("--topic", help="Topic ID (auto-derived for youtube).")
+    ] = None,
+    narration_run_id: Annotated[
+        int | None,
+        typer.Option("--narration", help="Narration run ID (auto-derived for youtube)."),
+    ] = None,
+    caption_run_id: Annotated[
+        int | None,
+        typer.Option("--caption", help="Caption run ID (auto-derived for youtube)."),
+    ] = None,
     period_start: Annotated[
         str | None, typer.Option("--period-start", help="ISO 8601 period start.")
     ] = None,
@@ -66,28 +94,85 @@ def analytics_ingest(
         str | None, typer.Option("--experiment", help="Experiment ID.")
     ] = None,
     provider_name: Annotated[
-        str, typer.Option("--provider", help="Provider name (default: fake).")
+        str, typer.Option("--provider", help="Provider name: fake (default) or youtube.")
     ] = "fake",
+    account_id: Annotated[
+        str | None,
+        typer.Option("--account-id", help="Platform account ID (required for --provider youtube)."),
+    ] = None,
+    workspace_id: Annotated[
+        str | None,
+        typer.Option("--workspace-id", help="Workspace ID (required for --provider youtube)."),
+    ] = None,
+    channel_id: Annotated[
+        str | None,
+        typer.Option("--channel-id", help="Channel ID (required for --provider youtube)."),
+    ] = None,
 ) -> None:
-    """Fetch metrics from provider and store a normalized analytics snapshot."""
+    """Fetch metrics from provider and store a normalized analytics snapshot.
+
+    For --provider youtube, supply only the publication_id — all upstream lineage
+    IDs are derived automatically from the publication and publishing plan rows.
+    You must also supply --account-id, --workspace-id, and --channel-id so the
+    gate can load and refresh the stored OAuth token.
+
+    For --provider fake, supply all IDs explicitly.
+    """
     conn = _get_db()
-    provider = _default_provider() if provider_name == "fake" else _default_provider()
+
+    if provider_name == "youtube":
+        (
+            provider,
+            (
+                provider_video_id,
+                publishing_plan_id,
+                publishing_job_id,
+                render_manifest_id,
+                scene_manifest_id,
+                production_plan_id,
+                script_id,
+                topic_id,
+                narration_run_id,
+                caption_run_id,
+            ),
+        ) = _build_youtube_provider_and_lineage(
+            conn,
+            publication_id=publication_id,
+            account_id=account_id,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+        )
+    else:
+        provider = _default_provider()
+        # For fake provider, all IDs must be supplied explicitly
+        _require_explicit_lineage(
+            provider_video_id=provider_video_id,
+            publishing_plan_id=publishing_plan_id,
+            publishing_job_id=publishing_job_id,
+            render_manifest_id=render_manifest_id,
+            scene_manifest_id=scene_manifest_id,
+            production_plan_id=production_plan_id,
+            script_id=script_id,
+            topic_id=topic_id,
+            narration_run_id=narration_run_id,
+            caption_run_id=caption_run_id,
+        )
 
     from app.analytics.orchestrator import AnalyticsOrchestrator
 
     orch = AnalyticsOrchestrator(conn, provider)
     snapshot, metrics = orch.ingest(
-        provider_video_id=provider_video_id,
+        provider_video_id=provider_video_id,  # type: ignore[arg-type]
         publication_id=publication_id,
-        publishing_plan_id=publishing_plan_id,
-        publishing_job_id=publishing_job_id,
-        render_manifest_id=render_manifest_id,
-        scene_manifest_id=scene_manifest_id,
-        production_plan_id=production_plan_id,
-        script_id=script_id,
-        topic_id=topic_id,
-        narration_run_id=narration_run_id,
-        caption_run_id=caption_run_id,
+        publishing_plan_id=publishing_plan_id,  # type: ignore[arg-type]
+        publishing_job_id=publishing_job_id,  # type: ignore[arg-type]
+        render_manifest_id=render_manifest_id,  # type: ignore[arg-type]
+        scene_manifest_id=scene_manifest_id,  # type: ignore[arg-type]
+        production_plan_id=production_plan_id,  # type: ignore[arg-type]
+        script_id=script_id,  # type: ignore[arg-type]
+        topic_id=topic_id,  # type: ignore[arg-type]
+        narration_run_id=narration_run_id,  # type: ignore[arg-type]
+        caption_run_id=caption_run_id,  # type: ignore[arg-type]
         experiment_id=experiment_id,
         period_start=period_start,
         period_end=period_end,
@@ -96,6 +181,122 @@ def analytics_ingest(
     typer.echo(f"  provider={snapshot.provider}  metrics={len(metrics)}")
     for m in metrics:
         typer.echo(f"  {m.metric_name:<40} {m.metric_value}")
+
+
+def _build_youtube_provider_and_lineage(
+    conn: object,
+    *,
+    publication_id: int,
+    account_id: str | None,
+    workspace_id: str | None,
+    channel_id: str | None,
+) -> tuple[object, tuple]:
+    """Build authenticated YouTube Analytics provider and derive lineage from publication."""
+    import typer
+
+    if not account_id or not workspace_id or not channel_id:
+        typer.echo(
+            "Error: --account-id, --workspace-id, and --channel-id are required "
+            "for --provider youtube.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    from app.analytics.gate import build_authenticated_analytics_provider
+    from app.publishing.repository import get_publication, get_publishing_plan
+
+    pub = get_publication(conn, publication_id)  # type: ignore[arg-type]
+    if pub is None:
+        typer.echo(f"Error: Publication {publication_id} not found.", err=True)
+        raise typer.Exit(1)
+
+    plan = get_publishing_plan(conn, pub.publishing_plan_id)  # type: ignore[arg-type]
+    if plan is None:
+        typer.echo(
+            f"Error: Publishing plan {pub.publishing_plan_id} not found for "
+            f"publication {publication_id}.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    from app.core.config import get_config
+    from app.oauth.client_google import RealGoogleOAuthClient
+
+    cfg = get_config()
+    try:
+        oauth_client = RealGoogleOAuthClient(
+            client_secrets_path=cfg.youtube_client_secrets_path,
+            redirect_uri=cfg.youtube_redirect_uri,
+        )
+    except Exception as exc:
+        typer.echo(f"Error: OAuth client construction failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    try:
+        provider = build_authenticated_analytics_provider(
+            conn,
+            account_id=account_id,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            oauth_client=oauth_client,
+        )
+    except Exception as exc:
+        typer.echo(f"Error: Analytics provider gate failed: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    lineage = (
+        pub.provider_video_id,
+        pub.publishing_plan_id,
+        pub.publishing_job_id,
+        plan.render_manifest_id,
+        plan.scene_manifest_id,
+        plan.production_plan_id,
+        plan.script_id,
+        plan.topic_id,
+        plan.narration_run_id,
+        plan.caption_run_id,
+    )
+    return provider, lineage
+
+
+def _require_explicit_lineage(
+    *,
+    provider_video_id: str | None,
+    publishing_plan_id: int | None,
+    publishing_job_id: int | None,
+    render_manifest_id: int | None,
+    scene_manifest_id: int | None,
+    production_plan_id: int | None,
+    script_id: int | None,
+    topic_id: int | None,
+    narration_run_id: int | None,
+    caption_run_id: int | None,
+) -> None:
+    """Verify all lineage IDs were supplied explicitly (required for fake provider)."""
+    import typer
+
+    missing = [
+        name
+        for name, val in [
+            ("provider_video_id (positional)", provider_video_id),
+            ("--plan", publishing_plan_id),
+            ("--job", publishing_job_id),
+            ("--render", render_manifest_id),
+            ("--scene", scene_manifest_id),
+            ("--production", production_plan_id),
+            ("--script", script_id),
+            ("--topic", topic_id),
+            ("--narration", narration_run_id),
+            ("--caption", caption_run_id),
+        ]
+        if val is None
+    ]
+    if missing:
+        typer.echo(
+            f"Error: the following required arguments are missing: {', '.join(missing)}",
+            err=True,
+        )
+        raise typer.Exit(1)
 
 
 # ── snapshot ──────────────────────────────────────────────────────────────────

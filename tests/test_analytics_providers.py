@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 from app.analytics.constants import CANONICAL_METRICS, METRIC_VIEWS, METRIC_WATCH_TIME_SECONDS
@@ -78,31 +76,17 @@ class TestYouTubeAnalyticsProvider:
     def test_provider_name(self):
         assert YouTubeAnalyticsProvider().provider_name == "youtube"
 
-    def test_validate_credentials_false_without_env(self):
-        env_key = "YOUTUBE_API_KEY"
-        old = os.environ.pop(env_key, None)
-        try:
-            assert YouTubeAnalyticsProvider().validate_credentials() is False
-        finally:
-            if old is not None:
-                os.environ[env_key] = old
+    def test_validate_credentials_false_without_token(self):
+        # Provider requires OAuth access_token; default empty string → False
+        assert YouTubeAnalyticsProvider().validate_credentials() is False
 
-    def test_validate_credentials_true_with_env(self):
-        os.environ["YOUTUBE_API_KEY"] = "test-key"
-        try:
-            assert YouTubeAnalyticsProvider().validate_credentials() is True
-        finally:
-            del os.environ["YOUTUBE_API_KEY"]
+    def test_validate_credentials_true_with_token(self):
+        assert YouTubeAnalyticsProvider("fake_oauth_token").validate_credentials() is True
 
     def test_fetch_metrics_raises_without_credentials(self):
-        env_key = "YOUTUBE_API_KEY"
-        old = os.environ.pop(env_key, None)
-        try:
-            with pytest.raises(ProviderAdapterError):
-                YouTubeAnalyticsProvider().fetch_metrics("vid123")
-        finally:
-            if old is not None:
-                os.environ[env_key] = old
+        # Empty access_token → ProviderAdapterError (no network call)
+        with pytest.raises(ProviderAdapterError):
+            YouTubeAnalyticsProvider().fetch_metrics("vid123")
 
     def test_normalize_maps_views(self):
         p = YouTubeAnalyticsProvider()
@@ -147,27 +131,18 @@ class TestYouTubeAnalyticsProvider:
         assert "unknownYtField" not in normalized
 
     def test_health_ok_with_credentials(self):
-        os.environ["YOUTUBE_API_KEY"] = "key"
-        try:
-            report = YouTubeAnalyticsProvider().health()
-            assert report.ok is True
-        finally:
-            del os.environ["YOUTUBE_API_KEY"]
+        report = YouTubeAnalyticsProvider("fake_oauth_token").health()
+        assert report.ok is True
 
     def test_health_fail_without_credentials(self):
-        env_key = "YOUTUBE_API_KEY"
-        old = os.environ.pop(env_key, None)
-        try:
-            report = YouTubeAnalyticsProvider().health()
-            assert report.ok is False
-        finally:
-            if old is not None:
-                os.environ[env_key] = old
+        report = YouTubeAnalyticsProvider().health()
+        assert report.ok is False
 
     def test_capabilities(self):
         caps = YouTubeAnalyticsProvider().capabilities()
         assert caps.name == "youtube"
-        assert caps.supports_revenue is True
+        # supports_revenue is False by default (requires monetary scope upgrade)
+        assert caps.supports_revenue is False
 
     def test_initialize_and_shutdown_noop(self):
         p = YouTubeAnalyticsProvider()
