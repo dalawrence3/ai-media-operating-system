@@ -13,6 +13,7 @@ No eval, exec, shell injection, or arbitrary dynamic imports.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import tempfile
 from pathlib import Path
@@ -944,7 +945,8 @@ class RenderingExecutor:
 
                 resolved_local: str | None = None
                 resolved_category = "generated_card"
-                resolved_license = "internal"
+                resolved_license = "not_required"
+                resolved_commercial_safe = True
                 resolved_source: str | None = None
 
                 # --- 1. Pexels video (motion; preferred for Shorts) ---
@@ -956,7 +958,8 @@ class RenderingExecutor:
                         vid_path, _ = result
                         resolved_local = str(vid_path)
                         resolved_category = "pexels_video"
-                        resolved_license = "pexels_license"
+                        resolved_license = "verified"
+                        resolved_commercial_safe = True
                         resolved_source = str(vid_path.with_suffix(".attr.json"))
                         _vis_log.info("Scene %d: Pexels VIDEO %r", i, search_q)
 
@@ -972,7 +975,8 @@ class RenderingExecutor:
                             prep_image_for_vertical(photo_path, prepped, render_w, render_h)
                         resolved_local = str(prepped)
                         resolved_category = "pexels_photo"
-                        resolved_license = "pexels_license"
+                        resolved_license = "verified"
+                        resolved_commercial_safe = True
                         resolved_source = str(photo_path)
                         _vis_log.info("Scene %d: Pexels PHOTO %r", i, search_q)
 
@@ -985,7 +989,8 @@ class RenderingExecutor:
                             prep_image_for_vertical(wm_path, prepped, render_w, render_h)
                         resolved_local = str(prepped)
                         resolved_category = "wikimedia_photo"
-                        resolved_license = "cc_licensed"
+                        resolved_license = "verified"
+                        resolved_commercial_safe = False
                         resolved_source = str(wm_path)
                         _vis_log.info("Scene %d: Wikimedia PHOTO %r", i, search_q)
 
@@ -1017,7 +1022,7 @@ class RenderingExecutor:
                         local_sha256=None,
                         source_url=resolved_source,
                         license_status=resolved_license,
-                        commercial_safe=False,
+                        commercial_safe=resolved_commercial_safe,
                     )
                 ]
                 _vis_log.info("Scene %d: resolved as %s", i, resolved_category)
@@ -1077,6 +1082,8 @@ class RenderingExecutor:
             # ── Caption burn-in ────────────────────────────────────────────
             # Load caption JSON, compute absolute timestamps from segment
             # durations, then composite captions over the rendered MP4.
+            final_sha256 = result.output_sha256
+            final_file_size = result.file_size_bytes
             try:
                 from app.captions.repository import get_caption_run
                 from app.media.caption_renderer import burn_captions_into
@@ -1110,6 +1117,9 @@ class RenderingExecutor:
                     )
                     # Replace original with captioned version
                     captioned_path.replace(output_path)
+                    # Recompute integrity metadata for the captioned file
+                    final_sha256 = hashlib.sha256(output_path.read_bytes()).hexdigest()
+                    final_file_size = output_path.stat().st_size
             except Exception as cap_exc:
                 # Caption burn-in failure is non-fatal; the uncaptioned render exists
                 import logging as _logging
@@ -1122,9 +1132,9 @@ class RenderingExecutor:
                 conn,
                 job.id,
                 output_path=result.output_path,
-                output_sha256=result.output_sha256,
+                output_sha256=final_sha256,
                 duration_s=result.duration_s,
-                file_size_bytes=result.file_size_bytes,
+                file_size_bytes=final_file_size,
                 render_time_s=result.render_time_s,
                 ffmpeg_cmd=result.ffmpeg_cmd,
             )
