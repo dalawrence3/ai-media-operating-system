@@ -11,13 +11,27 @@ accepted.  Construct this provider via build_authenticated_analytics_provider()
 in app.analytics.gate, which validates the stored OAuth grant contains
 yt-analytics.readonly before building the provider.
 
-Non-monetary scope (yt-analytics.readonly)
-  views, estimatedMinutesWatched, averageViewDuration, impressions,
-  impressionClickThroughRate, likes, comments, shares,
-  subscribersGained, subscribersLost
+Non-monetary scope (yt-analytics.readonly) — basic user activity video query
+  views, estimatedMinutesWatched, averageViewDuration, averageViewPercentage,
+  likes, comments, shares, subscribersGained, subscribersLost
 
 Monetary scope (yt-analytics-monetary.readonly — not yet requested)
   estimatedRevenue
+
+Metrics NOT available from the Analytics API targeted query
+-----------------------------------------------------------
+  impressions / impressionClickThroughRate (thumbnail reach + CTR):
+    These are NOT valid metric names in the YouTube Analytics API.
+    Thumbnail impressions and CTR are ONLY available via the YouTube Reporting
+    API (youtubeanalytics.googleapis.com bulk/scheduled path) as
+    video_thumbnail_impressions and video_thumbnail_impressions_ctr.
+    The canonical metric slots METRIC_IMPRESSIONS and METRIC_CTR are reserved
+    in constants.py for a future Reporting API integration.
+
+  audienceWatchRatio / relativeRetentionPerformance (retention curves):
+    Available from the Analytics API but require a separate query with the
+    elapsedVideoTimeRatio dimension (one row per time-ratio bucket) — they
+    cannot be added to a scalar basic-user-activity request.
 
 Note: YouTube deprecated public access to the "dislikes" metric in December 2021.
 It is excluded from the API request to avoid validation errors, but kept in the
@@ -28,10 +42,10 @@ from __future__ import annotations
 
 from app.analytics.constants import (
     METRIC_AVERAGE_VIEW_DURATION,
+    METRIC_AVERAGE_VIEW_PERCENTAGE,
     METRIC_COMMENTS,
-    METRIC_CTR,
     METRIC_DISLIKES,
-    METRIC_IMPRESSIONS,
+    METRIC_ENGAGED_VIEWS,
     METRIC_LIKES,
     METRIC_REVENUE_ESTIMATE,
     METRIC_SHARES,
@@ -59,11 +73,17 @@ _SECONDS_PER_MINUTE = 60.0
 # as a REAL column.  Currency codes are preserved in raw_metrics_json only.
 # dislikes is intentionally absent: deprecated by YouTube Dec 2021 (API error
 # if requested).  Kept in map so legacy raw dicts still normalize correctly.
+#
+# impressions / impressionClickThroughRate are intentionally absent: these names
+# do not exist in the YouTube Analytics API.  Thumbnail reach data lives in the
+# YouTube Reporting API (bulk) as video_thumbnail_impressions /
+# video_thumbnail_impressions_ctr.  The canonical METRIC_IMPRESSIONS and
+# METRIC_CTR slots in constants.py are reserved for that future integration.
 _YT_FIELD_MAP: dict[str, str] = {
     "views": METRIC_VIEWS,
+    "engagedViews": METRIC_ENGAGED_VIEWS,
     "averageViewDuration": METRIC_AVERAGE_VIEW_DURATION,
-    "impressions": METRIC_IMPRESSIONS,
-    "impressionClickThroughRate": METRIC_CTR,
+    "averageViewPercentage": METRIC_AVERAGE_VIEW_PERCENTAGE,
     "likes": METRIC_LIKES,
     "dislikes": METRIC_DISLIKES,
     "comments": METRIC_COMMENTS,
@@ -73,14 +93,19 @@ _YT_FIELD_MAP: dict[str, str] = {
     "estimatedRevenue": METRIC_REVENUE_ESTIMATE,
 }
 
-# Metrics requested from the API when only non-monetary scope is held.
-# dislikes excluded: YouTube deprecated it Dec 2021; requesting it causes a 400.
+# Metrics requested from the Analytics API basic user activity video query
+# (ids=channel==MINE, filters=video==<id>).
+#
+# Excluded:
+#   dislikes              — deprecated Dec 2021; API returns 400 if requested
+#   impressions           — not a valid Analytics API metric name; use Reporting API
+#   impressionClickThroughRate — same; use Reporting API video_thumbnail_impressions_ctr
 _NON_MONETARY_REQUEST_METRICS: list[str] = [
+    "engagedViews",
     "views",
     "estimatedMinutesWatched",
     "averageViewDuration",
-    "impressions",
-    "impressionClickThroughRate",
+    "averageViewPercentage",
     "likes",
     "comments",
     "shares",
@@ -240,7 +265,10 @@ class YouTubeAnalyticsProvider:
             version=self.provider_version,
             supports_period_queries=True,
             supports_revenue=self._monetary_scope_granted,
-            supports_impression_data=True,
+            # Thumbnail impressions and CTR are NOT available from the Analytics API
+            # targeted query. They require a separate YouTube Reporting API integration
+            # (bulk, scheduled). Set False until that integration exists.
+            supports_impression_data=False,
         )
 
     def shutdown(self) -> None:

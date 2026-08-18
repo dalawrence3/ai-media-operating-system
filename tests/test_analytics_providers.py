@@ -109,8 +109,7 @@ class TestYouTubeAnalyticsProvider:
                 "views": 100,
                 "estimatedMinutesWatched": 5,
                 "averageViewDuration": 90,
-                "impressions": 500,
-                "impressionClickThroughRate": 0.04,
+                "averageViewPercentage": 62.5,
                 "likes": 20,
                 "comments": 3,
                 "shares": 1,
@@ -141,8 +140,9 @@ class TestYouTubeAnalyticsProvider:
     def test_capabilities(self):
         caps = YouTubeAnalyticsProvider().capabilities()
         assert caps.name == "youtube"
-        # supports_revenue is False by default (requires monetary scope upgrade)
         assert caps.supports_revenue is False
+        # Thumbnail impressions/CTR require the YouTube Reporting API (bulk); not Analytics API
+        assert caps.supports_impression_data is False
 
     def test_initialize_and_shutdown_noop(self):
         p = YouTubeAnalyticsProvider()
