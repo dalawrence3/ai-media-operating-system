@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -2328,6 +2328,49 @@ _DDL_V21_TOPIC_WORKSPACE_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_topics_workspace_id ON topics (workspace_id);
 """
 
+# Phase A-retention DDL — audience retention curve storage with scene attribution.
+# analytics_retention_points is a dedicated time-series table, not a row in
+# analytics_metrics, because each retention ingest produces O(100) dimensioned
+# points (one per elapsedVideoTimeRatio bucket) rather than a single scalar.
+_DDL_V22_ANALYTICS_RETENTION = """
+CREATE TABLE IF NOT EXISTS analytics_retention_points (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Link to the scalar snapshot that anchors this retention fetch
+    snapshot_id         INTEGER NOT NULL REFERENCES analytics_snapshots(id),
+    publication_id      INTEGER NOT NULL,
+    scene_manifest_id   INTEGER NOT NULL,
+
+    -- Retention curve dimension (YouTube: elapsedVideoTimeRatio, 0.0–1.0)
+    elapsed_ratio       REAL NOT NULL,
+    elapsed_ms          INTEGER,    -- elapsed_ratio × video_duration_ms; NULL if duration unknown
+    elapsed_seconds     REAL,       -- elapsed_ms / 1000.0
+
+    -- Retention metrics
+    audience_watch_ratio    REAL NOT NULL,
+    relative_retention      REAL,   -- NULL when not returned by API
+
+    -- Scene attribution (derived from scene_manifest_scenes + production_segments)
+    scene_index         INTEGER,    -- NULL if no scene covers this elapsed_ms
+    section_type        TEXT,       -- hook/body/conclusion/cta; NULL when scene_index IS NULL
+
+    -- Coverage window (mirrors the parent snapshot)
+    period_start        TEXT,
+    period_end          TEXT,
+
+    created_at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_arp_snapshot
+    ON analytics_retention_points (snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_arp_publication
+    ON analytics_retention_points (publication_id, elapsed_ratio);
+"""
+
+
+def _apply_v22_analytics_retention(conn: sqlite3.Connection) -> None:
+    """Create analytics_retention_points if it doesn't exist yet."""
+    conn.executescript(_DDL_V22_ANALYTICS_RETENTION)
+
 
 def _apply_v21_topic_workspace(conn: sqlite3.Connection) -> None:
     """Add workspace_id column to topics if the table exists and lacks the column."""
@@ -2385,6 +2428,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -2410,6 +2454,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2434,6 +2479,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2457,6 +2503,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2479,6 +2526,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2500,6 +2548,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2520,6 +2569,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2539,6 +2589,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2557,6 +2608,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2574,6 +2626,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2590,6 +2643,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2605,6 +2659,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2619,6 +2674,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2632,6 +2688,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2644,6 +2701,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2655,6 +2713,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2665,6 +2724,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2674,6 +2734,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2682,18 +2743,27 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.executescript(_DDL_V19_APPLICATION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
     elif current == 19:
         logger.info("Migrating schema from version 19 to %d", SCHEMA_VERSION)
         conn.executescript(_DDL_V20_AUTH_STORAGE)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 20:
         logger.info("Migrating schema from version 20 to %d", SCHEMA_VERSION)
         _apply_v21_topic_workspace(conn)
+        _apply_v22_analytics_retention(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 21:
+        logger.info("Migrating schema from version 21 to %d", SCHEMA_VERSION)
+        _apply_v22_analytics_retention(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

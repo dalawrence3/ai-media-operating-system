@@ -490,6 +490,167 @@ def analytics_events(
         )
 
 
+# ── retention-ingest ──────────────────────────────────────────────────────────
+
+
+@analytics_app.command("retention-ingest")
+def analytics_retention_ingest(
+    publication_id: Annotated[int, typer.Argument(help="Publication ID.")],
+    snapshot_id: Annotated[
+        int | None, typer.Option("--snapshot-id", help="Snapshot to link to (default: latest).")
+    ] = None,
+    period_start: Annotated[
+        str | None, typer.Option("--period-start", help="ISO 8601 period start.")
+    ] = None,
+    period_end: Annotated[
+        str | None, typer.Option("--period-end", help="ISO 8601 period end.")
+    ] = None,
+    account_id: Annotated[
+        str | None, typer.Option("--account-id", help="Platform account ID.")
+    ] = None,
+    workspace_id: Annotated[
+        str | None, typer.Option("--workspace-id", help="Workspace ID.")
+    ] = None,
+    channel_id: Annotated[str | None, typer.Option("--channel-id", help="Channel ID.")] = None,
+) -> None:
+    """Fetch audience retention curve from YouTube Analytics and persist with scene attribution.
+
+    The retention query uses dimensions=elapsedVideoTimeRatio, which is separate
+    from the scalar ingest.  Link to an existing scalar snapshot via --snapshot-id,
+    or omit to use the most recent snapshot for this publication.
+    """
+    from datetime import date
+
+    from app.analytics.errors import ProviderAdapterError, SnapshotNotFoundError
+    from app.analytics.repository import get_snapshot, list_snapshots
+    from app.analytics.retention import (
+        RetentionCurve,
+        attribute_retention_curve,
+        load_scene_catalog,
+        parse_retention_rows,
+        persist_retention_curve,
+    )
+
+    conn = _get_db()
+
+    # Resolve snapshot
+    if snapshot_id is not None:
+        try:
+            snap = get_snapshot(conn, snapshot_id)
+        except SnapshotNotFoundError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(1) from exc
+        if snap.publication_id != publication_id:
+            typer.echo(
+                f"Error: snapshot {snapshot_id} belongs to publication "
+                f"{snap.publication_id}, not {publication_id}.",
+                err=True,
+            )
+            raise typer.Exit(1)
+    else:
+        snaps = list_snapshots(conn, publication_id=publication_id, limit=1)
+        if not snaps:
+            typer.echo(
+                f"Error: no snapshots found for publication {publication_id}. "
+                "Run `ace analytics ingest` first.",
+                err=True,
+            )
+            raise typer.Exit(1)
+        snap = snaps[0]
+        typer.echo(f"Using latest snapshot #{snap.id}")
+
+    # Build provider
+    (
+        provider,
+        _lineage,
+        _pub_date,
+    ) = _build_youtube_provider_and_lineage(
+        conn,
+        publication_id=publication_id,
+        account_id=account_id,
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+    )
+
+    # Resolve period window
+    _start = period_start or snap.period_start
+    _end = period_end or snap.period_end or date.today().isoformat()
+    if _start is None:
+        typer.echo("Error: cannot determine period_start. Supply --period-start.", err=True)
+        raise typer.Exit(1)
+
+    # Fetch
+    typer.echo(
+        f"Fetching retention curve for video {snap.scene_manifest_id}  period={_start}→{_end}"
+    )
+    try:
+        raw_rows = provider.fetch_retention(  # type: ignore[attr-defined]
+            _lineage[0],  # provider_video_id
+            period_start=_start,
+            period_end=_end,
+        )
+    except ProviderAdapterError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    # Parse, attribute, persist
+    points = parse_retention_rows(raw_rows)
+    scenes, duration_ms = load_scene_catalog(conn, snap.scene_manifest_id)
+    curve = RetentionCurve(
+        provider_video_id=_lineage[0],
+        scene_manifest_id=snap.scene_manifest_id,
+        video_duration_ms=duration_ms,
+        period_start=_start,
+        period_end=_end,
+        points=points,
+    )
+    attribute_retention_curve(curve, scenes)
+    n = persist_retention_curve(conn, curve, snapshot_id=snap.id, publication_id=publication_id)
+    typer.echo(f"Stored {n} retention points linked to snapshot #{snap.id}")
+
+
+# ── retention-show ────────────────────────────────────────────────────────────
+
+
+@analytics_app.command("retention-show")
+def analytics_retention_show(
+    publication_id: Annotated[int, typer.Argument(help="Publication ID.")],
+    snapshot_id: Annotated[
+        int | None, typer.Option("--snapshot-id", help="Snapshot ID (default: latest).")
+    ] = None,
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Max points to display.")] = 50,
+) -> None:
+    """Show attributed audience retention curve for a publication.
+
+    Each line: elapsed=Xs  scene N  section_type  awr=0.xxxx  [rel=0.xxxx]
+    """
+    from app.analytics.repository import list_snapshots
+    from app.analytics.retention import list_retention_for_publication
+
+    conn = _get_db()
+
+    if snapshot_id is None:
+        snaps = list_snapshots(conn, publication_id=publication_id, limit=1)
+        if not snaps:
+            typer.echo("No snapshots found for this publication.", err=True)
+            raise typer.Exit(1)
+        snapshot_id = snaps[0].id
+
+    points = list_retention_for_publication(conn, publication_id, snapshot_id=snapshot_id)
+    if not points:
+        typer.echo("No retention data found. Run `ace analytics retention-ingest` first.")
+        return
+
+    typer.echo(
+        f"Retention curve — publication #{publication_id}  snapshot #{snapshot_id}"
+        f"  ({len(points)} points)"
+    )
+    for p in points[:limit]:
+        typer.echo("  " + p.format_line())
+    if len(points) > limit:
+        typer.echo(f"  … {len(points) - limit} more points (use --limit to show more)")
+
+
 # ── doctor ────────────────────────────────────────────────────────────────────
 
 

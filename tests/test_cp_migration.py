@@ -18,7 +18,7 @@ def _in_memory_db():
 
 class TestSchemaVersion:
     def test_schema_version_is_18(self):
-        assert SCHEMA_VERSION == 21
+        assert SCHEMA_VERSION == 22
 
 
 class TestV18DDLStandalone:
@@ -110,7 +110,7 @@ class TestV17ToV18Migration:
         db_path = tmp_path / "fresh.db"
         conn = open_db(db_path)
         version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-        assert version == 21
+        assert version == SCHEMA_VERSION
 
     def test_prior_v17_tables_still_present(self, tmp_path):
         db_path = tmp_path / "v17_migrate.db"
