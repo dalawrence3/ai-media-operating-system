@@ -532,7 +532,7 @@ def test_schema_v23_upgrade_from_v22(tmp_path):
     conn = open_db(db_file)
     try:
         version = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()[0]
-        assert version == 23
+        assert version == 24
         cols = {row[1] for row in conn.execute("PRAGMA table_info(publications)").fetchall()}
         assert "workspace_id" in cols
         assert "channel_id" in cols

@@ -179,10 +179,13 @@ def get_publication_analytics(
         ).fetchall():
             metrics[mr["metric_name"]] = mr["metric_value"]
 
-    retention_count: int = conn.execute(
-        "SELECT COUNT(*) FROM analytics_retention_points WHERE publication_id = ?",
-        (publication_id,),
-    ).fetchone()[0]
+    if snapshot_id is not None:
+        retention_count: int = conn.execute(
+            "SELECT COUNT(*) FROM analytics_retention_points WHERE snapshot_id = ?",
+            (snapshot_id,),
+        ).fetchone()[0]
+    else:
+        retention_count = 0
 
     return {
         "snapshot_id": snapshot_id,

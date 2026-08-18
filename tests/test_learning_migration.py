@@ -13,7 +13,7 @@ from app.core.database import SCHEMA_VERSION, open_db
 
 class TestSchemaVersion:
     def test_schema_version_is_17(self):
-        assert SCHEMA_VERSION == 23
+        assert SCHEMA_VERSION == 24
 
     def test_fresh_db_is_at_version_17(self):
         with tempfile.TemporaryDirectory() as d:

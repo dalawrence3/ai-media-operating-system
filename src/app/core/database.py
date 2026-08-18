@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -2407,6 +2407,27 @@ def _apply_v23_publication_ownership(conn: sqlite3.Connection) -> None:
     conn.executescript(_DDL_V23_PUBLICATION_OWNERSHIP_INDEX)
 
 
+def _apply_v24_analytics_observation(conn: sqlite3.Connection) -> None:
+    """Add observed_at, response_fingerprint, observation_state to analytics_snapshots."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='analytics_snapshots'"
+    ).fetchone()
+    if not table_exists:
+        return
+    existing_cols = {
+        row[1] for row in conn.execute("PRAGMA table_info(analytics_snapshots)").fetchall()
+    }
+    if "observed_at" not in existing_cols:
+        conn.execute("ALTER TABLE analytics_snapshots ADD COLUMN observed_at TEXT")
+    if "response_fingerprint" not in existing_cols:
+        conn.execute("ALTER TABLE analytics_snapshots ADD COLUMN response_fingerprint TEXT")
+    if "observation_state" not in existing_cols:
+        conn.execute(
+            "ALTER TABLE analytics_snapshots ADD COLUMN observation_state TEXT"
+            " CHECK (observation_state IS NULL OR observation_state IN ('data', 'no_data'))"
+        )
+
+
 def _apply_v21_topic_workspace(conn: sqlite3.Connection) -> None:
     """Add workspace_id column to topics if the table exists and lacks the column."""
     table_exists = conn.execute(
@@ -2465,6 +2486,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -2492,6 +2514,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2518,6 +2541,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2543,6 +2567,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2567,6 +2592,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2590,6 +2616,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2612,6 +2639,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2633,6 +2661,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2653,6 +2682,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2672,6 +2702,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2690,6 +2721,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2707,6 +2739,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2723,6 +2756,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2738,6 +2772,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2752,6 +2787,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2765,6 +2801,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2777,6 +2814,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2788,6 +2826,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2798,6 +2837,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
     elif current == 19:
@@ -2806,6 +2846,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2814,6 +2855,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v21_topic_workspace(conn)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2821,12 +2863,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 21 to %d", SCHEMA_VERSION)
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 22:
         logger.info("Migrating schema from version 22 to %d", SCHEMA_VERSION)
         _apply_v23_publication_ownership(conn)
+        _apply_v24_analytics_observation(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 23:
+        logger.info("Migrating schema from version 23 to %d", SCHEMA_VERSION)
+        _apply_v24_analytics_observation(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

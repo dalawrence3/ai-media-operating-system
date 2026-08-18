@@ -121,7 +121,9 @@ def _build_handoff_from_db(
     aggregates: list[AnalyticsAggregate] = [
         AnalyticsAggregate.from_row(r)
         for r in conn.execute(
-            "SELECT * FROM analytics_aggregates WHERE publication_id = ? ORDER BY created_at ASC",
+            "SELECT * FROM analytics_aggregates WHERE publication_id = ?"
+            " AND input_hash NOT LIKE 'seed-%'"
+            " ORDER BY created_at ASC",
             (publication_id,),
         ).fetchall()
     ]

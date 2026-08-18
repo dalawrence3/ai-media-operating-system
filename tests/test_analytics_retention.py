@@ -523,9 +523,9 @@ def test_schema_version_is_22(tmp_db):
     """Schema must be at version 22 after migration."""
     from app.core.database import SCHEMA_VERSION
 
-    assert SCHEMA_VERSION == 23
+    assert SCHEMA_VERSION == 24
     version = tmp_db.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert version == 23
+    assert version == 24
 
 
 # ---------------------------------------------------------------------------

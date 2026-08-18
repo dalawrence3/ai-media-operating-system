@@ -22,6 +22,7 @@ def _base_input(**overrides) -> AnalyticsHashInput:
         experiment_id=None,
         period_start=None,
         period_end=None,
+        response_fingerprint="a" * 64,
     )
     defaults.update(overrides)
     return AnalyticsHashInput(**defaults)
@@ -76,3 +77,14 @@ class TestAnalyticsInputHash:
         inp = _base_input(publication_id=5, experiment_id="abc")
         results = {compute_analytics_input_hash(inp) for _ in range(10)}
         assert len(results) == 1
+
+    def test_different_response_fingerprint_different_hash(self):
+        h1 = compute_analytics_input_hash(_base_input(response_fingerprint="a" * 64))
+        h2 = compute_analytics_input_hash(_base_input(response_fingerprint="b" * 64))
+        assert h1 != h2
+
+    def test_response_fingerprint_required(self):
+        import dataclasses
+
+        fields = {f.name for f in dataclasses.fields(AnalyticsHashInput)}
+        assert "response_fingerprint" in fields
