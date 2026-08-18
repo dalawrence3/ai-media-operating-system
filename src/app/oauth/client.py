@@ -35,6 +35,19 @@ YOUTUBE_UPLOAD_SCOPES = [
     YOUTUBE_UPLOAD_SCOPE,
 ]
 
+# Scope needed for YouTube Analytics Reporting API (non-monetary metrics).
+# Revenue metrics require yt-analytics-monetary.readonly (not yet requested).
+YOUTUBE_ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly"
+
+# Full scope set for analytics upgrade.  Bundles upload scope so the token file
+# preserves the existing upload grant rather than overwriting it with a narrower set.
+YOUTUBE_ANALYTICS_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    YOUTUBE_UPLOAD_SCOPE,
+    YOUTUBE_ANALYTICS_SCOPE,
+]
+
 
 @dataclass(frozen=True)
 class TokenPayload:
