@@ -33,6 +33,9 @@ import type {
   OperationView,
   OptimizationRecommendation,
   PipelineView,
+  PublicationAnalytics,
+  PublicationDetail,
+  PublicationListItem,
   RecommendationReviewEvent,
   ReviewItemView,
   ScheduleView,
@@ -576,6 +579,41 @@ class ApiClient {
       undefined,
       { limit },
     )
+  }
+
+  // ── Publications ─────────────────────────────────────────────────────────
+
+  listPublications(workspaceId: string) {
+    return this.request<PublicationListItem[]>('GET', `/workspaces/${workspaceId}/publications`)
+  }
+
+  getPublication(workspaceId: string, publicationId: number) {
+    return this.request<PublicationDetail>('GET', `/workspaces/${workspaceId}/publications/${publicationId}`)
+  }
+
+  getPublicationAnalytics(workspaceId: string, publicationId: number) {
+    return this.request<PublicationAnalytics>('GET', `/workspaces/${workspaceId}/publications/${publicationId}/analytics`)
+  }
+
+  async streamPublication(workspaceId: string, publicationId: number): Promise<Blob> {
+    const token = this._auth?.getToken() ?? null
+    const path = `/workspaces/${workspaceId}/publications/${publicationId}/stream`
+    const url = new URL(BASE_URL + path, window.location.origin)
+    const res = await fetch(url.toString(), {
+      method: 'GET',
+      headers: this._buildHeaders(token),
+      signal: AbortSignal.timeout(120_000),
+    })
+    if (res.status === 403) throw new ForbiddenError()
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`
+      try {
+        const err = await res.json()
+        detail = err.detail ?? detail
+      } catch { /* ignore */ }
+      throw new ApiError(res.status, detail)
+    }
+    return res.blob()
   }
 
   // ── Learning ─────────────────────────────────────────────────────────────

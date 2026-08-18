@@ -33,6 +33,7 @@ from app.api.routes import (
     oauth,
     operations,
     pipelines,
+    publications,
     reviews,
     schedules,
     topics,
@@ -169,6 +170,7 @@ app.include_router(schedules.router, prefix=_PREFIX)
 app.include_router(diagnostics.router, prefix=_PREFIX)
 app.include_router(topics.router, prefix=_PREFIX)
 app.include_router(analytics.router, prefix=_PREFIX)
+app.include_router(publications.router, prefix=_PREFIX)
 app.include_router(learning.router, prefix=_PREFIX)
 
 if cfg.ace_env == "development":

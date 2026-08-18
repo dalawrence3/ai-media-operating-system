@@ -5,6 +5,9 @@ import type {
   CPWorkspace,
   CPChannel,
   CPAccount,
+  PublicationAnalytics,
+  PublicationDetail,
+  PublicationListItem,
   WorkspaceView,
   HealthView,
   OptimizationRecommendation,
@@ -413,6 +416,51 @@ export const stageArtifactUnresolved: StageArtifact = {
   error_message: null,
   resolved: false,
   reason: 'no_artifact',
+}
+
+export const PUB_ID = 1
+
+export const publicationListItem: PublicationListItem = {
+  id: PUB_ID,
+  title: 'Why Renewable Energy Is Getting So Cheap',
+  provider: 'youtube',
+  provider_video_id: 'kQH88nXdiRY',
+  provider_url: 'https://www.youtube.com/watch?v=kQH88nXdiRY',
+  visibility: 'private',
+  status: 'published',
+  published_at: '2026-08-17T21:21:38',
+  render_manifest_id: 4,
+  created_at: '2026-08-17T21:21:38',
+}
+
+export const publicationDetail: PublicationDetail = {
+  id: PUB_ID,
+  title: 'Why Renewable Energy Is Getting So Cheap',
+  description: 'An in-depth look at the economics of renewable energy.',
+  tags: ['energy', 'tech', 'sustainability'],
+  provider: 'youtube',
+  provider_video_id: 'kQH88nXdiRY',
+  provider_url: 'https://www.youtube.com/watch?v=kQH88nXdiRY',
+  visibility: 'private',
+  status: 'published',
+  published_at: '2026-08-17T21:21:38',
+  render_manifest_id: 4,
+  render_duration_ms: 58607,
+  render_width: 1080,
+  render_height: 1920,
+  render_fps: 30,
+  render_status: 'approved',
+  render_approved_at: '2026-08-17T17:41:14',
+  created_at: '2026-08-17T21:21:38',
+}
+
+export const publicationAnalytics: PublicationAnalytics = {
+  snapshot_id: 1,
+  snapshot_ingested_at: '2026-08-18T01:19:39',
+  period_start: '2026-08-10',
+  period_end: '2026-08-17',
+  metrics: { views: 1234, ctr: 0.047 },
+  retention_point_count: 0,
 }
 
 export const stageDiagnosticReport: DiagnosticReport = {

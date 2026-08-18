@@ -79,6 +79,10 @@ class ActiveJobExistsError(PublishingError):
     """Cannot start a new job; plan already has an active job."""
 
 
+class PublicationOwnershipError(PublishingError):
+    """workspace/channel/account ownership is inconsistent or invalid."""
+
+
 class SecretLeakError(PublishingError):
     """Attempted to persist a credential or secret in an unsafe location."""
 

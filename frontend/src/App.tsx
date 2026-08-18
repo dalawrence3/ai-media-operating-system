@@ -23,6 +23,7 @@ import { Health } from '@/pages/Health'
 import { Audit } from '@/pages/Audit'
 import { Settings } from '@/pages/Settings'
 import { Publishing } from '@/pages/Publishing'
+import { PublicationDetail } from '@/pages/PublicationDetail'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -79,6 +80,7 @@ function WorkspaceRoutes() {
         <Route path="experiments" element={<Experiments />} />
         <Route path="workflows"   element={<Workflows />} />
         <Route path="publishing"  element={<Publishing />} />
+        <Route path="publishing/:publicationId" element={<PublicationDetail />} />
         <Route path="health"      element={<Health />} />
         <Route path="audit"       element={<Audit />} />
         <Route path="settings"    element={<Settings />} />

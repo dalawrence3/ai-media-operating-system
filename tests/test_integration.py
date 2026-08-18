@@ -213,7 +213,7 @@ def test_class_b_stage_blocked_in_ci(db, ws_id, channel_id):
 def test_schema_version_is_20(db):
     from app.core.database import SCHEMA_VERSION
 
-    assert SCHEMA_VERSION == 22
+    assert SCHEMA_VERSION == 23
 
 
 def test_auth_tables_present(db):
