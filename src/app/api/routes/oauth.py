@@ -48,6 +48,7 @@ from app.oauth.flow import (
     has_upload_scope,
     start_youtube_analytics_oauth,
     start_youtube_oauth,
+    start_youtube_release_oauth,
     start_youtube_upload_oauth,
     verify_youtube_connection,
 )
@@ -420,6 +421,52 @@ def upgrade_youtube_analytics_scope_route(
     except Exception as exc:
         raise HTTPException(
             status_code=500, detail=f"Analytics scope upgrade start failed: {exc}"
+        ) from exc
+
+    return {"authorization_url": result.authorization_url}
+
+
+@router.post(f"{_ACCT_PREFIX}/oauth/youtube/upgrade-release")
+def upgrade_youtube_release_scope_route(
+    workspace_id: str,
+    channel_id: str,
+    account_id: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Any = Depends(get_db),
+    oauth_client: Any = Depends(get_oauth_client),
+) -> dict[str, str]:
+    """Begin the YouTube OAuth 2.0 scope upgrade to add youtube.force-ssl permission.
+
+    Mirrors upgrade-analytics: the existing account binding is preserved; only the
+    token file is updated after the user grants consent on Google's consent screen.
+    The shared /oauth/youtube/callback endpoint handles the response.
+
+    Returns the Google authorization URL. The frontend redirects the user's browser
+    to this URL.
+
+    Required role: workspace owner or admin.
+    """
+    try:
+        _require_connect_permission(current_user, workspace_id)
+    except OAuthInsufficientRoleError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    try:
+        result = start_youtube_release_oauth(
+            db,
+            account_id=account_id,
+            user_id=current_user.actor,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            oauth_client=oauth_client,
+        )
+    except OAuthAccountNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except OAuthNotConfiguredError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Release scope upgrade start failed: {exc}"
         ) from exc
 
     return {"authorization_url": result.authorization_url}

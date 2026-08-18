@@ -22,10 +22,11 @@ import mimetypes
 import os
 from typing import Any
 
-from app.oauth.client import YOUTUBE_UPLOAD_SCOPE
+from app.oauth.client import YOUTUBE_RELEASE_SCOPE, YOUTUBE_UPLOAD_SCOPE
 from app.oauth.store import LocalFileTokenStore, StoredTokenPayload
 from app.publishing.errors import (
     LivePublishingNotEnabledError,
+    ReleaseScopeNotGrantedError,
     UploadAccountMismatchError,
     UploadFileError,
     UploadScopeNotGrantedError,
@@ -82,6 +83,16 @@ def check_upload_scope(stored_token: StoredTokenPayload) -> None:
             f"The account's OAuth credential does not include '{YOUTUBE_UPLOAD_SCOPE}'. "
             f"Granted scopes: {stored_token.scopes}. "
             "Use the 'Enable Upload Permission' action to reauthorize with upload scope."
+        )
+
+
+def check_release_scope(stored_token: StoredTokenPayload) -> None:
+    """Raise ReleaseScopeNotGrantedError if youtube.force-ssl is not in granted scopes."""
+    if not stored_token.has_scope(YOUTUBE_RELEASE_SCOPE):
+        raise ReleaseScopeNotGrantedError(
+            f"The account's OAuth credential does not include '{YOUTUBE_RELEASE_SCOPE}'. "
+            f"Granted scopes: {stored_token.scopes}. "
+            "Use the 'Upgrade Release Scope' OAuth flow to reauthorize with youtube.force-ssl."
         )
 
 

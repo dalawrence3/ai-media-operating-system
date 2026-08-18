@@ -25,6 +25,8 @@ from typing import Any
 from app.oauth.client import (
     YOUTUBE_ANALYTICS_SCOPE,
     YOUTUBE_ANALYTICS_SCOPES,
+    YOUTUBE_RELEASE_SCOPE,
+    YOUTUBE_RELEASE_SCOPES,
     YOUTUBE_SCOPES,
     YOUTUBE_UPLOAD_SCOPE,
     YOUTUBE_UPLOAD_SCOPES,
@@ -891,6 +893,78 @@ def start_youtube_analytics_oauth(
         created_at=time.monotonic(),
         code_verifier=result.code_verifier,
         requested_scopes=YOUTUBE_ANALYTICS_SCOPES,
+    )
+    get_state_store().store(claims)
+
+    return StartFlowResult(
+        authorization_url=result.authorization_url,
+        state_nonce=nonce,
+    )
+
+
+def has_release_scope(
+    conn: Any,
+    *,
+    account_id: str,
+    workspace_id: str,
+    channel_id: str,
+    token_store: LocalFileTokenStore | None = None,
+) -> bool:
+    """Return True if the account's stored token includes youtube.force-ssl scope.
+
+    Returns False on any error (token missing, account disconnected, etc.).
+    Does not make any network calls.
+    """
+    from app.control_plane import repository as repo
+
+    store = token_store or get_token_store()
+    try:
+        acct = _get_account_or_raise(conn, account_id, workspace_id, channel_id)
+    except Exception:
+        return False
+    if not acct.credential_profile_id:
+        return False
+    try:
+        cred = repo.get_credential_profile(conn, acct.credential_profile_id)
+        stored = store.read(cred.external_ref)
+        return stored.has_scope(YOUTUBE_RELEASE_SCOPE)
+    except Exception:
+        return False
+
+
+def start_youtube_release_oauth(
+    conn: Any,
+    *,
+    account_id: str,
+    user_id: str,
+    workspace_id: str,
+    channel_id: str,
+    oauth_client: GoogleOAuthClient,
+) -> StartFlowResult:
+    """Begin the YouTube OAuth 2.0 scope-upgrade flow to add youtube.force-ssl.
+
+    Generates an authorization URL requesting YOUTUBE_RELEASE_SCOPES
+    (openid + readonly + upload + analytics + force-ssl).  All prior scopes are
+    bundled so upload and analytics grants are preserved in the updated token file
+    — requesting force-ssl alone would overwrite the token with a narrower grant.
+
+    On callback completion, complete_youtube_oauth() handles the token write
+    (same callback endpoint, broader scopes).
+    """
+    _get_account_or_raise(conn, account_id, workspace_id, channel_id)
+
+    nonce = secrets.token_hex(32)
+    result = oauth_client.get_authorization_url(state_nonce=nonce, scopes=YOUTUBE_RELEASE_SCOPES)
+
+    claims = OAuthStateClaims(
+        nonce=nonce,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+        account_id=account_id,
+        created_at=time.monotonic(),
+        code_verifier=result.code_verifier,
+        requested_scopes=YOUTUBE_RELEASE_SCOPES,
     )
     get_state_store().store(claims)
 

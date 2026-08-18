@@ -395,6 +395,12 @@ export interface PublicationDetail {
   render_status: string | null
   render_approved_at: string | null
   created_at: string
+  /** Structural preconditions met: youtube + published + private + has video ID + has account */
+  release_eligible: boolean
+  /** Both ACE_RELEASE_PUBLIC_ENABLED and ACE_PUBLISHING_LIVE_ENABLED are true */
+  release_enabled: boolean
+  /** Stored OAuth token includes youtube.force-ssl (read-only check, no network call) */
+  release_scope_granted: boolean
 }
 
 export interface PublicationAnalytics {

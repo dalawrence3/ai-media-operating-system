@@ -359,6 +359,9 @@ export const handlers = [
   http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/analytics`, () =>
     HttpResponse.json(publicationAnalytics),
   ),
+  http.post(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/release-public`, () =>
+    HttpResponse.json({ visibility: 'public', reconciled: false }),
+  ),
 
   // Analytics (default: empty — no data seeded yet)
   http.get(`${B}/workspaces/${WS_ID}/analytics/aggregates`, () =>
