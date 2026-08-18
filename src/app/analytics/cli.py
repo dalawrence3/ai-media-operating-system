@@ -135,6 +135,7 @@ def analytics_ingest(
                 narration_run_id,
                 caption_run_id,
             ),
+            _pub_published_at,
         ) = _build_youtube_provider_and_lineage(
             conn,
             publication_id=publication_id,
@@ -142,6 +143,15 @@ def analytics_ingest(
             workspace_id=workspace_id,
             channel_id=channel_id,
         )
+        if period_start is None:
+            if _pub_published_at is None:
+                typer.echo(
+                    "Error: Publication has no published_at date and --period-start was not "
+                    "supplied. Provide --period-start to ingest metrics for this publication.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            period_start = _pub_published_at
     else:
         provider = _default_provider()
         # For fake provider, all IDs must be supplied explicitly
@@ -190,8 +200,12 @@ def _build_youtube_provider_and_lineage(
     account_id: str | None,
     workspace_id: str | None,
     channel_id: str | None,
-) -> tuple[object, tuple]:
-    """Build authenticated YouTube Analytics provider and derive lineage from publication."""
+) -> tuple[object, tuple, str | None]:
+    """Build authenticated YouTube Analytics provider and derive lineage from publication.
+
+    Returns (provider, lineage_tuple, published_at_date) where published_at_date is
+    the publication's published_at truncated to YYYY-MM-DD, or None if not yet set.
+    """
     import typer
 
     if not account_id or not workspace_id or not channel_id:
@@ -256,7 +270,8 @@ def _build_youtube_provider_and_lineage(
         plan.narration_run_id,
         plan.caption_run_id,
     )
-    return provider, lineage
+    published_at_date = pub.published_at[:10] if pub.published_at else None
+    return provider, lineage, published_at_date
 
 
 def _require_explicit_lineage(

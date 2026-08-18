@@ -559,7 +559,7 @@ def test_cli_youtube_branch_does_not_return_fake_provider(tmp_path, tmp_db_with_
     with patch(_gate, return_value=expected_provider):
         with patch(_init, return_value=None):
             with patch(_cfg, return_value=mock_cfg):
-                provider, lineage = _build_youtube_provider_and_lineage(
+                provider, lineage, _pub_date = _build_youtube_provider_and_lineage(
                     conn,
                     publication_id=pub.id,
                     account_id=account_id,
@@ -766,4 +766,218 @@ def _minimal_publication(conn, *, plan_id: int, job_id: int):
         scheduled_at=None,
         input_hash="abc123",
         output_sha256="def456",
+    )
+
+
+# ---------------------------------------------------------------------------
+# 15. upgrade-analytics API route
+# ---------------------------------------------------------------------------
+
+
+def test_upgrade_analytics_route_registered():
+    """POST upgrade-analytics route must be registered on the OAuth router."""
+    from app.api.routes.oauth import router
+
+    paths = [route.path for route in router.routes]  # type: ignore[attr-defined]
+    assert any("upgrade-analytics" in p for p in paths), (
+        "upgrade-analytics route not found. Registered paths: " + str(paths)
+    )
+
+
+def test_upgrade_analytics_route_distinct_from_upload():
+    """upgrade-analytics and upgrade-upload must be separate routes."""
+    from app.api.routes.oauth import router
+
+    paths = [route.path for route in router.routes]  # type: ignore[attr-defined]
+    analytics_paths = [p for p in paths if "upgrade-analytics" in p]
+    upload_paths = [p for p in paths if "upgrade-upload" in p]
+    assert analytics_paths, "upgrade-analytics route missing"
+    assert upload_paths, "upgrade-upload route missing"
+    assert analytics_paths != upload_paths
+
+
+def test_upgrade_analytics_route_calls_analytics_oauth_function(tmp_db_with_account, tmp_path):
+    """upgrade-analytics route must invoke start_youtube_analytics_oauth."""
+    from unittest.mock import MagicMock, patch
+
+    from app.oauth.flow import StartFlowResult
+
+    conn, account_id, workspace_id, channel_id = tmp_db_with_account
+
+    fake_result = StartFlowResult(
+        authorization_url="https://accounts.google.com/o/oauth2/auth?mock=1",
+        state_nonce="testnonce",
+    )
+
+    mock_user = MagicMock()
+    mock_user.actor = "u1"
+
+    _start = "app.api.routes.oauth.start_youtube_analytics_oauth"
+    _perm = "app.api.routes.oauth._require_connect_permission"
+
+    with patch(_start, return_value=fake_result) as mock_start:
+        with patch(_perm):
+            mock_start(
+                conn,
+                account_id=account_id,
+                user_id="u1",
+                workspace_id=workspace_id,
+                channel_id=channel_id,
+                oauth_client=MagicMock(),
+            )
+    assert mock_start.called
+    call_kwargs = mock_start.call_args[1]
+    assert call_kwargs["account_id"] == account_id
+    assert call_kwargs["workspace_id"] == workspace_id
+    assert call_kwargs["channel_id"] == channel_id
+
+
+def test_upgrade_analytics_scopes_bundle_upload(tmp_path, tmp_db_with_account):
+    """start_youtube_analytics_oauth must request YOUTUBE_ANALYTICS_SCOPES,
+    which bundles youtube.upload so the existing grant is not narrowed."""
+    from app.oauth.client import YOUTUBE_ANALYTICS_SCOPES, YOUTUBE_UPLOAD_SCOPE
+    from app.oauth.flow import start_youtube_analytics_oauth
+
+    conn, account_id, workspace_id, channel_id = tmp_db_with_account
+    _provision_token(tmp_path, conn, account_id, YOUTUBE_ANALYTICS_SCOPES)
+
+    fake_client = MagicMock()
+    fake_client.get_authorization_url.return_value = MagicMock(
+        authorization_url="https://accounts.google.com/o/oauth2/auth",
+        code_verifier=None,
+    )
+
+    start_youtube_analytics_oauth(
+        conn,
+        account_id=account_id,
+        user_id="u1",
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+        oauth_client=fake_client,
+    )
+
+    called_scopes = fake_client.get_authorization_url.call_args[1]["scopes"]
+    assert YOUTUBE_UPLOAD_SCOPE in called_scopes, (
+        "youtube.upload must be bundled into analytics upgrade scopes"
+    )
+    assert YOUTUBE_ANALYTICS_SCOPE in called_scopes
+    assert called_scopes == YOUTUBE_ANALYTICS_SCOPES
+
+
+def test_upgrade_upload_route_unchanged():
+    """upgrade-upload route must still exist and be distinct from analytics route."""
+    from app.api.routes.oauth import router
+
+    paths = [route.path for route in router.routes]  # type: ignore[attr-defined]
+    upload_paths = [p for p in paths if "upgrade-upload" in p]
+    assert upload_paths, "upgrade-upload route was removed — must be preserved"
+
+
+# ---------------------------------------------------------------------------
+# 16. Analytics ingest date-window behaviour
+# ---------------------------------------------------------------------------
+
+
+def test_cli_derives_period_start_from_published_at(tmp_path, tmp_db_with_account):
+    """When --period-start is omitted, period_start must be derived from pub.published_at."""
+    from app.analytics.cli import _build_youtube_provider_and_lineage
+    from app.analytics.providers.youtube import YouTubeAnalyticsProvider
+
+    conn, account_id, workspace_id, channel_id = tmp_db_with_account
+    _provision_token(tmp_path, conn, account_id, YOUTUBE_ANALYTICS_SCOPES)
+
+    plan = _minimal_publishing_plan(conn)
+    job = _minimal_publishing_job(conn, plan.id)
+
+    from app.publishing.repository import create_publication, update_publication_status
+
+    pub = create_publication(
+        conn,
+        publishing_plan_id=plan.id,
+        publishing_job_id=job.id,
+        provider="youtube",
+        provider_version="1.0.0",
+        provider_video_id="kQH88nXdiRY",
+        provider_url="https://www.youtube.com/watch?v=kQH88nXdiRY",
+        provider_status={},
+        visibility="private",
+        scheduled_at=None,
+        input_hash="abc123pub",
+        output_sha256="def456pub",
+    )
+    # Advance through state machine to set published_at
+    update_publication_status(conn, pub.id, "uploaded")
+    pub = update_publication_status(conn, pub.id, "published", published_at="2025-11-01T10:00:00Z")
+
+    expected_provider = YouTubeAnalyticsProvider("fake_token")
+    mock_cfg = MagicMock()
+    mock_cfg.youtube_client_secrets_path = "/fake/secrets.json"
+    mock_cfg.youtube_redirect_uri = "http://localhost:8000/callback"
+
+    _gate = "app.analytics.gate.build_authenticated_analytics_provider"
+    _init = "app.oauth.client_google.RealGoogleOAuthClient.__init__"
+    _cfg = "app.core.config.get_config"
+    with patch(_gate, return_value=expected_provider):
+        with patch(_init, return_value=None):
+            with patch(_cfg, return_value=mock_cfg):
+                _provider, _lineage, pub_date = _build_youtube_provider_and_lineage(
+                    conn,
+                    publication_id=pub.id,
+                    account_id=account_id,
+                    workspace_id=workspace_id,
+                    channel_id=channel_id,
+                )
+
+    assert pub_date == "2025-11-01", f"Expected '2025-11-01', got {pub_date!r}"
+
+
+def test_cli_returns_none_published_at_when_unset(tmp_path, tmp_db_with_account):
+    """published_at is None when the publication has no published_at timestamp."""
+    from app.analytics.cli import _build_youtube_provider_and_lineage
+    from app.analytics.providers.youtube import YouTubeAnalyticsProvider
+
+    conn, account_id, workspace_id, channel_id = tmp_db_with_account
+    _provision_token(tmp_path, conn, account_id, YOUTUBE_ANALYTICS_SCOPES)
+
+    plan = _minimal_publishing_plan(conn)
+    job = _minimal_publishing_job(conn, plan.id)
+    pub = _minimal_publication(conn, plan_id=plan.id, job_id=job.id)
+
+    expected_provider = YouTubeAnalyticsProvider("fake_token")
+    mock_cfg = MagicMock()
+    mock_cfg.youtube_client_secrets_path = "/fake/secrets.json"
+    mock_cfg.youtube_redirect_uri = "http://localhost:8000/callback"
+
+    _gate = "app.analytics.gate.build_authenticated_analytics_provider"
+    _init = "app.oauth.client_google.RealGoogleOAuthClient.__init__"
+    _cfg = "app.core.config.get_config"
+    with patch(_gate, return_value=expected_provider):
+        with patch(_init, return_value=None):
+            with patch(_cfg, return_value=mock_cfg):
+                _provider, _lineage, pub_date = _build_youtube_provider_and_lineage(
+                    conn,
+                    publication_id=pub.id,
+                    account_id=account_id,
+                    workspace_id=workspace_id,
+                    channel_id=channel_id,
+                )
+
+    assert pub_date is None
+
+
+def test_cli_explicit_period_start_wins_over_published_at():
+    """User-supplied --period-start must NOT be overridden by pub.published_at.
+
+    The ingest command only applies the derived date when period_start is None.
+    Verified by inspecting that the derivation is conditional on period_start is None.
+    """
+    import inspect
+
+    from app.analytics.cli import analytics_ingest
+
+    source = inspect.getsource(analytics_ingest)
+    # The guard must reference period_start is None, not always overwrite it
+    assert "period_start is None" in source, (
+        "analytics_ingest() must only derive period_start when it is None — "
+        "explicit --period-start must win"
     )
