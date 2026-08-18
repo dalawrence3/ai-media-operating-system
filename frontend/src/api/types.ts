@@ -360,3 +360,48 @@ export interface ApiError {
   detail: string
   status: number
 }
+
+// ── Publications ─────────────────────────────────────────────────────────────
+
+export interface PublicationListItem {
+  id: number
+  title: string
+  provider: string
+  provider_video_id: string | null
+  provider_url: string | null
+  visibility: string
+  status: string
+  published_at: string | null
+  render_manifest_id: number | null
+  created_at: string
+}
+
+export interface PublicationDetail {
+  id: number
+  title: string
+  description: string
+  tags: string[]
+  provider: string
+  provider_video_id: string | null
+  provider_url: string | null
+  visibility: string
+  status: string
+  published_at: string | null
+  render_manifest_id: number | null
+  render_duration_ms: number | null
+  render_width: number | null
+  render_height: number | null
+  render_fps: number | null
+  render_status: string | null
+  render_approved_at: string | null
+  created_at: string
+}
+
+export interface PublicationAnalytics {
+  snapshot_id: number | null
+  snapshot_ingested_at: string | null
+  period_start: string | null
+  period_end: string | null
+  metrics: Record<string, number>
+  retention_point_count: number
+}

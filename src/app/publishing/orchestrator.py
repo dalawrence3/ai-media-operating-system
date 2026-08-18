@@ -36,6 +36,7 @@ from app.publishing.errors import (
     JobNotRetryableError,
     MaxRetriesExceededError,
     NoApprovedRenderForManifestError,
+    PublicationOwnershipError,
     PublishingPlanNotFoundError,
     RenderManifestNotApprovedError,
 )
@@ -207,6 +208,31 @@ def _supersede_prior_plans(
 # ── Job execution ─────────────────────────────────────────────────────────────
 
 
+def _validate_publication_ownership(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    channel_id: str,
+    platform_account_id: str,
+) -> None:
+    """Verify channel→workspace and account→channel relationships before persisting."""
+    ch_row = conn.execute(
+        "SELECT id FROM cp_channels WHERE id = ? AND workspace_id = ?",
+        (channel_id, workspace_id),
+    ).fetchone()
+    if ch_row is None:
+        raise PublicationOwnershipError(
+            f"Channel {channel_id!r} does not belong to workspace {workspace_id!r}."
+        )
+    acct_row = conn.execute(
+        "SELECT id FROM cp_platform_accounts WHERE id = ? AND channel_id = ?",
+        (platform_account_id, channel_id),
+    ).fetchone()
+    if acct_row is None:
+        raise PublicationOwnershipError(
+            f"Platform account {platform_account_id!r} does not belong to channel {channel_id!r}."
+        )
+
+
 def start_publishing_job(
     conn: sqlite3.Connection,
     plan_id: int,
@@ -215,12 +241,28 @@ def start_publishing_job(
     output_path: str,
     output_sha256: str,
     dry_run: bool = False,
+    workspace_id: str | None = None,
+    channel_id: str | None = None,
+    platform_account_id: str | None = None,
 ) -> tuple[PublishingJob, Publication | None]:
     """Create and execute a publishing job for the given plan.
 
     Returns (job, publication).  publication is None in dry_run mode.
     Raises ActiveJobExistsError if the plan has an active job.
+
+    When workspace_id, channel_id, and platform_account_id are all provided,
+    ownership is validated before the job begins.  All three must be consistent
+    or PublicationOwnershipError is raised.  For fake/test providers pass None
+    for all three.
     """
+    # Validate ownership before any DB writes so partial states cannot occur.
+    if workspace_id is not None or channel_id is not None or platform_account_id is not None:
+        if not (workspace_id and channel_id and platform_account_id):
+            raise PublicationOwnershipError(
+                "workspace_id, channel_id, and platform_account_id must all be provided "
+                "together or all omitted."
+            )
+        _validate_publication_ownership(conn, workspace_id, channel_id, platform_account_id)
     plan = get_publishing_plan(conn, plan_id)
     if plan is None:
         raise PublishingPlanNotFoundError(f"Publishing plan {plan_id} not found.")
@@ -315,6 +357,9 @@ def start_publishing_job(
             input_hash=plan.input_hash,
             output_sha256=output_sha256,
             initial_status=PUB_STATUS_UPLOADED,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            platform_account_id=platform_account_id,
         )
 
         # Publish (set visibility / schedule)

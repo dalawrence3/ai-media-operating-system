@@ -163,6 +163,10 @@ class Publication(BaseModel):
     output_sha256: str
     created_at: str
     updated_at: str
+    # v23: explicit operational ownership (NULL for legacy/fake-provider rows)
+    workspace_id: str | None = None
+    channel_id: str | None = None
+    platform_account_id: str | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Publication:

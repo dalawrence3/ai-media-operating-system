@@ -10,7 +10,8 @@ import {
   pipelineView, reviewItem, exceptionView, costView,
   auditView, operationView, experiment, controlEvent,
   topicView, topicView2, stageArtifactResolved, stageDiagnosticReport,
-  TOPIC_ID, PIPE_ID,
+  publicationListItem, publicationDetail, publicationAnalytics,
+  TOPIC_ID, PIPE_ID, PUB_ID,
 } from './fixtures'
 
 export const MOCK_NEW_CHANNEL_ID = 'ch-new-001'
@@ -342,6 +343,22 @@ export const handlers = [
     const body = await request.json() as { stage: string }
     return HttpResponse.json({ ...pipelineView, current_stage: body.stage, status: 'running' })
   }),
+
+  // Publications
+  http.get(`${B}/workspaces/${WS_ID}/publications`, () =>
+    HttpResponse.json([publicationListItem]),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}`, () =>
+    HttpResponse.json(publicationDetail),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/stream`, () =>
+    new HttpResponse(new Uint8Array([0, 1, 2, 3]).buffer, {
+      headers: { 'Content-Type': 'video/mp4' },
+    }),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/analytics`, () =>
+    HttpResponse.json(publicationAnalytics),
+  ),
 
   // Analytics (default: empty — no data seeded yet)
   http.get(`${B}/workspaces/${WS_ID}/analytics/aggregates`, () =>

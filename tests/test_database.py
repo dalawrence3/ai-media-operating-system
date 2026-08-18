@@ -130,7 +130,7 @@ def test_schema_version_is_14(tmp_path: Path) -> None:
     from app.core.database import SCHEMA_VERSION, _get_version
 
     conn = open_db(tmp_path / "test.db")
-    assert SCHEMA_VERSION == 22
+    assert SCHEMA_VERSION == 23
     assert _get_version(conn) == SCHEMA_VERSION
     conn.close()
 
@@ -908,7 +908,7 @@ def test_migration_v9_to_v10(tmp_path: Path) -> None:
 
     conn2 = open_db(tmp_path / "v9.db")
     assert _get_version(conn2) == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 22
+    assert SCHEMA_VERSION == 23
     tables = {
         r[0]
         for r in conn2.execute(
@@ -1125,7 +1125,7 @@ def test_migration_v11_to_v12(tmp_path: Path) -> None:
 
     conn2 = open_db(tmp_path / "v11.db")
     assert _get_version(conn2) == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 22
+    assert SCHEMA_VERSION == 23
     tables = {
         r[0]
         for r in conn2.execute(
@@ -1368,7 +1368,7 @@ def test_migration_v13_to_v14(tmp_path: Path) -> None:
 
     conn2 = open_db(tmp_path / "v13.db")
     assert _get_version(conn2) == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 22
+    assert SCHEMA_VERSION == 23
     tables = {
         r[0]
         for r in conn2.execute(

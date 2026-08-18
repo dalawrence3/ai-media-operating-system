@@ -191,6 +191,7 @@ def publish_start(
     from app.publishing.errors import (
         ActiveJobExistsError,
         MaxRetriesExceededError,
+        PublicationOwnershipError,
         PublishingPlanNotFoundError,
         PublishingProviderError,
     )
@@ -270,6 +271,12 @@ def publish_start(
         typer.echo("Error: Approved render not found.", err=True)
         raise typer.Exit(1)
 
+    # For the YouTube provider, thread explicit ownership IDs so create_publication
+    # persists workspace/channel/account at the point of upload.
+    ownership_workspace_id = workspace_id if provider_name == "youtube" else None
+    ownership_channel_id = channel_id if provider_name == "youtube" else None
+    ownership_account_id = account_id if provider_name == "youtube" else None
+
     try:
         job, publication = start_publishing_job(
             conn,
@@ -277,8 +284,14 @@ def publish_start(
             provider,
             output_path=approved_render.output_path,
             output_sha256=approved_render.output_sha256,
+            workspace_id=ownership_workspace_id,
+            channel_id=ownership_channel_id,
+            platform_account_id=ownership_account_id,
         )
         conn.commit()
+    except PublicationOwnershipError as exc:
+        typer.echo(f"Error: Ownership validation failed: {exc}", err=True)
+        raise typer.Exit(1) from None
     except (ActiveJobExistsError, MaxRetriesExceededError, PublishingPlanNotFoundError) as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from None

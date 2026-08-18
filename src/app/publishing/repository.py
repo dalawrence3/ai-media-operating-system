@@ -401,6 +401,9 @@ def create_publication(
     input_hash: str,
     output_sha256: str,
     initial_status: str = "uploading",
+    workspace_id: str | None = None,
+    channel_id: str | None = None,
+    platform_account_id: str | None = None,
 ) -> Publication:
     now = _now()
     row_id = conn.execute(
@@ -411,8 +414,9 @@ def create_publication(
             provider_video_id, provider_url, provider_status_json,
             status, visibility, scheduled_at,
             publishing_engine_version, input_hash, output_sha256,
+            workspace_id, channel_id, platform_account_id,
             created_at, updated_at
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """,
         (
             publishing_plan_id,
@@ -428,6 +432,9 @@ def create_publication(
             PUBLISHING_ENGINE_VERSION,
             input_hash,
             output_sha256,
+            workspace_id,
+            channel_id,
+            platform_account_id,
             now,
             now,
         ),
