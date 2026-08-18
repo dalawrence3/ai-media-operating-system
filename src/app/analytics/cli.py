@@ -548,7 +548,9 @@ def analytics_retention_ingest(
             )
             raise typer.Exit(1)
     else:
-        snaps = list_snapshots(conn, publication_id=publication_id, limit=1)
+        snaps = list_snapshots(
+            conn, publication_id=publication_id, observation_state="data", limit=1
+        )
         if not snaps:
             typer.echo(
                 f"Error: no snapshots found for publication {publication_id}. "
@@ -558,6 +560,18 @@ def analytics_retention_ingest(
             raise typer.Exit(1)
         snap = snaps[0]
         typer.echo(f"Using latest snapshot #{snap.id}")
+        if (
+            period_start is not None
+            and snap.period_start is not None
+            and period_start != snap.period_start
+        ):
+            typer.echo(
+                f"Error: --period-start {period_start!r} does not match snapshot #{snap.id} "
+                f"period_start {snap.period_start!r}. "
+                "Use --snapshot-id to target a specific snapshot.",
+                err=True,
+            )
+            raise typer.Exit(1)
 
     # Build provider
     (
@@ -580,9 +594,7 @@ def analytics_retention_ingest(
         raise typer.Exit(1)
 
     # Fetch
-    typer.echo(
-        f"Fetching retention curve for video {snap.scene_manifest_id}  period={_start}→{_end}"
-    )
+    typer.echo(f"Fetching retention curve for video {_lineage[0]}  period={_start}→{_end}")
     try:
         raw_rows = provider.fetch_retention(  # type: ignore[attr-defined]
             _lineage[0],  # provider_video_id

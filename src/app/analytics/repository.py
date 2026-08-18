@@ -56,6 +56,9 @@ def create_snapshot(
     is_period_complete: bool = False,
     currency_code: str | None = None,
     db_schema_version: int = 16,
+    observed_at: str | None = None,
+    response_fingerprint: str | None = None,
+    observation_state: str | None = None,
 ) -> AnalyticsSnapshot:
     """Insert a new analytics snapshot. Raises DuplicateSnapshotError on hash collision."""
     now = _now()
@@ -71,9 +74,10 @@ def create_snapshot(
                 input_hash, raw_metrics_json,
                 period_start, period_end,
                 is_period_complete, currency_code,
-                ingested_at, created_at
+                ingested_at, created_at,
+                observed_at, response_fingerprint, observation_state
             ) VALUES (
-                ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+                ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
             )
             """,
             (
@@ -102,6 +106,9 @@ def create_snapshot(
                 currency_code,
                 now,
                 now,
+                observed_at,
+                response_fingerprint,
+                observation_state,
             ),
         )
         conn.commit()
@@ -134,6 +141,7 @@ def list_snapshots(
     publication_id: int | None = None,
     topic_id: int | None = None,
     provider: str | None = None,
+    observation_state: str | None = None,
     limit: int = 50,
 ) -> list[AnalyticsSnapshot]:
     """Return analytics snapshots, newest first."""
@@ -148,6 +156,9 @@ def list_snapshots(
     if provider is not None:
         clauses.append("provider = ?")
         params.append(provider)
+    if observation_state is not None:
+        clauses.append("observation_state = ?")
+        params.append(observation_state)
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(limit)
     rows = conn.execute(

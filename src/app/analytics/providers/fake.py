@@ -29,13 +29,17 @@ class FakeAnalyticsProvider:
     provider_version: str = _FAKE_PROVIDER_VERSION
 
     def __init__(self, metrics: dict[str, float] | None = None) -> None:
-        self._metrics = metrics or {
-            METRIC_VIEWS: 1000.0,
-            METRIC_WATCH_TIME_SECONDS: 45000.0,
-            METRIC_IMPRESSIONS: 5000.0,
-            METRIC_CTR: 0.05,
-            METRIC_LIKES: 80.0,
-        }
+        self._metrics = (
+            metrics
+            if metrics is not None
+            else {
+                METRIC_VIEWS: 1000.0,
+                METRIC_WATCH_TIME_SECONDS: 45000.0,
+                METRIC_IMPRESSIONS: 5000.0,
+                METRIC_CTR: 0.05,
+                METRIC_LIKES: 80.0,
+            }
+        )
 
     def initialize(self) -> None:
         pass

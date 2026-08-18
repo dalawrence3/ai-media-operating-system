@@ -12,7 +12,7 @@ from app.core.database import SCHEMA_VERSION, open_db
 
 class TestSchemaMigration:
     def test_schema_version_is_22(self):
-        assert SCHEMA_VERSION == 23
+        assert SCHEMA_VERSION == 24
 
     def test_fresh_db_at_current_version(self, tmp_path: Path):
         conn = open_db(tmp_path / "test.db")
@@ -58,6 +58,9 @@ class TestSchemaMigration:
             "period_end",
             "ingested_at",
             "created_at",
+            "observed_at",
+            "response_fingerprint",
+            "observation_state",
         }
         assert expected <= cols
 
@@ -179,3 +182,32 @@ class TestSchemaMigration:
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         }
         assert "analytics_snapshots" in tables
+
+    def test_v23_to_v24_migration(self, tmp_path: Path):
+        """v23 snapshot rows keep observed_at/response_fingerprint/observation_state as NULL."""
+        db_path = tmp_path / "v23.db"
+
+        # Build a real schema at current version, insert a legacy (v23-era) snapshot row.
+        conn = open_db(db_path)
+        conn.execute(
+            "INSERT INTO analytics_snapshots ("
+            "publication_id, publishing_plan_id, publishing_job_id,"
+            " render_manifest_id, scene_manifest_id, production_plan_id,"
+            " script_id, topic_id, narration_run_id, caption_run_id,"
+            " provider, provider_version, adapter_version, engine_version,"
+            " analytics_schema_version, db_schema_version,"
+            " input_hash, raw_metrics_json, ingested_at, created_at"
+            ") VALUES (1,1,1,1,1,1,1,1,1,1,"
+            " 'fake','1.0.0','1.0.0','1.0.0','1.0.0',23,"
+            " 'legacy-hash','{}','2026-01-01','2026-01-01')"
+        )
+        conn.commit()
+
+        row = conn.execute(
+            "SELECT observed_at, response_fingerprint, observation_state"
+            " FROM analytics_snapshots WHERE input_hash = 'legacy-hash'"
+        ).fetchone()
+        assert row is not None
+        assert row["observed_at"] is None
+        assert row["response_fingerprint"] is None
+        assert row["observation_state"] is None

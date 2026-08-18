@@ -89,6 +89,7 @@ def _get_lifetime_aggregate(
          WHERE publication_id = ?
            AND period_type    = ?
            AND metric_name    = ?
+           AND input_hash NOT LIKE 'seed-%'
          ORDER BY created_at DESC
          LIMIT 1
         """,

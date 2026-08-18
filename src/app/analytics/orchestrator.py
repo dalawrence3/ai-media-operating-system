@@ -28,7 +28,9 @@ MissingCurrencyError if monetary metrics are present but no code is given.
 from __future__ import annotations
 
 import hashlib
+import json
 import sqlite3
+from datetime import UTC, datetime
 
 from app.analytics.aggregation import aggregate_all_periods
 from app.analytics.constants import (
@@ -66,8 +68,6 @@ from app.analytics.validation import (
 
 
 def _review_hash(snapshot_id: int, severity: str, reviewer: str) -> str:
-    import json
-
     payload = json.dumps(
         {"snapshot_id": snapshot_id, "severity": severity, "reviewer": reviewer},
         sort_keys=True,
@@ -219,6 +219,12 @@ class AnalyticsOrchestrator:
         if monetary_present and not currency_code:
             raise MissingCurrencyError(monetary_present)
 
+        response_fingerprint = hashlib.sha256(
+            json.dumps(raw.raw, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        observation_state = "data" if raw.raw else "no_data"
+        observed_at = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
         hash_input = AnalyticsHashInput(
             provider=self._provider.provider_name,
             provider_version=self._provider.provider_version,
@@ -235,6 +241,7 @@ class AnalyticsOrchestrator:
             experiment_id=experiment_id,
             period_start=period_start,
             period_end=period_end,
+            response_fingerprint=response_fingerprint,
             adapter_version=adapter_version,
         )
         input_hash = compute_analytics_input_hash(hash_input)
@@ -267,6 +274,9 @@ class AnalyticsOrchestrator:
                 period_end=period_end,
                 is_period_complete=is_period_complete,
                 currency_code=currency_code,
+                observed_at=observed_at,
+                response_fingerprint=response_fingerprint,
+                observation_state=observation_state,
             )
         except DuplicateSnapshotError:
             existing = get_snapshot_by_hash(self._conn, input_hash)
@@ -275,20 +285,21 @@ class AnalyticsOrchestrator:
             return existing, metrics
 
         metrics: list[AnalyticsMetric] = []
-        for metric_name, metric_value in normalized.items():
-            m = create_metric(
-                self._conn,
-                snapshot_id=snapshot.id,
-                publication_id=publication_id,
-                topic_id=topic_id,
-                provider=self._provider.provider_name,
-                metric_name=metric_name,
-                metric_value=metric_value,
-                period_start=period_start,
-                period_end=period_end,
-                input_hash=input_hash,
-            )
-            metrics.append(m)
+        if observation_state == "data":
+            for metric_name, metric_value in normalized.items():
+                m = create_metric(
+                    self._conn,
+                    snapshot_id=snapshot.id,
+                    publication_id=publication_id,
+                    topic_id=topic_id,
+                    provider=self._provider.provider_name,
+                    metric_name=metric_name,
+                    metric_value=metric_value,
+                    period_start=period_start,
+                    period_end=period_end,
+                    input_hash=input_hash,
+                )
+                metrics.append(m)
 
         return snapshot, metrics
 

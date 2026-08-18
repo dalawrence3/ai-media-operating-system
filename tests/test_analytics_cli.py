@@ -205,3 +205,47 @@ class TestDoctorCommand:
         result = _run(["doctor"], db_path)
         assert result.exit_code == 0
         assert "OK" in result.output
+
+
+class TestRetentionIngestWindowGuard:
+    """Retention-ingest rejects --period-start that conflicts with the auto-selected snapshot."""
+
+    def _make_data_snapshot(self, db_path: Path, period_start: str) -> None:
+        from app.analytics.orchestrator import AnalyticsOrchestrator
+
+        conn = open_db(db_path)
+        orch = AnalyticsOrchestrator(conn, FakeAnalyticsProvider())
+        orch.ingest(
+            provider_video_id="vid123",
+            publication_id=1,
+            publishing_plan_id=1,
+            publishing_job_id=1,
+            render_manifest_id=1,
+            scene_manifest_id=1,
+            production_plan_id=1,
+            script_id=1,
+            topic_id=1,
+            narration_run_id=1,
+            caption_run_id=1,
+            period_start=period_start,
+        )
+        conn.close()
+
+    def test_mismatched_period_start_exits_1(self, db_path):
+        self._make_data_snapshot(db_path, period_start="2026-01-01")
+        result = _run(["retention-ingest", "1", "--period-start", "2026-02-01"], db_path)
+        assert result.exit_code == 1
+        assert "does not match snapshot" in result.output
+
+    def test_matching_period_start_does_not_trigger_guard(self, db_path):
+        """Guard must NOT fire when --period-start matches the snapshot's period_start."""
+        self._make_data_snapshot(db_path, period_start="2026-01-01")
+        # The call will fail later (no YouTube provider) but must NOT fail on the guard.
+        result = _run(["retention-ingest", "1", "--period-start", "2026-01-01"], db_path)
+        assert "does not match snapshot" not in result.output
+
+    def test_no_period_start_arg_does_not_trigger_guard(self, db_path):
+        """Guard must NOT fire when --period-start is omitted."""
+        self._make_data_snapshot(db_path, period_start="2026-01-01")
+        result = _run(["retention-ingest", "1"], db_path)
+        assert "does not match snapshot" not in result.output

@@ -95,6 +95,11 @@ class AnalyticsSnapshot(BaseModel):
     ingested_at: str
     created_at: str
 
+    # v24 observation model — NULL on legacy snapshots created before schema v24.
+    observed_at: str | None = None
+    response_fingerprint: str | None = None
+    observation_state: str | None = None
+
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> AnalyticsSnapshot:
         return cls(**dict(row))
