@@ -271,6 +271,37 @@ class YouTubeAnalyticsProvider:
             supports_impression_data=False,
         )
 
+    def fetch_retention(
+        self,
+        provider_video_id: str,
+        *,
+        period_start: str,
+        period_end: str,
+    ) -> list[dict[str, object]]:
+        """Fetch audience retention curve via the dimensional Analytics API query.
+
+        Issues a separate query from fetch_metrics():
+            dimensions=elapsedVideoTimeRatio
+            metrics=audienceWatchRatio,relativeRetentionPerformance
+
+        Returns raw row dicts.  Use retention.parse_retention_rows() to convert
+        to RetentionPoint objects.  Raises ProviderAdapterError on failure.
+        """
+        from app.analytics.errors import ProviderAdapterError
+        from app.analytics.retention import fetch_retention_from_service
+
+        if not self._access_token:
+            raise ProviderAdapterError(
+                "YouTubeAnalyticsProvider requires an OAuth access_token for fetch_retention()."
+            )
+        service = self._get_service()
+        return fetch_retention_from_service(
+            service,
+            provider_video_id,
+            period_start=period_start,
+            period_end=period_end,
+        )
+
     def shutdown(self) -> None:
         self._service = None
 
