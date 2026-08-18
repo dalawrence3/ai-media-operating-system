@@ -99,6 +99,13 @@ class Config:
             "ACE_PUBLISHING_LIVE_ENABLED", ""
         ).lower() in {"1", "true", "yes"}
 
+        # Release gate (Phase 19).
+        # Must be explicitly set to true AND ACE_PUBLISHING_LIVE_ENABLED=true before any
+        # live privacy-status update is made. Default is false.
+        self.release_public_enabled: bool = os.environ.get(
+            "ACE_RELEASE_PUBLIC_ENABLED", ""
+        ).lower() in {"1", "true", "yes"}
+
         # YouTube OAuth 2.0 configuration (YouTube account connection milestone).
         # YOUTUBE_CLIENT_SECRETS_PATH: path to client_secret.json from Google Cloud Console.
         #   Never commit this file. Never store its contents in the DB.

@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import { api } from '@/api/client'
 import {
   usePublication,
   usePublicationAnalytics,
@@ -78,11 +81,33 @@ export function PublicationDetail() {
     publicationId: string
   }>()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   const pubId = publicationId ? parseInt(publicationId, 10) : null
   const { data: pub, isLoading: pubLoading, error: pubError } = usePublication(workspaceId ?? '', pubId)
   const { data: analytics, isLoading: analyticsLoading } = usePublicationAnalytics(workspaceId ?? '', pubId)
   const { blobUrl, loading: videoLoading, error: videoError } = usePublicationVideoUrl(workspaceId ?? '', pubId)
+
+  const [showReleaseModal, setShowReleaseModal] = useState(false)
+  const [releasing, setReleasing] = useState(false)
+  const [releaseError, setReleaseError] = useState<string | null>(null)
+  const [releaseSuccess, setReleaseSuccess] = useState(false)
+
+  async function handleConfirmRelease() {
+    if (!workspaceId || pubId === null) return
+    setReleasing(true)
+    setReleaseError(null)
+    try {
+      await api.releasePublic(workspaceId, pubId)
+      setReleaseSuccess(true)
+      setShowReleaseModal(false)
+      queryClient.invalidateQueries({ queryKey: ['publication', workspaceId, pubId] })
+    } catch (err) {
+      setReleaseError((err as Error).message ?? 'Release failed')
+    } finally {
+      setReleasing(false)
+    }
+  }
 
   if (pubLoading) {
     return (
@@ -290,29 +315,169 @@ export function PublicationDetail() {
             >
               Release
             </h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
-              Public release requires an OAuth scope upgrade (<code>youtube.force-ssl</code>).
-              Run <code>ace oauth upgrade --release-scope</code> to unlock.
-            </p>
-            <button
-              disabled
-              title="Public release is not yet available — OAuth scope upgrade required"
+
+            {(() => {
+              const isAlreadyPublic = releaseSuccess || pub.visibility === 'public'
+              const canRelease =
+                pub.release_eligible &&
+                pub.release_enabled &&
+                pub.release_scope_granted &&
+                !isAlreadyPublic
+
+              let helperText: React.ReactNode = null
+              if (isAlreadyPublic) {
+                helperText = (
+                  <p style={{ fontSize: '0.875rem', color: 'var(--color-success, #16a34a)', margin: '0 0 12px' }}>
+                    Released publicly.
+                  </p>
+                )
+              } else if (!pub.release_enabled) {
+                helperText = (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
+                    Release control not enabled. Set <code>ACE_RELEASE_PUBLIC_ENABLED=true</code>{' '}
+                    and <code>ACE_PUBLISHING_LIVE_ENABLED=true</code>.
+                  </p>
+                )
+              } else if (!pub.release_scope_granted) {
+                helperText = (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
+                    YouTube release permission must be granted.{' '}
+                    Run the <code>upgrade-release</code> OAuth flow to add{' '}
+                    <code>youtube.force-ssl</code> scope.
+                  </p>
+                )
+              } else if (!pub.release_eligible) {
+                helperText = (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
+                    Publication must be in <code>published</code> status with <code>private</code>{' '}
+                    visibility, a YouTube video ID, and an assigned platform account.
+                  </p>
+                )
+              }
+
+              return (
+                <>
+                  {helperText}
+
+                  {releaseError && (
+                    <p style={{ fontSize: '0.8rem', color: 'var(--color-error, #dc2626)', margin: '0 0 12px' }}>
+                      {releaseError}
+                    </p>
+                  )}
+
+                  <button
+                    disabled={releasing || !canRelease}
+                    onClick={() => { setReleaseError(null); setShowReleaseModal(true) }}
+                    title={
+                      isAlreadyPublic
+                        ? 'Already released publicly'
+                        : !pub.release_enabled
+                        ? 'Release control not enabled'
+                        : !pub.release_scope_granted
+                        ? 'YouTube release permission must be granted'
+                        : !pub.release_eligible
+                        ? 'Publication not in a releasable state'
+                        : 'Release this video publicly on YouTube'
+                    }
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      background: canRelease
+                        ? 'var(--color-primary, #2563eb)'
+                        : 'var(--bg-tertiary, var(--bg-secondary))',
+                      color: canRelease ? '#fff' : 'var(--text-secondary)',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                      cursor: canRelease && !releasing ? 'pointer' : 'not-allowed',
+                      opacity: releasing ? 0.7 : 1,
+                    }}
+                  >
+                    {releasing ? 'Releasing…' : 'Release Publicly'}
+                  </button>
+                </>
+              )
+            })()}
+          </div>
+
+          {/* Confirmation modal */}
+          {showReleaseModal && (
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="release-modal-title"
               style={{
-                width: '100%',
-                padding: '10px',
-                borderRadius: '6px',
-                border: '1px solid var(--border-color)',
-                background: 'var(--bg-tertiary, var(--bg-secondary))',
-                color: 'var(--text-secondary)',
-                fontSize: '0.875rem',
-                fontWeight: 600,
-                cursor: 'not-allowed',
-                opacity: 0.5,
+                position: 'fixed',
+                inset: 0,
+                background: 'rgba(0,0,0,0.5)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 1000,
               }}
             >
-              Release Publicly
-            </button>
-          </div>
+              <div
+                style={{
+                  background: 'var(--bg-primary, #fff)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  padding: '24px',
+                  maxWidth: '420px',
+                  width: '90%',
+                }}
+              >
+                <h2
+                  id="release-modal-title"
+                  style={{ margin: '0 0 12px', fontSize: '1rem', fontWeight: 700 }}
+                >
+                  Release Video Publicly?
+                </h2>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', margin: '0 0 20px' }}>
+                  This will change <strong>{pub.title}</strong> from private to public on YouTube.
+                  This action cannot be undone from this interface.
+                </p>
+                {releaseError && (
+                  <p style={{ fontSize: '0.8rem', color: 'var(--color-error, #dc2626)', margin: '0 0 12px' }}>
+                    {releaseError}
+                  </p>
+                )}
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                  <button
+                    onClick={() => { setShowReleaseModal(false); setReleaseError(null) }}
+                    disabled={releasing}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border-color)',
+                      background: 'var(--bg-secondary)',
+                      cursor: releasing ? 'not-allowed' : 'pointer',
+                      fontSize: '0.875rem',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleConfirmRelease}
+                    disabled={releasing}
+                    style={{
+                      padding: '8px 16px',
+                      borderRadius: '6px',
+                      border: 'none',
+                      background: 'var(--color-primary, #2563eb)',
+                      color: '#fff',
+                      cursor: releasing ? 'not-allowed' : 'pointer',
+                      fontSize: '0.875rem',
+                      fontWeight: 600,
+                      opacity: releasing ? 0.7 : 1,
+                    }}
+                  >
+                    {releasing ? 'Releasing…' : 'Confirm Release'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </>

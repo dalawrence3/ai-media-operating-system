@@ -48,6 +48,20 @@ YOUTUBE_ANALYTICS_SCOPES = [
     YOUTUBE_ANALYTICS_SCOPE,
 ]
 
+# Scope needed to change a video's privacy status (videos.update on part="status").
+# youtube.upload does NOT grant this; force-ssl is required for any metadata mutation.
+YOUTUBE_RELEASE_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
+
+# Full scope set for release upgrade.  Bundles all prior scopes so upload and
+# analytics grants are preserved in the updated token file.
+YOUTUBE_RELEASE_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    YOUTUBE_UPLOAD_SCOPE,
+    YOUTUBE_ANALYTICS_SCOPE,
+    YOUTUBE_RELEASE_SCOPE,
+]
+
 
 @dataclass(frozen=True)
 class TokenPayload:

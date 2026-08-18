@@ -595,6 +595,13 @@ class ApiClient {
     return this.request<PublicationAnalytics>('GET', `/workspaces/${workspaceId}/publications/${publicationId}/analytics`)
   }
 
+  releasePublic(workspaceId: string, publicationId: number) {
+    return this.request<{ visibility: string; reconciled: boolean }>(
+      'POST',
+      `/workspaces/${workspaceId}/publications/${publicationId}/release-public`,
+    )
+  }
+
   async streamPublication(workspaceId: string, publicationId: number): Promise<Blob> {
     const token = this._auth?.getToken() ?? null
     const path = `/workspaces/${workspaceId}/publications/${publicationId}/stream`

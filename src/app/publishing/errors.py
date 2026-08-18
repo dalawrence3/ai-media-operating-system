@@ -101,3 +101,15 @@ class UploadAccountMismatchError(PublishingError):
 
 class UploadFileError(PublishingError):
     """Video file is missing, empty, or not a supported media type."""
+
+
+class ReleaseScopeNotGrantedError(PublishingError):
+    """youtube.force-ssl OAuth scope not present in the account's granted scopes."""
+
+
+class ReleasePublicNotEnabledError(PublishingError):
+    """Public release attempted without ACE_RELEASE_PUBLIC_ENABLED=true."""
+
+
+class ProviderReleaseError(PublishingProviderError):
+    """Provider failed during video release (privacy status update)."""

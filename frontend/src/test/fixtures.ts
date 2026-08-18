@@ -452,6 +452,9 @@ export const publicationDetail: PublicationDetail = {
   render_status: 'approved',
   render_approved_at: '2026-08-17T17:41:14',
   created_at: '2026-08-17T21:21:38',
+  release_eligible: true,
+  release_enabled: false,
+  release_scope_granted: false,
 }
 
 export const publicationAnalytics: PublicationAnalytics = {
