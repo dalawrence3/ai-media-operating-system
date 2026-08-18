@@ -279,8 +279,10 @@ def test_provider_supports_period_queries():
 
 
 def test_provider_supports_impression_data():
+    # Thumbnail impressions/CTR are NOT available from the Analytics API targeted query.
+    # They require a separate YouTube Reporting API bulk integration.
     p = YouTubeAnalyticsProvider("tok")
-    assert p.capabilities().supports_impression_data is True
+    assert p.capabilities().supports_impression_data is False
 
 
 # ---------------------------------------------------------------------------
@@ -389,20 +391,147 @@ def test_normalize_views_and_watch_time():
     assert normalized[METRIC_WATCH_TIME_SECONDS] == pytest.approx(120.0 * 60)
 
 
-def test_normalize_ctr_and_impressions():
-    """impressionClickThroughRate → METRIC_CTR; impressions → METRIC_IMPRESSIONS."""
-    from app.analytics.constants import METRIC_CTR, METRIC_IMPRESSIONS
+def test_normalize_average_view_percentage():
+    """averageViewPercentage → METRIC_AVERAGE_VIEW_PERCENTAGE (valid Analytics API field)."""
+    from app.analytics.constants import METRIC_AVERAGE_VIEW_PERCENTAGE
 
     fake_service = _make_fake_service(
-        rows=[[1000, 0.045]],
-        column_names=["impressions", "impressionClickThroughRate"],
+        rows=[[500, 68.4]],
+        column_names=["views", "averageViewPercentage"],
     )
     p = YouTubeAnalyticsProvider("tok", api_service_override=fake_service)
     raw = p.fetch_metrics("videoABC")
     normalized = p.normalize(raw)
 
-    assert normalized[METRIC_IMPRESSIONS] == 1000.0
-    assert normalized[METRIC_CTR] == pytest.approx(0.045)
+    assert METRIC_AVERAGE_VIEW_PERCENTAGE in normalized
+    assert normalized[METRIC_AVERAGE_VIEW_PERCENTAGE] == pytest.approx(68.4)
+
+
+def test_impressions_not_in_request_metrics():
+    """'impressions' must NOT appear in the Analytics API request."""
+    assert "impressions" not in _NON_MONETARY_REQUEST_METRICS
+    assert "impressions" not in _MONETARY_REQUEST_METRICS
+
+
+def test_impression_ctr_not_in_request_metrics():
+    """'impressionClickThroughRate' must NOT be in the request — not a valid Analytics API name."""
+    assert "impressionClickThroughRate" not in _NON_MONETARY_REQUEST_METRICS
+    assert "impressionClickThroughRate" not in _MONETARY_REQUEST_METRICS
+
+
+def test_average_view_percentage_in_request_metrics():
+    """'averageViewPercentage' must be included in the Analytics API request."""
+    assert "averageViewPercentage" in _NON_MONETARY_REQUEST_METRICS
+
+
+def test_average_view_percentage_in_field_map():
+    """_YT_FIELD_MAP must map 'averageViewPercentage' to the canonical metric constant."""
+    from app.analytics.constants import METRIC_AVERAGE_VIEW_PERCENTAGE
+
+    assert "averageViewPercentage" in _YT_FIELD_MAP
+    assert _YT_FIELD_MAP["averageViewPercentage"] == METRIC_AVERAGE_VIEW_PERCENTAGE
+
+
+def test_impressions_not_in_field_map():
+    """'impressions' must NOT be in _YT_FIELD_MAP — it is not a YouTube Analytics API field."""
+    assert "impressions" not in _YT_FIELD_MAP
+
+
+def test_impression_ctr_not_in_field_map():
+    """'impressionClickThroughRate' must NOT be in _YT_FIELD_MAP — use Reporting API instead."""
+    assert "impressionClickThroughRate" not in _YT_FIELD_MAP
+
+
+def test_average_view_percentage_in_canonical_metrics():
+    """METRIC_AVERAGE_VIEW_PERCENTAGE must be present in the CANONICAL_METRICS frozenset."""
+    from app.analytics.constants import CANONICAL_METRICS, METRIC_AVERAGE_VIEW_PERCENTAGE
+
+    assert METRIC_AVERAGE_VIEW_PERCENTAGE in CANONICAL_METRICS
+
+
+def test_average_view_duration_in_request_metrics():
+    """'averageViewDuration' must be included in the Analytics API request."""
+    assert "averageViewDuration" in _NON_MONETARY_REQUEST_METRICS
+
+
+def test_average_view_duration_in_field_map():
+    """_YT_FIELD_MAP must map 'averageViewDuration' to the canonical metric constant."""
+    from app.analytics.constants import METRIC_AVERAGE_VIEW_DURATION
+
+    assert "averageViewDuration" in _YT_FIELD_MAP
+    assert _YT_FIELD_MAP["averageViewDuration"] == METRIC_AVERAGE_VIEW_DURATION
+
+
+def test_normalize_average_view_duration():
+    """averageViewDuration → METRIC_AVERAGE_VIEW_DURATION (seconds, not minutes)."""
+    from app.analytics.constants import METRIC_AVERAGE_VIEW_DURATION
+
+    fake_service = _make_fake_service(
+        rows=[[500, 142.0]],
+        column_names=["views", "averageViewDuration"],
+    )
+    p = YouTubeAnalyticsProvider("tok", api_service_override=fake_service)
+    raw = p.fetch_metrics("videoABC", period_start="2026-01-01", period_end="2026-08-17")
+    normalized = p.normalize(raw)
+
+    assert METRIC_AVERAGE_VIEW_DURATION in normalized
+    assert normalized[METRIC_AVERAGE_VIEW_DURATION] == pytest.approx(142.0)
+
+
+def test_phase_a_scalar_metric_list_complete():
+    """All ten desired Phase A scalar metrics must be in _NON_MONETARY_REQUEST_METRICS."""
+    expected = {
+        "engagedViews",
+        "views",
+        "estimatedMinutesWatched",
+        "averageViewDuration",
+        "averageViewPercentage",
+        "likes",
+        "comments",
+        "shares",
+        "subscribersGained",
+        "subscribersLost",
+    }
+    actual = set(_NON_MONETARY_REQUEST_METRICS)
+    missing = expected - actual
+    assert not missing, f"Phase A metrics missing from request: {missing}"
+
+
+def test_engaged_views_in_request_metrics():
+    """'engagedViews' must be included in the Analytics API request."""
+    assert "engagedViews" in _NON_MONETARY_REQUEST_METRICS
+
+
+def test_engaged_views_in_field_map():
+    """_YT_FIELD_MAP must map 'engagedViews' to the canonical metric constant."""
+    from app.analytics.constants import METRIC_ENGAGED_VIEWS
+
+    assert "engagedViews" in _YT_FIELD_MAP
+    assert _YT_FIELD_MAP["engagedViews"] == METRIC_ENGAGED_VIEWS
+
+
+def test_normalize_engaged_views():
+    """engagedViews → METRIC_ENGAGED_VIEWS (additive count, same semantics as views)."""
+    from app.analytics.constants import METRIC_ENGAGED_VIEWS, METRIC_VIEWS
+
+    fake_service = _make_fake_service(
+        rows=[[500, 320]],
+        column_names=["views", "engagedViews"],
+    )
+    p = YouTubeAnalyticsProvider("tok", api_service_override=fake_service)
+    raw = p.fetch_metrics("videoABC", period_start="2026-01-01", period_end="2026-08-17")
+    normalized = p.normalize(raw)
+
+    assert METRIC_ENGAGED_VIEWS in normalized
+    assert normalized[METRIC_ENGAGED_VIEWS] == pytest.approx(320.0)
+    assert normalized[METRIC_VIEWS] == pytest.approx(500.0)
+
+
+def test_engaged_views_in_canonical_metrics():
+    """METRIC_ENGAGED_VIEWS must be present in the CANONICAL_METRICS frozenset."""
+    from app.analytics.constants import CANONICAL_METRICS, METRIC_ENGAGED_VIEWS
+
+    assert METRIC_ENGAGED_VIEWS in CANONICAL_METRICS
 
 
 def test_normalize_empty_rows_returns_empty_metrics():

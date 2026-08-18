@@ -43,8 +43,14 @@ ANALYTICS_SCHEMA_VERSION = "1.0.0"
 # ── Canonical metric names ────────────────────────────────────────────────────
 
 METRIC_VIEWS = "views"
+METRIC_ENGAGED_VIEWS = "engaged_views"
 METRIC_WATCH_TIME_SECONDS = "watch_time_seconds"
 METRIC_AVERAGE_VIEW_DURATION = "average_view_duration"
+# Average percentage of each video that viewers watched (0–100 scale from YouTube API).
+# Populated by the YouTube Analytics API basic user activity query.
+METRIC_AVERAGE_VIEW_PERCENTAGE = "average_view_percentage"
+# Thumbnail impressions and CTR — populated only via the YouTube Reporting API
+# (bulk/scheduled). NOT available from the Analytics API targeted query.
 METRIC_IMPRESSIONS = "impressions"
 METRIC_CTR = "ctr"
 METRIC_LIKES = "likes"
@@ -58,8 +64,10 @@ METRIC_REVENUE_ESTIMATE = "revenue_estimate"
 CANONICAL_METRICS: frozenset[str] = frozenset(
     {
         METRIC_VIEWS,
+        METRIC_ENGAGED_VIEWS,
         METRIC_WATCH_TIME_SECONDS,
         METRIC_AVERAGE_VIEW_DURATION,
+        METRIC_AVERAGE_VIEW_PERCENTAGE,
         METRIC_IMPRESSIONS,
         METRIC_CTR,
         METRIC_LIKES,
@@ -81,6 +89,7 @@ METRIC_KIND_MONETARY = "monetary"  # additive but currency-constrained
 
 METRIC_KIND: dict[str, str] = {
     METRIC_VIEWS: METRIC_KIND_ADDITIVE,
+    METRIC_ENGAGED_VIEWS: METRIC_KIND_ADDITIVE,
     METRIC_WATCH_TIME_SECONDS: METRIC_KIND_ADDITIVE,
     METRIC_IMPRESSIONS: METRIC_KIND_ADDITIVE,
     METRIC_SHARES: METRIC_KIND_ADDITIVE,
@@ -92,6 +101,7 @@ METRIC_KIND: dict[str, str] = {
     METRIC_COMMENTS: METRIC_KIND_GAUGE,
     METRIC_CTR: METRIC_KIND_RATIO,
     METRIC_AVERAGE_VIEW_DURATION: METRIC_KIND_RATIO,
+    METRIC_AVERAGE_VIEW_PERCENTAGE: METRIC_KIND_RATIO,
 }
 
 # ── Aggregation period types ──────────────────────────────────────────────────
@@ -152,6 +162,7 @@ AGG_LAST = "last"
 
 METRIC_AGGREGATION_OP: dict[str, str] = {
     METRIC_VIEWS: AGG_SUM,
+    METRIC_ENGAGED_VIEWS: AGG_SUM,
     METRIC_WATCH_TIME_SECONDS: AGG_SUM,
     METRIC_IMPRESSIONS: AGG_SUM,
     METRIC_SHARES: AGG_SUM,
@@ -163,6 +174,7 @@ METRIC_AGGREGATION_OP: dict[str, str] = {
     METRIC_COMMENTS: AGG_LAST,
     METRIC_CTR: AGG_LAST,
     METRIC_AVERAGE_VIEW_DURATION: AGG_LAST,
+    METRIC_AVERAGE_VIEW_PERCENTAGE: AGG_LAST,
 }
 
 # Publication eligibility: statuses that permit analytics ingestion
