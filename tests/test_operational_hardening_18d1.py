@@ -22,6 +22,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -690,9 +691,17 @@ def _run_doctor(tmp_path: Path, *, db_path: Path, live: str, release: str) -> st
 
     doctor sources .env.local itself and that source wins over the ambient
     environment, so the gate values have to be written into a file rather than
-    exported. The relative dependency checks (.venv, frontend/) are satisfied
-    by symlink; anything unrelated that still fails is irrelevant here, because
-    these assertions only read the publishing-posture lines.
+    exported. doctor.sh's publishing-posture check requires .venv/bin/python
+    to exist; rather than relying on the repository happening to contain a
+    .venv/ (present when a developer ran `python -m venv .venv` locally, but
+    never created in CI, which installs via actions/setup-python straight
+    into the runner's own Python — no repository-local virtualenv at all),
+    point .venv/bin/python at sys.executable: the interpreter already running
+    this test, which is guaranteed to exist and already has the project
+    installed, so doctor.sh's embedded `import app...` resolves identically
+    either way. The frontend/ dependency check is still satisfied by symlink
+    when present; anything unrelated that still fails is irrelevant here,
+    because these assertions only read the publishing-posture lines.
     """
     work = tmp_path / f"doctor-{uuid.uuid4().hex[:8]}"
     work.mkdir()
@@ -702,10 +711,13 @@ def _run_doctor(tmp_path: Path, *, db_path: Path, live: str, release: str) -> st
         f"ACE_RELEASE_PUBLIC_ENABLED={release}\n"
         f"ACE_DB_PATH={db_path}\n"
     )
-    for name in (".venv", "frontend"):
-        src = ROOT / name
-        if src.exists():
-            os.symlink(src, work / name)
+    venv_bin = work / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    os.symlink(sys.executable, venv_bin / "python")
+
+    frontend_src = ROOT / "frontend"
+    if frontend_src.exists():
+        os.symlink(frontend_src, work / "frontend")
 
     proc = subprocess.run(
         ["bash", str(ROOT / "scripts" / "doctor.sh")],
