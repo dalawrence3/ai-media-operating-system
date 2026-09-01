@@ -12,6 +12,66 @@ incrementally, fully tested, and documented before the next begins. See
 design, `TASKS.md` for current status, and `DECISIONS.md` for the reasoning
 behind key technical choices.
 
+## Product Showcase
+
+The AI Media OS provides a unified interface for managing Orvella's automated content lifecycle—from production and publishing to performance analytics, experimentation, and continuous learning.
+
+### Dashboard
+
+The dashboard provides an executive overview of channel performance, autonomous publishing status, recent videos, active learning signals, and content pipeline health.
+
+[![Orvella performance and publishing dashboard](product-showcase/Orvella-%20Dashboard%201.png)](product-showcase/Orvella-%20Dashboard%201.png)
+
+The lower dashboard view connects recent publications with emerging system recommendations and summarizes the current state of the content pipeline.
+
+[![Orvella recent content and learning dashboard](product-showcase/Orvella-Dashboard%202.png)](product-showcase/Orvella-Dashboard%202.png)
+
+[View Dashboard screenshots at full size](product-showcase/Orvella-%20Dashboard%201.png)
+
+### Content Library
+
+The Content tab centralizes generated and published media, displaying each video's thumbnail, topic, duration, publication date, and platform status. Content can be filtered by publishing state, including videos currently on YouTube, publishing, failed, or archived.
+
+[![Orvella automated content library](product-showcase/Orvella-%20Content%20tab.png)](product-showcase/Orvella-%20Content%20tab.png)
+
+[View the Content tab at full size](product-showcase/Orvella-%20Content%20tab.png)
+
+### Analytics
+
+The Analytics tab ingests platform data and presents channel- and video-level performance across views, watch time, average percentage viewed, engaged views, likes, and subscribers gained. Interactive metric selection and video-level comparisons help identify differences in performance across publications.
+
+[![Orvella channel analytics](product-showcase/Orvella-%20Analytics%201.png)](product-showcase/Orvella-%20Analytics%201.png)
+
+[View the Analytics tab at full size](product-showcase/Orvella-%20Analytics%201.png)
+
+### Learning and Optimization
+
+The Learn tab compares publications, tracks experiments and creative-factor patterns, and converts observed performance into evidence-based recommendations. Recommendations remain labeled as exploratory until sufficient evidence exists, helping prevent the system from treating early signals as proven conclusions.
+
+[![Orvella learning and optimization overview](product-showcase/Orvella-%20Learn%201.png)](product-showcase/Orvella-%20Learn%201.png)
+
+The recommendation feed explains the evidence behind each observation, identifies the associated performance metrics, assigns a confidence level, and proposes an action for future content strategy.
+
+[![Orvella evidence-based recommendations](product-showcase/Orvella-%20Learn%202.png)](product-showcase/Orvella-%20Learn%202.png)
+
+[View Learning screenshots at full size](product-showcase/Orvella-%20Learn%201.png)
+
+### Channel Strategy and Automation
+
+The Channel tab manages the connection between Orvella and YouTube, including permissions to upload videos, read analytics, and make publications public. It also displays the channel's strategy mode, exploration progress, evidence maturity, and weighting between market intelligence and channel-specific evidence.
+
+[![Orvella channel connection and strategy](product-showcase/Orvella-%20Channel%201.png)](product-showcase/Orvella-%20Channel%201.png)
+
+The automation policy controls autonomous decision-making, production cadence, queue depth, production readiness, publishing slots, and public-publishing authorization.
+
+[![Orvella automation and publishing policy](product-showcase/Orvella-%20Channel%202.png)](product-showcase/Orvella-%20Channel%202.png)
+
+The readiness view evaluates decision automation, production, analytics and learning, provider connectivity, and publishing authorization independently. This fail-closed approach prevents a working production pipeline from publishing unless every required operational condition is satisfied.
+
+[![Orvella operational readiness checks](product-showcase/Orvella-%20Channel%203.png)](product-showcase/Orvella-%20Channel%203.png)
+
+[View Channel screenshots at full size](product-showcase/Orvella-%20Channel%201.png)
+
 ## Current status
 
 **Phase 15 (Deployment, Infrastructure & Production Operations) is complete. Phases 1–15 are complete.**
