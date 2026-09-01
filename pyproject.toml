@@ -16,6 +16,7 @@ dependencies = [
     "beautifulsoup4>=4.12,<5.0",
     "pypdf>=4.0,<6.0",
     "elevenlabs>=2.61.0,<3.0",
+    "Pillow>=11.0,<13.0",  # image rendering: caption cards, visual quality graphics
     # Phase 15 — production infrastructure
     "psycopg[binary]>=3.1,<4.0",
     "alembic>=1.13,<2.0",
