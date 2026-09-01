@@ -31,6 +31,8 @@ from app.core.repository import (
     update_topic,
 )
 from app.intelligence.cli import channels_app, discover_app
+from app.intelligence.experiments.cli import experiment_app
+from app.intelligence.market.cli import market_app
 from app.intelligence.repository import promote_opportunity
 from app.intelligence.scoring_cli import scoring_app
 from app.learning.cli import learn_app
@@ -52,6 +54,12 @@ app.add_typer(publish_app, name="publish")
 app.add_typer(analytics_app, name="analytics")
 app.add_typer(learn_app, name="learn")
 app.add_typer(control_app, name="control")
+app.add_typer(market_app, name="market")
+app.add_typer(experiment_app, name="experiment")
+
+features_app = typer.Typer(help="Content feature attribution.", no_args_is_help=True)
+app.add_typer(features_app, name="features")
+
 logger = get_logger(__name__)
 
 
@@ -1467,6 +1475,10 @@ def narration_narrate(
     ] = False,
 ) -> None:
     """Synthesise audio for the active production plan of TOPIC_ID."""
+    from app.learning.application import (
+        consume_proposed_application,
+        resolve_speaking_rate_override,
+    )
     from app.narration.fake import FakeTTSProvider
     from app.narration.orchestrator import narrate_plan
     from app.production.repository import get_approved_production_plan_full
@@ -1479,6 +1491,8 @@ def narration_narrate(
         typer.echo(f"No approved production plan for topic_id={topic_id}.", err=True)
         raise typer.Exit(1)
 
+    active_app, speaking_rate_override = resolve_speaking_rate_override(conn, topic_id=topic_id)
+
     provider = FakeTTSProvider()
     result = narrate_plan(
         conn,
@@ -1488,8 +1502,17 @@ def narration_narrate(
         artifacts_path=cfg.artifacts_path,
         provider=provider,
         dry_run=dry_run,
+        speaking_rate_override=speaking_rate_override,
     )
     conn.commit()
+
+    if not dry_run and active_app is not None and speaking_rate_override is not None:
+        consume_proposed_application(
+            conn,
+            active_app,
+            narration_run_id=result.run_id,
+            value_applied=speaking_rate_override,
+        )
 
     if dry_run:
         typer.echo(f"Dry-run: {len(result.skipped_segment_ids)} segment(s) would be synthesised.")
@@ -2171,6 +2194,122 @@ def narration_smoke_test(
         typer.echo(f"    WAV written to {os.path.abspath(output)}")
 
     provider.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Features — Content Feature Attribution (Phase 12B)
+# ---------------------------------------------------------------------------
+
+
+@features_app.command("extract")
+def features_extract(
+    publication_id: Annotated[int, typer.Argument(help="Publication ID to extract features for.")],
+) -> None:
+    """Extract and persist a content feature snapshot for a publication.
+
+    Idempotent: if a snapshot already exists for this publication it is
+    returned unchanged without re-extracting.
+    """
+    from app.learning.features import (
+        IncompleteLineageError,
+        PublicationNotFoundError,
+        extract_and_save,
+    )
+
+    conn = _get_db()
+    try:
+        snapshot, created = extract_and_save(conn, publication_id)
+        if created:
+            typer.echo(
+                f"Extracted  publication_id={publication_id}  snapshot_id={snapshot.id}"
+                f"  schema={snapshot.feature_schema_version}"
+                f"  extractor={snapshot.extractor_version}"
+            )
+        else:
+            typer.echo(
+                f"Exists     publication_id={publication_id}  snapshot_id={snapshot.id}"
+                f"  extracted_at={snapshot.extracted_at}"
+            )
+    except PublicationNotFoundError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except IncompleteLineageError as exc:
+        typer.echo(f"Error: incomplete lineage — {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    finally:
+        conn.close()
+
+
+@features_app.command("show")
+def features_show(
+    publication_id: Annotated[int, typer.Argument(help="Publication ID whose snapshot to show.")],
+) -> None:
+    """Display the content feature snapshot for a publication."""
+    from app.learning.features import get_feature_snapshot
+
+    conn = _get_db()
+    try:
+        snapshot = get_feature_snapshot(conn, publication_id)
+        if snapshot is None:
+            typer.echo(
+                f"No feature snapshot for publication_id={publication_id}. "
+                "Run 'ace features extract <id>' first.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        typer.echo(f"Content Feature Snapshot — publication_id={publication_id}")
+        typer.echo(f"  snapshot_id          : {snapshot.id}")
+        typer.echo(f"  feature_schema_version: {snapshot.feature_schema_version}")
+        typer.echo(f"  extractor_version    : {snapshot.extractor_version}")
+        typer.echo(f"  input_hash           : {snapshot.input_hash[:16]}...")
+        typer.echo(f"  extracted_at         : {snapshot.extracted_at}")
+        typer.echo("")
+        typer.echo("  Lineage IDs")
+        typer.echo(f"    topic_id            : {snapshot.topic_id}")
+        typer.echo(f"    publishing_plan_id  : {snapshot.publishing_plan_id}")
+        typer.echo(f"    production_plan_id  : {snapshot.production_plan_id}")
+        typer.echo(f"    script_id           : {snapshot.script_id}")
+        typer.echo(f"    narration_run_id    : {snapshot.narration_run_id}")
+        typer.echo(f"    caption_run_id      : {snapshot.caption_run_id}")
+        typer.echo(f"    scene_manifest_id   : {snapshot.scene_manifest_id}")
+        typer.echo(f"    render_manifest_id  : {snapshot.render_manifest_id}")
+        typer.echo("")
+        typer.echo("  Script")
+        typer.echo(f"    format              : {snapshot.script_format}")
+        typer.echo(f"    word_count          : {snapshot.script_word_count}")
+        typer.echo(f"    segment_count       : {snapshot.script_segment_count}")
+        typer.echo(f"    has_hook            : {bool(snapshot.has_hook)}")
+        typer.echo(f"    has_cta             : {bool(snapshot.has_cta)}")
+        typer.echo(f"    hook_word_count     : {snapshot.hook_word_count}")
+        typer.echo("")
+        typer.echo("  Narration")
+        typer.echo(f"    speaking_rate       : {snapshot.narration_speaking_rate}")
+        typer.echo(f"    provider            : {snapshot.narration_provider}")
+        typer.echo(f"    model               : {snapshot.narration_model}")
+        typer.echo(f"    actual_duration_s   : {snapshot.narration_actual_duration_s}")
+        typer.echo("")
+        typer.echo("  Learning Application")
+        typer.echo(f"    application_used    : {bool(snapshot.learning_application_used)}")
+        if snapshot.learning_application_used:
+            typer.echo(f"    application_id      : {snapshot.learning_application_id}")
+            typer.echo(f"    parameter           : {snapshot.learning_application_parameter}")
+            typer.echo(f"    value               : {snapshot.learning_application_value}")
+        typer.echo("")
+        typer.echo("  Derived")
+        typer.echo(f"    words_per_second    : {snapshot.words_per_second}")
+        typer.echo(f"    scenes_per_minute   : {snapshot.scenes_per_minute}")
+        typer.echo(f"    avg_scene_duration_ms: {snapshot.avg_scene_duration_ms}")
+        typer.echo(f"    caption_cues/second : {snapshot.caption_cues_per_second}")
+        typer.echo("")
+        typer.echo("  Publishing")
+        typer.echo(f"    provider            : {snapshot.publish_provider}")
+        typer.echo(f"    visibility          : {snapshot.publish_visibility}")
+        typer.echo(f"    published_at        : {snapshot.publish_published_at}")
+        typer.echo(f"    day_of_week         : {snapshot.publish_day_of_week}")
+        typer.echo(f"    hour_utc            : {snapshot.publish_hour_utc}")
+    finally:
+        conn.close()
 
 
 # ---------------------------------------------------------------------------

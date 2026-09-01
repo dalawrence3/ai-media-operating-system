@@ -738,3 +738,86 @@ class TestPlatformIdValidation:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code in (403, 401)
+
+
+# ── Phase 18C: public-publishing authorization endpoints ─────────────────────
+
+
+class TestPublishingAuthorizationAPI:
+    """The authorization endpoint is deliberately separate from the
+    automation-policy endpoint, and granting requires explicit confirmation.
+    These tests pin both properties down."""
+
+    def _url(self, workspace_id: str, channel_id: str) -> str:
+        return (
+            f"/api/v1/workspaces/{workspace_id}/channels/{channel_id}"
+            f"/publishing-authorization?workspace_id={workspace_id}"
+        )
+
+    def test_unconfigured_channel_reports_not_authorized(self, dev_client, workspace, channel):
+        resp = dev_client.get(self._url(workspace.id, channel.id))
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["authorization"] is None
+        assert body["decision"]["allowed"] is False
+        assert "channel_not_authorized" in body["decision"]["blocked_by"]
+
+    def test_granting_without_confirm_is_rejected(self, dev_client, workspace, channel):
+        resp = dev_client.put(self._url(workspace.id, channel.id), json={"authorized": True})
+        assert resp.status_code == 422
+        assert "confirm" in resp.json()["detail"]
+
+        # Nothing was persisted by the rejected request.
+        state = dev_client.get(self._url(workspace.id, channel.id)).json()
+        assert state["authorization"] is None
+
+    def test_granting_with_confirm_records_actor_and_time(self, dev_client, workspace, channel):
+        resp = dev_client.put(
+            self._url(workspace.id, channel.id),
+            json={"authorized": True, "confirm": True},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["authorized"] is True
+        assert body["authorized_by"]
+        assert body["authorized_at"]
+
+    def test_revoking_needs_no_confirmation(self, dev_client, workspace, channel):
+        dev_client.put(
+            self._url(workspace.id, channel.id),
+            json={"authorized": True, "confirm": True},
+        )
+        resp = dev_client.put(self._url(workspace.id, channel.id), json={"authorized": False})
+        assert resp.status_code == 200
+        assert resp.json()["authorized"] is False
+        assert resp.json()["revoked_at"]
+
+    def test_updating_limits_does_not_authorize(self, dev_client, workspace, channel):
+        resp = dev_client.put(
+            self._url(workspace.id, channel.id), json={"max_publications_per_24h": 3}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["authorized"] is False
+        assert resp.json()["max_publications_per_24h"] == 3
+
+    def test_unknown_fields_are_rejected(self, dev_client, workspace, channel):
+        resp = dev_client.put(
+            self._url(workspace.id, channel.id),
+            json={"authorized": True, "confirm": True, "decision_automation_enabled": True},
+        )
+        assert resp.status_code == 422
+
+    def test_automation_policy_endpoint_cannot_authorize_publishing(
+        self, dev_client, workspace, channel
+    ):
+        """The two controls must stay structurally separate: the automation
+        policy endpoint has no vocabulary for publishing authorization."""
+        resp = dev_client.put(
+            f"/api/v1/workspaces/{workspace.id}/channels/{channel.id}"
+            f"/automation-policy?workspace_id={workspace.id}",
+            json={"public_publishing_authorized": True},
+        )
+        assert resp.status_code == 422
+
+        state = dev_client.get(self._url(workspace.id, channel.id)).json()
+        assert state["decision"]["allowed"] is False

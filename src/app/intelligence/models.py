@@ -116,6 +116,7 @@ class RunStatus(StrEnum):
 class AdapterName(StrEnum):
     manual = "manual"
     youtube_data_api = "youtube_data_api"
+    market_intelligence = "market_intelligence"
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +220,7 @@ class Channel(BaseModel):
     platform: Platform = Platform.youtube
     channel_name: str = Field(min_length=1, max_length=200)
     platform_channel_id: str | None = None
+    cp_channel_id: str | None = None
     operating_mode: OperatingMode = OperatingMode.manual
     current_profile_version_id: int | None = None
     current_strategy_id: int | None = None
@@ -392,6 +394,9 @@ class Opportunity(BaseModel):
     current_lifecycle_state: LifecycleState = LifecycleState.new
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    # Phase 13F: external market intelligence provenance
+    canonical_cluster_id: int | None = None
+    market_signal_snapshot_id: int | None = None
 
 
 class OpportunityObservation(BaseModel):

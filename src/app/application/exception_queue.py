@@ -137,12 +137,32 @@ def get_exception_queue(conn: Any, workspace_id: str) -> list[ExceptionView]:
             )
         )
 
-    # Degraded health records.
+    # Degraded health records — LATEST per entity only (Phase 18E.2).
+    #
+    # A health record is permanent audit history: cp_health_records is never
+    # rewritten or deleted, by design (see app.control_plane.health). Before
+    # this fix, this query listed every historical bad reading for every
+    # entity forever, with no notion that a later 'healthy' record superseded
+    # an earlier 'degraded' one — a credential that broke on Monday and was
+    # fixed on Tuesday still appeared as an active exception on Friday. The
+    # correlated subquery below selects, per entity_id, only its most recent
+    # record (by recorded_at, then rowid as a tiebreaker for same-instant
+    # writes — cp_health_records is not a WITHOUT ROWID table, so this is a
+    # bare integer to sort on, not a stored column), and the outer WHERE then
+    # keeps that entity in the result only if that most-current record is
+    # itself still bad. A superseding 'healthy' record makes the entity vanish
+    # from this query entirely, while every row it ever wrote stays in the
+    # table for audit/history exactly as before.
     health_rows = conn.execute(
-        "SELECT * FROM cp_health_records "
-        "WHERE status IN ('degraded', 'unavailable', 'credential_expired', "
+        "SELECT * FROM cp_health_records hr "
+        "WHERE hr.rowid = ("
+        "  SELECT hr2.rowid FROM cp_health_records hr2"
+        "  WHERE hr2.entity_id = hr.entity_id"
+        "  ORDER BY hr2.recorded_at DESC, hr2.rowid DESC LIMIT 1"
+        ") "
+        "AND hr.status IN ('degraded', 'unavailable', 'credential_expired', "
         "'quota_limited', 'failed') "
-        "ORDER BY recorded_at DESC LIMIT 100",
+        "ORDER BY hr.recorded_at DESC LIMIT 100",
     ).fetchall()
     # Scope health records to workspace via channel/account lookup.
     ws_entity_ids = _workspace_entity_ids(conn, workspace_id)

@@ -174,6 +174,126 @@ class TestExtractHtml:
         result = extract_html(b"<html><body></body></html>")
         assert result.raw_text is None
 
+    # ------------------------------------------------------------------
+    # Step 3 tests: generic HTML cleaning improvements (16D.2.1)
+    # ------------------------------------------------------------------
+
+    def test_template_tag_payload_not_in_output(self):
+        """<template> elements carrying JS/HTML payloads must not appear in body text."""
+        html = (
+            b"<html><body>"
+            b"<main><p>Scientific content about CRISPR editing pathways.</p></main>"
+            b"<template>var analyticsPayload = {newrelic: true};</template>"
+            b"</body></html>"
+        )
+        result = extract_html(html)
+        assert result.raw_text is not None
+        assert "analyticsPayload" not in (result.raw_text or "")
+        assert "CRISPR editing pathways" in (result.raw_text or "")
+
+    def test_inline_js_analytics_payload_excluded(self):
+        """Minified inline JS analytics payloads must not dominate the extracted text."""
+        analytics_js = b"x=" * 500  # simulate minified JS noise
+        html = (
+            b"<html><body>"
+            b"<script>" + analytics_js + b"</script>"
+            b"<main><p>DNA repair mechanisms include NHEJ and HDR pathways.</p></main>"
+            b"</body></html>"
+        )
+        result = extract_html(html)
+        raw = result.raw_text or ""
+        assert "NHEJ and HDR pathways" in raw
+        assert "x=x=" not in raw
+
+    def test_nav_boilerplate_excluded_when_main_present(self):
+        """Navigation boilerplate is excluded when a <main> content element is present."""
+        html = (
+            b"<html><body>"
+            b"<nav>Home | About | Contact | Careers | FAQ</nav>"
+            b"<main><p>Gene editing uses guide RNAs to direct Cas9 to target sequences.</p></main>"
+            b"<footer>Copyright 2024</footer>"
+            b"</body></html>"
+        )
+        result = extract_html(html)
+        raw = result.raw_text or ""
+        assert "guide RNAs" in raw
+        assert "Home | About | Contact" not in raw
+
+    def test_article_element_preferred_over_full_body(self):
+        """<article> body content is preserved when used as content root."""
+        html = (
+            b"<html><body>"
+            b"<aside>Sidebar advertising content unrelated to article</aside>"
+            b"<article>"
+            b"<p>Homology-directed repair requires a DNA template for precise edits.</p>"
+            b"</article>"
+            b"</body></html>"
+        )
+        result = extract_html(html)
+        raw = result.raw_text or ""
+        assert "Homology-directed repair" in raw
+
+    def test_aria_hidden_elements_excluded(self):
+        """Elements with aria-hidden=true (overlays, tooltips, trackers) are removed."""
+        html = (
+            b"<html><body>"
+            b'<div aria-hidden="true">cookie_consent_tracking_widget_v2</div>'
+            b"<main><p>CRISPR relies on Cas9 nuclease activity to cleave DNA.</p></main>"
+            b"</body></html>"
+        )
+        result = extract_html(html)
+        raw = result.raw_text or ""
+        assert "cookie_consent_tracking" not in raw
+        assert "Cas9 nuclease activity" in raw
+
+    def test_form_and_button_elements_excluded(self):
+        """Form UI elements are stripped from research text."""
+        html = (
+            b"<html><body>"
+            b"<main>"
+            b"<p>HDR pathway fidelity depends on template proximity and cell cycle phase.</p>"
+            b"<form><button>Subscribe</button><input placeholder='Email'/></form>"
+            b"</main>"
+            b"</body></html>"
+        )
+        result = extract_html(html)
+        raw = result.raw_text or ""
+        assert "HDR pathway fidelity" in raw
+        assert "Subscribe" not in raw
+
+    def test_plain_text_path_not_regressed(self):
+        """Plain-text extraction is unaffected by HTML cleaning changes."""
+        from app.research.extract import extract_text
+
+        result = extract_text(b"CRISPR cuts at a specific genomic locus directed by guide RNA.")
+        assert result.raw_text is not None
+        assert "CRISPR cuts" in result.raw_text
+
+    def test_fallback_to_body_when_no_main_or_article(self):
+        """Falls back to <body> text when no <main>/<article> element exists."""
+        html = (
+            b"<html><body>"
+            b"<div><p>Cell repair mechanisms: NHEJ is error-prone, "
+            b"HDR is template-guided.</p></div>"
+            b"</body></html>"
+        )
+        result = extract_html(html)
+        raw = result.raw_text or ""
+        assert "NHEJ is error-prone" in raw
+
+    def test_iframe_excluded(self):
+        """<iframe> elements (often tracking pixels or embeds) are removed."""
+        html = (
+            b"<html><body>"
+            b'<iframe src="https://tracking.example.com/pixel"></iframe>'
+            b"<main><p>The cas9 protein creates blunt-ended double-strand breaks.</p></main>"
+            b"</body></html>"
+        )
+        result = extract_html(html)
+        raw = result.raw_text or ""
+        assert "tracking.example.com" not in raw
+        assert "double-strand breaks" in raw
+
 
 # ---------------------------------------------------------------------------
 # PDF extraction

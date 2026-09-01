@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.ai.claude import ClaudeProvider
+from app.ai.claude import ClaudeProvider, _strip_json_fences
 from app.ai.errors import (
     InvalidStructuredResponseError,
     MissingCredentialsError,
@@ -96,6 +96,32 @@ def test_schema_mismatch_raises() -> None:
     p = _provider(client=_mock_client('{"wrong": "field"}'))
     with pytest.raises(InvalidStructuredResponseError):
         p.complete(_req(response_schema=EchoOutput))
+
+
+def test_json_fence_stripped_before_parse() -> None:
+    """Markdown code-fenced JSON is accepted and parsed correctly."""
+    fenced = '```json\n{"echo": "world"}\n```'
+    p = _provider(client=_mock_client(fenced))
+    resp = p.complete(_req(response_schema=EchoOutput))
+    assert resp.parsed is not None
+    assert resp.parsed.echo == "world"
+
+
+def test_plain_json_fence_stripped() -> None:
+    """Triple-backtick fence without 'json' tag is also stripped."""
+    fenced = '```\n{"echo": "bare"}\n```'
+    p = _provider(client=_mock_client(fenced))
+    resp = p.complete(_req(response_schema=EchoOutput))
+    assert resp.parsed is not None
+    assert resp.parsed.echo == "bare"
+
+
+def test_non_fenced_json_unaffected() -> None:
+    """Plain JSON without fences is parsed as before."""
+    p = _provider(client=_mock_client('{"echo": "plain"}'))
+    resp = p.complete(_req(response_schema=EchoOutput))
+    assert resp.parsed is not None
+    assert resp.parsed.echo == "plain"
 
 
 # ── Retry behaviour ───────────────────────────────────────────────────────────
@@ -188,3 +214,40 @@ def test_api_key_not_in_exception_message() -> None:
     except RetryExhaustedError as exc:
         assert secret not in str(exc)
         assert secret not in str(exc.last_error)
+
+
+# ── _strip_json_fences unit tests ─────────────────────────────────────────────
+
+
+def test_strip_json_fence_json_tagged() -> None:
+    assert _strip_json_fences('```json\n{"k": 1}\n```') == '{"k": 1}'
+
+
+def test_strip_json_fence_plain_backticks() -> None:
+    assert _strip_json_fences('```\n{"k": 2}\n```') == '{"k": 2}'
+
+
+def test_strip_json_fence_no_fence_unchanged() -> None:
+    raw = '{"k": 3}'
+    assert _strip_json_fences(raw) == raw
+
+
+def test_strip_json_fence_with_surrounding_whitespace() -> None:
+    assert _strip_json_fences('  ```json\n{"k": 4}\n```  ') == '{"k": 4}'
+
+
+def test_strip_json_fence_ignores_non_fence_backticks() -> None:
+    raw = "some text with `inline code`"
+    assert _strip_json_fences(raw) == raw
+
+
+def test_strip_json_fence_with_preamble_text() -> None:
+    """Preamble text before the fence is ignored; JSON inside is extracted."""
+    raw = 'Here is my response:\n```json\n{"k": 5}\n```'
+    assert _strip_json_fences(raw) == '{"k": 5}'
+
+
+def test_strip_json_fence_with_preamble_and_trailing_text() -> None:
+    """Preamble before and trailing text after the fence — JSON still extracted."""
+    raw = 'Sure!\n```json\n{"k": 6}\n```\nHope that helps.'
+    assert _strip_json_fences(raw) == '{"k": 6}'

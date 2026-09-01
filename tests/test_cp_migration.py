@@ -18,7 +18,7 @@ def _in_memory_db():
 
 class TestSchemaVersion:
     def test_schema_version_is_18(self):
-        assert SCHEMA_VERSION == 24
+        assert SCHEMA_VERSION == 51
 
 
 class TestV18DDLStandalone:

@@ -59,25 +59,49 @@ def get_production_plan_by_input_hash(
 
 
 def get_active_approved_production_plan(
-    conn: sqlite3.Connection, topic_id: int
+    conn: sqlite3.Connection,
+    topic_id: int,
+    *,
+    experiment_id: str | None = None,
 ) -> ProductionPlan | None:
-    row = conn.execute(
-        """
-        SELECT * FROM production_plans
-         WHERE topic_id = ?
-           AND status = 'approved'
-           AND superseded_at IS NULL
-           AND experiment_id IS NULL
-        """,
-        (topic_id,),
-    ).fetchone()
+    """Return the active approved plan for a topic.
+
+    When experiment_id is provided, the query matches that specific experiment
+    binding.  When None (default), only non-experiment plans are returned so
+    that the two pools never collide.
+    """
+    if experiment_id is not None:
+        row = conn.execute(
+            """
+            SELECT * FROM production_plans
+             WHERE topic_id = ?
+               AND status = 'approved'
+               AND superseded_at IS NULL
+               AND experiment_id = ?
+            """,
+            (topic_id, experiment_id),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            SELECT * FROM production_plans
+             WHERE topic_id = ?
+               AND status = 'approved'
+               AND superseded_at IS NULL
+               AND experiment_id IS NULL
+            """,
+            (topic_id,),
+        ).fetchone()
     return ProductionPlan.from_row(row) if row else None
 
 
 def require_active_approved_production_plan(
-    conn: sqlite3.Connection, topic_id: int
+    conn: sqlite3.Connection,
+    topic_id: int,
+    *,
+    experiment_id: str | None = None,
 ) -> ProductionPlan:
-    plan = get_active_approved_production_plan(conn, topic_id)
+    plan = get_active_approved_production_plan(conn, topic_id, experiment_id=experiment_id)
     if plan is None:
         raise NoApprovedProductionPlanError(
             f"No active approved production plan for topic_id={topic_id}"
@@ -113,9 +137,12 @@ def get_production_segment_citations(
 
 
 def get_approved_production_plan_full(
-    conn: sqlite3.Connection, topic_id: int
+    conn: sqlite3.Connection,
+    topic_id: int,
+    *,
+    experiment_id: str | None = None,
 ) -> ApprovedProductionPlan | None:
-    plan = get_active_approved_production_plan(conn, topic_id)
+    plan = get_active_approved_production_plan(conn, topic_id, experiment_id=experiment_id)
     if plan is None:
         return None
     segments_raw = get_production_segments(conn, plan.id)

@@ -8,6 +8,7 @@ The caller (CLI / repository) is responsible for persistence.
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 from app.media.constants import (
     COMPOSITOR_VERSION,
@@ -19,6 +20,7 @@ from app.media.hashing import RenderHashInput, compute_render_input_hash
 from app.media.models import (
     RenderManifestDraft,
     RenderSceneDraft,
+    RenderVisualBeat,
     ResolvedAsset,
 )
 
@@ -47,6 +49,11 @@ def build_render_manifest(
     render_scenes: list[RenderSceneDraft] = [_resolve_scene(s) for s in scenes]
 
     scene_tuples = [(s.scene_index, s.segment_id, s.audio_sha256) for s in render_scenes]
+    beat_tuples = [
+        (beat.beat_index, beat.duration_ms, beat.asset_key)
+        for scene in render_scenes
+        for beat in scene.visual_beats
+    ]
     hash_input = RenderHashInput(
         scene_manifest_id=scene_manifest_id,
         narration_run_id=narration_run_id,
@@ -64,6 +71,7 @@ def build_render_manifest(
         caption_burn_in=caption_burn_in,
         experiment_id=experiment_id,
         scene_tuples=scene_tuples,
+        beat_tuples=beat_tuples,
     )
 
     total_duration_ms = sum(s.duration_ms for s in render_scenes)
@@ -110,6 +118,7 @@ class _SceneInput:
         "visual_objective",
         "caption_cue_ids",
         "resolved_assets",
+        "visual_beats",
     )
 
     def __init__(
@@ -129,6 +138,7 @@ class _SceneInput:
         visual_objective: str,
         caption_cue_ids: list[int],
         resolved_assets: list[ResolvedAsset] | None = None,
+        visual_beats: list[RenderVisualBeat] | None = None,
     ) -> None:
         self.scene_index = scene_index
         self.scene_id = scene_id
@@ -144,6 +154,7 @@ class _SceneInput:
         self.visual_objective = visual_objective
         self.caption_cue_ids = caption_cue_ids
         self.resolved_assets = resolved_assets or []
+        self.visual_beats = visual_beats or []
 
 
 def _resolve_scene(s: _SceneInput) -> RenderSceneDraft:
@@ -163,6 +174,7 @@ def _resolve_scene(s: _SceneInput) -> RenderSceneDraft:
         visual_objective=s.visual_objective,
         caption_cue_ids=s.caption_cue_ids,
         primary_asset=primary,
+        visual_beats=list(s.visual_beats),
     )
 
 
@@ -180,13 +192,26 @@ class SceneInputBuilder:
 
     def build(self, approved: object) -> list[_SceneInput]:
         """Build scene inputs from an ApprovedSceneManifest."""
-        from app.narration.repository import get_approved_narration_run_full
+        from app.narration.repository import (
+            get_approved_narration_run_full,
+            get_narration_segment_asset,
+        )
 
-        # approved is ApprovedSceneManifest — avoid circular import by duck-typing
-        narration_run = get_approved_narration_run_full(self._conn, approved.plan_id)
+        # approved is ApprovedSceneManifest — avoid circular import by duck-typing.
+        #
+        # Prefer the persisted narration_asset_id on each scene.  It is the
+        # strongest lineage reference and avoids losing experiment-linked audio
+        # when a plan-level narration lookup cannot resolve the experiment.
+        experiment_id = getattr(approved, "experiment_id", None)
+        narration_run = get_approved_narration_run_full(
+            self._conn,
+            approved.plan_id,
+            experiment_id=experiment_id,
+        )
         self._narration_input_hash = narration_run.input_hash if narration_run else ""
 
-        # Build segment_id → (audio_path, audio_sha256) lookup
+        # Backward-compatible segment lookup for older manifests that do not
+        # persist narration_asset_id.
         audio_by_segment: dict[int, tuple[str | None, str | None]] = {}
         if narration_run:
             for seg in narration_run.segments:
@@ -194,7 +219,37 @@ class SceneInputBuilder:
 
         inputs: list[_SceneInput] = []
         for scene in approved.scenes:
-            audio_path, audio_sha256 = audio_by_segment.get(scene.segment_id, (None, None))
+            audio_path: str | None = None
+            audio_sha256: str | None = None
+
+            if scene.narration_asset_id is not None:
+                narration_asset = get_narration_segment_asset(
+                    self._conn,
+                    scene.narration_asset_id,
+                )
+                if narration_asset is not None:
+                    audio_path = narration_asset.audio_path
+                    audio_sha256 = narration_asset.audio_sha256
+
+                    # Narration asset paths are persisted relative to the
+                    # configured artifacts root. FFmpeg concat files live in a
+                    # temporary directory, so relative paths would otherwise be
+                    # resolved relative to that temp directory and fail.
+                    if audio_path:
+                        resolved_audio_path = Path(audio_path)
+                        if not resolved_audio_path.is_absolute():
+                            from app.core.config import get_config
+
+                            resolved_audio_path = (
+                                Path(get_config().artifacts_path) / resolved_audio_path
+                            ).resolve()
+                        audio_path = str(resolved_audio_path)
+
+            if audio_path is None:
+                audio_path, audio_sha256 = audio_by_segment.get(
+                    scene.segment_id,
+                    (None, None),
+                )
             resolved_assets = [
                 ResolvedAsset(
                     asset_id=a.id,

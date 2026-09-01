@@ -5,6 +5,7 @@ import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingState } from '@/components/common/LoadingState'
 import { ErrorState } from '@/components/common/ErrorState'
 import { EmptyState } from '@/components/common/EmptyState'
+import { TechnicalDetails } from '@/components/common/TechnicalDetails'
 import { useExceptionQueue } from '@/hooks/useWorkspace'
 
 export function Exceptions() {
@@ -67,9 +68,7 @@ export function Exceptions() {
                      <summary className="text-xs text-muted" style={{ cursor: 'pointer' }}>
                        Diagnostics
                      </summary>
-                     <pre className="font-mono text-xs text-secondary mt-2" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                       {JSON.stringify(e.metadata, null, 2)}
-                     </pre>
+                     <TechnicalDetails summary="Exception metadata" data={e.metadata} />
                    </details>
                  )}
                </div>

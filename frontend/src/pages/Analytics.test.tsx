@@ -1,141 +1,104 @@
-/* Analytics page — metric semantic labeling, empty/populated states */
+/* Analytics page — Phase 17C channel performance and video-by-video view. */
 
 import { describe, it, expect } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { server } from '@/test/server'
 import { Analytics } from './Analytics'
-import { WS_ID, analyticsAggregate, analyticsAggregateCtr } from '@/test/fixtures'
+import { WS_ID, publicationListItem, publicationAnalytics, cpAccount1 } from '@/test/fixtures'
 
 const B = 'http://localhost:5173/api/v1'
 
 function renderAnalytics(wsId = WS_ID) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
-    <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[`/workspaces/${wsId}/analytics`]}>
-        <Routes>
-          <Route path="/workspaces/:workspaceId/analytics" element={<Analytics />} />
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
-  )
-}
-
-/** Return the method cell (2nd <td>) of the row whose first cell matches metricName */
-function getMethodCell(metricName: string): HTMLElement {
-  const cell = screen.getByText(metricName, { selector: 'td' })
-  const row = cell.closest('tr')!
-  return row.querySelectorAll('td')[1] as HTMLElement
+  return {
+    user: userEvent.setup(),
+    ...render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={[`/workspaces/${wsId}/analytics`]}>
+          <Routes>
+            <Route path="/workspaces/:workspaceId/analytics" element={<Analytics />} />
+            <Route path="/workspaces/:workspaceId/analytics/:publicationId" element={<div data-testid="video-analytics-page" />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+  }
 }
 
 describe('Analytics', () => {
-  describe('empty state (no aggregates from API)', () => {
-    it('shows explicit unavailable state (not a silent empty)', async () => {
+  describe('empty state (no publications at all)', () => {
+    it('shows an explicit empty state rather than a blank page', async () => {
+      server.use(http.get(`${B}/workspaces/${WS_ID}/publications`, () => HttpResponse.json([])))
       renderAnalytics()
-      await waitFor(() => screen.getByText(/provider setup required/i))
-    })
-
-    it('does not show fake metric data', () => {
-      renderAnalytics()
-      expect(screen.queryByText(/1,234/)).not.toBeInTheDocument()
-      expect(screen.queryByText(/views: \d/i)).not.toBeInTheDocument()
+      await waitFor(() => screen.getByText(/no videos yet/i))
     })
   })
 
-  describe('metric semantics table (always visible)', () => {
-    it('labels CTR as latest_observation (gauge), not sum', async () => {
+  describe('populated state', () => {
+    it('shows channel-level KPI cards computed from per-publication analytics', async () => {
       renderAnalytics()
-      await waitFor(() => screen.getByText('ctr', { selector: 'td' }))
-      const method = getMethodCell('ctr')
-      expect(method.textContent).toBe('latest_observation')
+      // "Views" also labels the metric-toggle button in the chart section
+      // below, so scope the assertion to the KPI tile's own label class.
+      await waitFor(() => screen.getByText('Views', { selector: '.metric-card-label' }))
+      expect(screen.getByText('Watch time', { selector: '.metric-card-label' })).toBeInTheDocument()
+      expect(screen.getByText('Avg % viewed', { selector: '.metric-card-label' })).toBeInTheDocument()
+      expect(screen.getByText('Engaged views', { selector: '.metric-card-label' })).toBeInTheDocument()
+      expect(screen.getByText('Likes', { selector: '.metric-card-label' })).toBeInTheDocument()
+      expect(screen.getByText('Subscribers gained', { selector: '.metric-card-label' })).toBeInTheDocument()
     })
 
-    it('labels average_view_duration as latest_observation', async () => {
+    it('shows the channel identity in the subtitle when a primary account exists', async () => {
       renderAnalytics()
-      await waitFor(() => screen.getByText('average_view_duration', { selector: 'td' }))
-      const method = getMethodCell('average_view_duration')
-      expect(method.textContent).toBe('latest_observation')
+      await waitFor(() => screen.getByText(new RegExp(cpAccount1.display_name)))
     })
 
-    it('labels likes as latest_observation (current count, not incremental)', async () => {
+    it('shows the performance-over-time section with a metric selector', async () => {
       renderAnalytics()
-      await waitFor(() => screen.getByText('likes', { selector: 'td' }))
-      const method = getMethodCell('likes')
-      expect(method.textContent).toBe('latest_observation')
+      await waitFor(() => screen.getByText('Performance over time'))
+      expect(screen.getByRole('group', { name: /metric/i })).toBeInTheDocument()
     })
 
-    it('labels views as sum (additive)', async () => {
+    it('shows a video card for each publication', async () => {
       renderAnalytics()
-      await waitFor(() => screen.getByText('views', { selector: 'td' }))
-      const method = getMethodCell('views')
-      expect(method.textContent).toBe('sum')
+      await waitFor(() => screen.getByText('Video performance'))
+      expect(screen.getByText(publicationListItem.title)).toBeInTheDocument()
     })
 
-    it('no gauge metric method cell contains "sum"', async () => {
-      renderAnalytics()
-      await waitFor(() => screen.getByText('ctr', { selector: 'td' }))
-      for (const metric of ['ctr', 'average_view_duration', 'likes']) {
-        const method = getMethodCell(metric)
-        expect(method.textContent).not.toBe('sum')
-      }
+    it('navigates to the per-video analytics route when a video card is clicked', async () => {
+      const { user } = renderAnalytics()
+      await waitFor(() => screen.getByText(publicationListItem.title))
+      await user.click(screen.getByText(publicationListItem.title))
+      await waitFor(() => screen.getByTestId('video-analytics-page'))
     })
 
-    it('notes that revenue requires currency and mixed currencies are not combined', async () => {
+    it('offers sort controls for the video grid', async () => {
       renderAnalytics()
-      await waitFor(() => screen.getByText('revenue_estimate', { selector: 'td' }))
-      const row = screen.getByText('revenue_estimate', { selector: 'td' }).closest('tr')!
-      expect(row.textContent).toContain('Currency')
+      await waitFor(() => screen.getByRole('group', { name: /sort videos/i }))
+      expect(screen.getByRole('button', { name: 'Most viewed' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Most watch time' })).toBeInTheDocument()
     })
-  })
 
-  describe('populated state (aggregates returned from API)', () => {
-    it('shows aggregate rows when data is available', async () => {
+    it('does not silently drop a publication scoped to a topic with no workspace_id', async () => {
+      // Publication 3's real-world analogue: topic_id has a NULL workspace_id,
+      // which breaks the workspace-wide aggregates endpoint (Phase 17B/17C
+      // finding). This page must never call that endpoint — it fans out
+      // per-publication instead — so a second publication always renders.
+      const secondPub = { ...publicationListItem, id: 3, title: 'Second Video' }
       server.use(
-        http.get(`${B}/workspaces/${WS_ID}/analytics/aggregates`, () =>
-          HttpResponse.json([analyticsAggregate, analyticsAggregateCtr]),
+        http.get(`${B}/workspaces/${WS_ID}/publications`, () =>
+          HttpResponse.json([publicationListItem, secondPub]),
+        ),
+        http.get(`${B}/workspaces/${WS_ID}/publications/3/analytics`, () =>
+          HttpResponse.json({ ...publicationAnalytics, snapshot_id: 2 }),
         ),
       )
       renderAnalytics()
-      await waitFor(() => screen.getByText('lifetime', { selector: 'h2' }))
-      // Both the aggregates table and the metric semantics table contain 'views' —
-      // use getAllByText and assert at least one td with that text.
-      const viewsCells = screen.getAllByText('views', { selector: 'td' })
-      expect(viewsCells.length).toBeGreaterThanOrEqual(1)
-    })
-
-    it('does not show unavailable state when aggregates exist', async () => {
-      server.use(
-        http.get(`${B}/workspaces/${WS_ID}/analytics/aggregates`, () =>
-          HttpResponse.json([analyticsAggregate]),
-        ),
-      )
-      renderAnalytics()
-      await waitFor(() => screen.getByText('lifetime', { selector: 'h2' }))
-      expect(screen.queryByText(/provider setup required/i)).not.toBeInTheDocument()
-    })
-
-    it('displays metric value for views aggregate', async () => {
-      server.use(
-        http.get(`${B}/workspaces/${WS_ID}/analytics/aggregates`, () =>
-          HttpResponse.json([analyticsAggregate]),
-        ),
-      )
-      renderAnalytics()
-      await waitFor(() => screen.getByText('42.0K'))
-    })
-
-    it('still shows metric semantics table when data is loaded', async () => {
-      server.use(
-        http.get(`${B}/workspaces/${WS_ID}/analytics/aggregates`, () =>
-          HttpResponse.json([analyticsAggregate]),
-        ),
-      )
-      renderAnalytics()
-      await waitFor(() => screen.getByText('lifetime', { selector: 'h2' }))
-      expect(screen.getByText('Metric Semantics')).toBeInTheDocument()
+      await waitFor(() => screen.getByText('Second Video'))
+      expect(screen.getByText(publicationListItem.title)).toBeInTheDocument()
     })
   })
 })

@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeAll } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { readFileSync } from 'node:fs'
@@ -59,16 +60,61 @@ describe('AppShell — sidebar navigation', () => {
     expect(screen.getByRole('navigation', { name: /primary navigation/i })).toBeInTheDocument()
   })
 
-  it('nav links are rendered inside the sidebar', () => {
+  /* Phase 17A information architecture: the five day-to-day destinations are
+     the only ones surfaced by default. Infrastructure moved under a collapsed
+     Advanced group so it cannot compete with normal channel operations. */
+  it('renders exactly the five primary destinations', () => {
     wrap()
     const nav = screen.getByRole('navigation', { name: /primary navigation/i })
-    // Each section must have at least its first link accessible within the nav element
-    expect(within(nav).getByRole('link', { name: /dashboard/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /pipelines/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /reviews/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /channels/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /analytics/i })).toBeInTheDocument()
-    expect(within(nav).getByRole('link', { name: /settings/i })).toBeInTheDocument()
+    for (const label of ['Dashboard', 'Content', 'Analytics', 'Learn', 'Channel']) {
+      expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument()
+    }
+  })
+
+  it('keeps infrastructure pages out of the default reading path', () => {
+    wrap()
+    const nav = screen.getByRole('navigation', { name: /primary navigation/i })
+    // Collapsed under Advanced — present in the DOM but not exposed.
+    expect(within(nav).queryByRole('link', { name: /pipelines/i })).not.toBeInTheDocument()
+    expect(within(nav).queryByRole('link', { name: /audit/i })).not.toBeInTheDocument()
+    expect(within(nav).queryByRole('link', { name: /settings/i })).not.toBeInTheDocument()
+  })
+
+  it('exposes infrastructure pages once Advanced is expanded', async () => {
+    const user = userEvent.setup()
+    wrap()
+    const nav = screen.getByRole('navigation', { name: /primary navigation/i })
+
+    const toggle = within(nav).getByRole('button', { name: /advanced/i })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+
+    // Regex rather than exact match: badged items (Reviews, Exceptions) fold
+    // their pending count into the accessible name.
+    for (const label of [/pipelines/i, /reviews/i, /workflows/i, /audit/i, /settings/i]) {
+      expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument()
+    }
+  })
+
+  it('rolls pending counts onto the collapsed Advanced toggle', async () => {
+    // Moving Reviews/Exceptions out of the primary nav must not hide work that
+    // needs attention: the collapsed group carries the combined count.
+    // The counts arrive from queries, so this resolves asynchronously.
+    wrap()
+    const nav = screen.getByRole('navigation', { name: /primary navigation/i })
+    expect(
+      await within(nav).findByLabelText(/items need attention under advanced/i),
+    ).toBeInTheDocument()
+  })
+
+  it('surfaces a global system status link instead of a primary Health tab', () => {
+    wrap()
+    const nav = screen.getByRole('navigation', { name: /primary navigation/i })
+    expect(within(nav).queryByRole('link', { name: 'Health' })).not.toBeInTheDocument()
+    // The status chip carries its meaning in words, not colour alone.
+    expect(screen.getByRole('link', { name: /system status:/i })).toBeInTheDocument()
   })
 
   it('dev auth banner is present', () => {

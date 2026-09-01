@@ -35,9 +35,11 @@ from app.oauth.client import (
 from app.oauth.errors import (
     OAuthChannelVerificationError,
     OAuthCodeExchangeError,
+    OAuthError,
     OAuthNotConfiguredError,
     OAuthProviderError,
     OAuthRefreshError,
+    OAuthTransientError,
 )
 
 
@@ -152,6 +154,38 @@ class RealGoogleOAuthClient:
             google_sub=None,  # Google sub is in the id_token; extract if needed
         )
 
+    @staticmethod
+    def _classify_refresh_failure(exc: Exception) -> OAuthError:
+        """Distinguish a network/transport failure from a genuine credential rejection.
+
+        google.auth.transport.requests.Request wraps ANY requests.exceptions.RequestException
+        (connection refused, DNS resolution failure, timeout) as
+        google.auth.exceptions.TransportError/TimeoutError BEFORE the request reaches
+        Google — the refresh token is never actually presented to the server in that
+        case, so nothing has been learned about whether it is valid.
+
+        google.auth.exceptions.RefreshError (a sibling, not a subclass — the three are
+        independent direct children of GoogleAuthError) is raised only when Google's
+        token endpoint actually responded, e.g. with invalid_grant. That is the one
+        case that legitimately means "the credential needs reconnecting".
+
+        Falls back to treating an unrecognised exception as genuine (OAuthRefreshError)
+        rather than transient — an error this function does not recognise should not
+        silently suppress the "needs reconnection" signal that existed before this
+        classification was added.
+        """
+        try:
+            from google.auth.exceptions import TimeoutError as GoogleTimeoutError
+            from google.auth.exceptions import TransportError as GoogleTransportError
+        except ImportError:
+            return OAuthRefreshError(f"Token refresh failed: {exc}")
+
+        if isinstance(exc, GoogleTransportError | GoogleTimeoutError):
+            return OAuthTransientError(
+                f"Token refresh could not reach the provider (transient): {exc}"
+            )
+        return OAuthRefreshError(f"Token refresh failed: {exc}")
+
     def refresh_access_token(self, refresh_token: str) -> TokenPayload:
         try:
             import json
@@ -176,7 +210,7 @@ class RealGoogleOAuthClient:
             )
             credentials.refresh(Request())
         except Exception as exc:
-            raise OAuthRefreshError(f"Token refresh failed: {exc}") from exc
+            raise self._classify_refresh_failure(exc) from exc
 
         expires_at = None
         if credentials.expiry:

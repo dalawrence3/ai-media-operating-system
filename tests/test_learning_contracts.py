@@ -287,6 +287,16 @@ class TestRecommendationStrength:
 class TestPartialRunSemantics:
     def test_all_generators_fail_produces_failed_run(self, db):
         _insert_snapshot(db)
+        # Insert sufficient data so maturity checks pass and the patched bad
+        # generators actually get called (without this they'd be SKIPPED first).
+        _insert_aggregate(db, 1, "ctr", 0.03)
+        _insert_aggregate(db, 1, "views", 50.0)
+        _insert_aggregate(db, 1, "average_view_duration", 5.0)
+        _insert_aggregate(db, 1, "likes", 2.0)
+        _insert_aggregate(db, 1, "subscribers_gained", 1.0)
+        _insert_aggregate(db, 1, "subscribers_lost", 3.0)
+        _insert_aggregate(db, 1, "shares", 0.0)
+        _insert_aggregate(db, 1, "watch_time_seconds", 250.0)
 
         def bad_gen(conn, handoff, run_id):
             raise RuntimeError("all broken")
@@ -306,6 +316,10 @@ class TestPartialRunSemantics:
 
     def test_one_generator_fails_produces_partial_run(self, db):
         _insert_snapshot(db)
+        # CTR aggregate ensures maturity passes for CTR generator (required_metrics check).
+        # Views aggregate ensures retention and others pass their maturity check.
+        _insert_aggregate(db, 1, "ctr", 0.03)
+        _insert_aggregate(db, 1, "views", 50.0)
         _insert_aggregate(db, 1, "average_view_duration", 10.0)
 
         def bad_ctr(conn, handoff, run_id):
@@ -319,6 +333,9 @@ class TestPartialRunSemantics:
 
     def test_partial_run_persists_successful_recommendations(self, db):
         _insert_snapshot(db)
+        # Enough data for maturity to pass for CTR and for retention
+        _insert_aggregate(db, 1, "ctr", 0.03)
+        _insert_aggregate(db, 1, "views", 50.0)
         _insert_aggregate(db, 1, "average_view_duration", 10.0)
 
         def bad_ctr(conn, handoff, run_id):
@@ -336,10 +353,15 @@ class TestPartialRunSemantics:
         run_id = analyze_publication(db, publication_id=1, topic_id=1)
         gen_results = list_generator_results(db, run_id)
         assert len(gen_results) == 6
-        assert all(gr.status == "succeeded" for gr in gen_results)
+        # With no analytics data, generators are SKIPPED (insufficient evidence).
+        # All results must be either succeeded or skipped — never failed.
+        assert all(gr.status in ("succeeded", "skipped") for gr in gen_results)
 
     def test_partial_run_records_failure(self, db):
         _insert_snapshot(db)
+        # Insert CTR aggregate so the maturity check passes and the patched
+        # bad_ctr generator gets called (without this, maturity skips it first).
+        _insert_aggregate(db, 1, "ctr", 0.03)
 
         def bad_ctr(conn, handoff, run_id):
             raise RuntimeError("CTR broken")

@@ -10,8 +10,11 @@ import {
   pipelineView, reviewItem, exceptionView, costView,
   auditView, operationView, experiment, controlEvent,
   topicView, topicView2, stageArtifactResolved, stageDiagnosticReport,
-  publicationListItem, publicationDetail, publicationAnalytics,
+  publicationListItem, publicationDetail, publicationAnalytics, publicationAnalyticsHistory,
   TOPIC_ID, PIPE_ID, PUB_ID,
+  publishingAuthorizationAuthorized,
+  publishingAuthorizationUnauthorized,
+  publicationVisualQuality,
 } from './fixtures'
 
 export const MOCK_NEW_CHANNEL_ID = 'ch-new-001'
@@ -170,6 +173,9 @@ export const handlers = [
       channel_title: null,
       verified_at: null,
       granted_scopes: [],
+      upload_scope_granted: false,
+      analytics_scope_granted: false,
+      release_scope_granted: false,
       credential_status: null,
       health_status: null,
     }),
@@ -180,12 +186,88 @@ export const handlers = [
   http.delete(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/accounts/:accountId/oauth/youtube`, () =>
     HttpResponse.json({ status: 'disconnected', account_id: 'mock' }),
   ),
-  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/strategy`, () =>
-    HttpResponse.json({ status: 'unavailable', message: 'No strategy assigned' }),
+  http.post(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/accounts/:accountId/oauth/youtube/upgrade-analytics`, () =>
+    HttpResponse.json({ authorization_url: 'https://accounts.google.com/o/oauth2/auth?state=analytics-test' }),
   ),
+  http.post(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/accounts/:accountId/oauth/youtube/upgrade-release`, () =>
+    HttpResponse.json({ authorization_url: 'https://accounts.google.com/o/oauth2/auth?state=release-test' }),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/strategy`, () =>
+    HttpResponse.json({ status: 'unavailable', message: 'No strategy assigned', profile: null, effective: null }),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/strategy/history`, () =>
+    HttpResponse.json([]),
+  ),
+  http.post(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/strategy`, async ({ request }) => {
+    const body = await request.json() as { config: Record<string, unknown> }
+    return HttpResponse.json({
+      id: 'strat-new-001',
+      channel_id: CH_ID,
+      version: 2,
+      config_json: JSON.stringify(body.config),
+      actor: 'dev:studio-user',
+      created_at: '2026-08-28T01:00:00',
+      is_active: true,
+    })
+  }),
   http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/policy`, () =>
     HttpResponse.json({ effective_automation_level: 'MANUAL' }),
   ),
+  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/readiness`, () =>
+    HttpResponse.json({
+      channel_id: CH_ID,
+      checks: [
+        { key: 'market_intelligence_configured', label: 'Market intelligence configured', ready: false, detail: 'No YouTube Data API key configured' },
+      ],
+      ready_for_decision_automation: false,
+      authorized_for_public_publishing: false,
+    }),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/automation-policy`, () =>
+    HttpResponse.json({ policy: null, active_slots: [] }),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/publishing-authorization`, () =>
+    HttpResponse.json(publishingAuthorizationUnauthorized),
+  ),
+  http.put(
+    `${B}/workspaces/${WS_ID}/channels/${CH_ID}/publishing-authorization`,
+    async ({ request }) => {
+      const body = await request.json() as Record<string, unknown>
+      if (body.authorized === true && body.confirm !== true) {
+        return HttpResponse.json(
+          { detail: 'Granting public-publishing authorization requires an explicit "confirm": true.' },
+          { status: 422 },
+        )
+      }
+      return HttpResponse.json({
+        ...publishingAuthorizationAuthorized.authorization,
+        authorized: body.authorized ?? false,
+        max_publications_per_24h: body.max_publications_per_24h ?? 1,
+      })
+    },
+  ),
+  http.put(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/automation-policy`, async ({ request }) => {
+    const body = await request.json() as Record<string, unknown>
+    return HttpResponse.json({
+      channel_id: CH_ID,
+      workspace_id: WS_ID,
+      decision_automation_enabled: body.decision_automation_enabled ?? false,
+      production_automation_enabled: body.production_automation_enabled ?? false,
+      cadence_type: body.cadence_type ?? 'daily',
+      cadence_interval_days: body.cadence_interval_days ?? null,
+      cadence_cron: null,
+      preferred_local_hour: body.preferred_local_hour ?? 9,
+      timezone: body.timezone ?? null,
+      queue_target: body.queue_target ?? 1,
+      market_refresh_max_age_hours: 12,
+      semantic_fit_max_evaluations_per_run: 5,
+      last_decision_at: null,
+      last_decision_outcome: null,
+      actor: 'dev:studio-user',
+      created_at: '2026-08-29T00:00:00',
+      updated_at: '2026-08-29T00:00:00',
+    })
+  }),
 
   // Pipelines
   http.post(`${B}/workspaces/${WS_ID}/pipelines`, async ({ request }) => {
@@ -356,8 +438,15 @@ export const handlers = [
       headers: { 'Content-Type': 'video/mp4' },
     }),
   ),
+  http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/visual-quality`, () =>
+    HttpResponse.json(publicationVisualQuality),
+  ),
+
   http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/analytics`, () =>
     HttpResponse.json(publicationAnalytics),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/analytics/history`, () =>
+    HttpResponse.json(publicationAnalyticsHistory),
   ),
   http.post(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/release-public`, () =>
     HttpResponse.json({ visibility: 'public', reconciled: false }),
@@ -369,6 +458,23 @@ export const handlers = [
   ),
   http.get(`${B}/workspaces/${WS_ID}/analytics/snapshots`, () =>
     HttpResponse.json([]),
+  ),
+
+  // Market intelligence + cross-publication learning (default: empty — no data seeded yet)
+  http.get(`${B}/workspaces/${WS_ID}/market/opportunities`, () =>
+    HttpResponse.json([]),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/market/experiments`, () =>
+    HttpResponse.json([]),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/market/strategy-briefs`, () =>
+    HttpResponse.json([]),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/cross-publication`, () =>
+    HttpResponse.json({ channel_id: CH_ID, baselines: [], feature_observations: [] }),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/market/opportunities/:opportunityId/evidence`, () =>
+    HttpResponse.json({ opportunity_id: 1, evidence_count: 0, snapshots: [] }),
   ),
 
   // Learning (default: empty — no data seeded yet)

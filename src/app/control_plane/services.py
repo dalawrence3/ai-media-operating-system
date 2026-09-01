@@ -52,6 +52,40 @@ def get_channel_strategy(conn: Any, channel_id: str) -> StrategyProfile | None:
     return repo.get_active_strategy_for_channel(conn, channel_id)
 
 
+def list_channel_strategy_history(conn: Any, channel_id: str) -> list[StrategyProfile]:
+    return repo.list_strategy_profiles_by_channel(conn, channel_id)
+
+
+def create_channel_strategy_version(
+    conn: Any,
+    channel_id: str,
+    config: dict[str, Any],
+    actor: str,
+) -> StrategyProfile:
+    """Create the next strategy profile version for a channel.
+
+    Never overwrites history: cp_strategy_profiles is append-only, and
+    repo.create_strategy_profile only flips the previous row's is_active
+    flag — it never deletes or mutates a prior version. Version numbers are
+    computed here (1 for the channel's first profile, else max+1) since the
+    repository layer takes an explicit version rather than auto-incrementing.
+    """
+    import uuid as _uuid
+
+    from app.control_plane.models import StrategyProfileDraft
+
+    existing = repo.list_strategy_profiles_by_channel(conn, channel_id)
+    next_version = (max(p.version for p in existing) + 1) if existing else 1
+    draft = StrategyProfileDraft(
+        id=str(_uuid.uuid4()),
+        channel_id=channel_id,
+        version=next_version,
+        config=config,
+        actor=actor,
+    )
+    return repo.create_strategy_profile(conn, draft)
+
+
 def get_review_queue(conn: Any, workspace_id: str) -> list[ReviewQueueItem]:
     return build_review_queue(conn, workspace_id)
 

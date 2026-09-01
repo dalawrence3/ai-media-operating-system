@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
-import type { YouTubeVerificationResult } from '@/api/types'
+import type {
+  StrategyConfig,
+  UpdateAutomationPolicyRequest,
+  UpdatePublishingAuthorizationRequest,
+  YouTubeVerificationResult,
+} from '@/api/types'
 
 export function useChannels(workspaceId: string) {
   return useQuery({
@@ -31,6 +36,76 @@ export function useChannelStrategy(workspaceId: string, channelId: string) {
     queryKey: ['channel-strategy', workspaceId, channelId],
     queryFn: () => api.getChannelStrategy(workspaceId, channelId),
     enabled: !!(workspaceId && channelId),
+  })
+}
+
+export function useChannelReadiness(workspaceId: string, channelId: string) {
+  return useQuery({
+    queryKey: ['channel-readiness', workspaceId, channelId],
+    queryFn: () => api.getChannelReadiness(workspaceId, channelId),
+    enabled: !!(workspaceId && channelId),
+  })
+}
+
+export function useChannelAutomationPolicy(workspaceId: string, channelId: string) {
+  return useQuery({
+    queryKey: ['channel-automation-policy', workspaceId, channelId],
+    queryFn: () => api.getChannelAutomationPolicy(workspaceId, channelId),
+    enabled: !!(workspaceId && channelId),
+  })
+}
+
+export function useUpdateAutomationPolicy(workspaceId: string, channelId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: UpdateAutomationPolicyRequest) =>
+      api.updateChannelAutomationPolicy(workspaceId, channelId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['channel-automation-policy', workspaceId, channelId] })
+      void qc.invalidateQueries({ queryKey: ['channel-readiness', workspaceId, channelId] })
+    },
+  })
+}
+
+export function useChannelPublishingAuthorization(workspaceId: string, channelId: string) {
+  return useQuery({
+    queryKey: ['channel-publishing-authorization', workspaceId, channelId],
+    queryFn: () => api.getChannelPublishingAuthorization(workspaceId, channelId),
+    enabled: !!(workspaceId && channelId),
+  })
+}
+
+export function useUpdatePublishingAuthorization(workspaceId: string, channelId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: UpdatePublishingAuthorizationRequest) =>
+      api.updateChannelPublishingAuthorization(workspaceId, channelId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({
+        queryKey: ['channel-publishing-authorization', workspaceId, channelId],
+      })
+      void qc.invalidateQueries({ queryKey: ['channel-readiness', workspaceId, channelId] })
+      void qc.invalidateQueries({ queryKey: ['channel-automation-policy', workspaceId, channelId] })
+    },
+  })
+}
+
+export function useChannelStrategyHistory(workspaceId: string, channelId: string) {
+  return useQuery({
+    queryKey: ['channel-strategy-history', workspaceId, channelId],
+    queryFn: () => api.listChannelStrategyHistory(workspaceId, channelId),
+    enabled: !!(workspaceId && channelId),
+  })
+}
+
+export function useCreateStrategyVersion(workspaceId: string, channelId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (config: StrategyConfig) => api.createChannelStrategyVersion(workspaceId, channelId, config),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['channel-strategy', workspaceId, channelId] })
+      qc.invalidateQueries({ queryKey: ['channel-strategy-history', workspaceId, channelId] })
+    },
   })
 }
 
@@ -100,6 +175,27 @@ export function useVerifyYouTubeConnection(workspaceId: string, channelId: strin
 export function useUpgradeYouTubeUploadScope(workspaceId: string, channelId: string, accountId: string) {
   return useMutation({
     mutationFn: () => api.upgradeYouTubeUploadScope(workspaceId, channelId, accountId),
+    onSuccess: (data) => {
+      window.location.href = data.authorization_url
+    },
+  })
+}
+
+export function useUpgradeYouTubeAnalyticsScope(workspaceId: string, channelId: string, accountId: string) {
+  return useMutation({
+    mutationFn: () => api.upgradeYouTubeAnalyticsScope(workspaceId, channelId, accountId),
+    onSuccess: (data) => {
+      window.location.href = data.authorization_url
+    },
+  })
+}
+
+/** Same shape as the analytics upgrade: the backend mints the Google
+    authorization URL and we hand the browser over to it. The URL is never
+    constructed here. */
+export function useUpgradeYouTubeReleaseScope(workspaceId: string, channelId: string, accountId: string) {
+  return useMutation({
+    mutationFn: () => api.upgradeYouTubeReleaseScope(workspaceId, channelId, accountId),
     onSuccess: (data) => {
       window.location.href = data.authorization_url
     },

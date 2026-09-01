@@ -42,6 +42,7 @@ from app.learning.constants import (
     GENERATOR_RETENTION,
     GENERATOR_SHARES,
     GENERATOR_STATUS_FAILED,
+    GENERATOR_STATUS_SKIPPED,
     GENERATOR_STATUS_SUCCEEDED,
     GENERATOR_SUBSCRIBERS,
     GENERATOR_WATCH_TIME,
@@ -67,6 +68,12 @@ from app.learning.constants import (
     confidence_label,
 )
 from app.learning.hashing import RecommendationHashInput, compute_recommendation_hash
+from app.learning.maturity import (
+    REQUIRE_CTR_DATA,
+    REQUIRE_VIEWS,
+    MaturityRequirement,
+    evaluate_maturity,
+)
 from app.learning.models import (
     AllGeneratorResults,
     EvidenceItem,
@@ -618,7 +625,7 @@ def generate_subscriber_recommendations(
         ),
     )
 
-    if net <= SUBSCRIBER_LOSS_THRESHOLD:
+    if net < SUBSCRIBER_LOSS_THRESHOLD:
         score, _ = compute_confidence([ev], abs(net), 5.0, "above")
         drafts.append(
             _make_draft(
@@ -758,30 +765,47 @@ def generate_all_recommendations(
     Generators run in a stable order for deterministic output.  Each generator
     is independent; a failure in one is recorded but does not block the others.
 
+    Before each generator runs, its MaturityRequirement is evaluated.
+    Insufficient evidence → GENERATOR_STATUS_SKIPPED (not FAILED).
+    The run still completes successfully when generators are skipped.
+
     Returns AllGeneratorResults:
     - .drafts: all successfully generated RecommendationDraft objects
-    - .generator_results: one GeneratorResult per generator (succeeded or failed)
+    - .generator_results: one GeneratorResult per generator
 
-    The orchestrator uses generator_results to determine run status:
-    - all succeeded      → completed
-    - some failed        → partial
-    - all failed         → failed
+    Generator statuses and run-completion mapping:
+    - all succeeded/skipped → completed
+    - some failed, some succeeded → partial
+    - some failed, none succeeded → failed
     """
     drafts: list[RecommendationDraft] = []
     generator_results: list[GeneratorResult] = []
 
-    named_generators = [
-        (GENERATOR_CTR, generate_ctr_recommendations),
-        (GENERATOR_RETENTION, generate_retention_recommendations),
-        (GENERATOR_ENGAGEMENT, generate_engagement_recommendations),
-        (GENERATOR_WATCH_TIME, generate_watch_time_recommendations),
-        (GENERATOR_SUBSCRIBERS, generate_subscriber_recommendations),
-        (GENERATOR_SHARES, generate_shares_recommendations),
+    # (name, generator_fn, maturity_requirement)
+    named_generators: list[tuple[str, object, MaturityRequirement]] = [
+        (GENERATOR_CTR, generate_ctr_recommendations, REQUIRE_CTR_DATA),
+        (GENERATOR_RETENTION, generate_retention_recommendations, REQUIRE_VIEWS),
+        (GENERATOR_ENGAGEMENT, generate_engagement_recommendations, REQUIRE_VIEWS),
+        (GENERATOR_WATCH_TIME, generate_watch_time_recommendations, REQUIRE_VIEWS),
+        (GENERATOR_SUBSCRIBERS, generate_subscriber_recommendations, REQUIRE_VIEWS),
+        (GENERATOR_SHARES, generate_shares_recommendations, REQUIRE_VIEWS),
     ]
 
-    for name, gen in named_generators:
+    for name, gen, maturity_req in named_generators:
+        maturity = evaluate_maturity(conn, handoff.publication_id, maturity_req)
+        if not maturity.sufficient:
+            generator_results.append(
+                GeneratorResult(
+                    generator_name=name,
+                    status=GENERATOR_STATUS_SKIPPED,
+                    recommendation_count=0,
+                    error_message=maturity.reason,
+                )
+            )
+            continue
+
         try:
-            produced = gen(conn, handoff, learning_run_id)
+            produced = gen(conn, handoff, learning_run_id)  # type: ignore[operator]
             drafts.extend(produced)
             generator_results.append(
                 GeneratorResult(

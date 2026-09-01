@@ -252,6 +252,8 @@ def test_list_publications_returns_publications(dev_client, db_conn, workspace):
     assert data[0]["visibility"] == "private"
     assert data[0]["status"] == "published"
     assert data[0]["provider_video_id"] == "kQH88nXdiRY"
+    assert data[0]["render_duration_ms"] == 58607
+    assert data[0]["topic_title"] == "Test Topic"
 
 
 def test_list_publications_workspace_isolation(dev_client, db_conn, workspace):
@@ -291,6 +293,7 @@ def test_get_publication_detail(dev_client, db_conn, workspace):
     assert data["render_height"] == 1920
     assert data["render_fps"] == 30
     assert data["render_status"] == "approved"
+    assert data["topic_title"] == "Test Topic"
 
 
 def test_get_publication_detail_tags_json_empty(dev_client, db_conn, workspace):
@@ -320,6 +323,23 @@ def test_get_publication_detail_404_unknown_id(dev_client, db_conn, workspace):
         headers={"X-Dev-Actor": "dev:studio-user"},
     )
     assert res.status_code == 404
+
+
+def test_get_publication_detail_topic_title_null_when_topic_unlinked(
+    dev_client, db_conn, workspace
+):
+    """A publication whose publishing_plans.topic_id points nowhere resolvable
+    (e.g. the topic's own workspace_id was never backfilled) must not 500 —
+    topic_title is simply null, same LEFT JOIN behavior as render_manifest_id."""
+    _seed_workspace_with_publication(db_conn, workspace.id)
+    db_conn.execute("UPDATE publishing_plans SET topic_id = 999999 WHERE id = 1")
+    db_conn.commit()
+    res = dev_client.get(
+        f"/api/v1/workspaces/{workspace.id}/publications/1",
+        headers={"X-Dev-Actor": "dev:studio-user"},
+    )
+    assert res.status_code == 200
+    assert res.json()["topic_title"] is None
 
 
 def test_get_publication_rbac(prod_client, db_conn, workspace):
@@ -432,6 +452,7 @@ def test_get_analytics_no_snapshot(dev_client, db_conn, workspace):
     assert data["snapshot_id"] is None
     assert data["metrics"] == {}
     assert data["retention_point_count"] == 0
+    assert data["experiment_id"] is None
 
 
 def test_get_analytics_with_snapshot(dev_client, db_conn, workspace):
@@ -447,6 +468,7 @@ def test_get_analytics_with_snapshot(dev_client, db_conn, workspace):
     assert data["retention_point_count"] == 0
     assert data["period_start"] == "2026-01-01"
     assert data["period_end"] == "2026-01-07"
+    assert data["experiment_id"] is None
 
 
 def test_get_analytics_cross_workspace_404(dev_client, db_conn, workspace):
@@ -532,7 +554,7 @@ def test_schema_v23_upgrade_from_v22(tmp_path):
     conn = open_db(db_file)
     try:
         version = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()[0]
-        assert version == 24
+        assert version == 51
         cols = {row[1] for row in conn.execute("PRAGMA table_info(publications)").fetchall()}
         assert "workspace_id" in cols
         assert "channel_id" in cols
@@ -719,6 +741,89 @@ def test_analytics_follows_workspace_ownership(dev_client, db_conn, workspace):
     other_ws = _uid()
     res = dev_client.get(
         f"/api/v1/workspaces/{other_ws}/publications/1/analytics",
+        headers={"X-Dev-Actor": "dev:studio-user"},
+    )
+    assert res.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Analytics history endpoint (Phase 17C) — GET .../analytics/history
+# ---------------------------------------------------------------------------
+
+
+def test_analytics_history_empty_without_snapshots(dev_client, db_conn, workspace):
+    _seed_workspace_with_publication(db_conn, workspace.id)
+    res = dev_client.get(
+        f"/api/v1/workspaces/{workspace.id}/publications/1/analytics/history",
+        headers={"X-Dev-Actor": "dev:studio-user"},
+    )
+    assert res.status_code == 200
+    assert res.json() == []
+
+
+def test_analytics_history_returns_snapshots_oldest_first(dev_client, db_conn, workspace):
+    _seed_workspace_with_publication(db_conn, workspace.id, with_analytics=True)
+    # Seed creates snapshot id=1 (views=1234.0, ingested at NOW). Add a later
+    # snapshot with no reportable data yet — this is a real ingestion shape:
+    # a provider polled again before it had anything new to report.
+    db_conn.execute(
+        "INSERT INTO analytics_snapshots "
+        "(id, publication_id, publishing_plan_id, publishing_job_id, render_manifest_id, "
+        " scene_manifest_id, production_plan_id, script_id, topic_id, narration_run_id, "
+        " caption_run_id, provider, provider_version, adapter_version, engine_version, "
+        " analytics_schema_version, db_schema_version, input_hash, "
+        " ingested_at, observed_at, observation_state, period_start, period_end, created_at) "
+        "VALUES (2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, "
+        " 'youtube', '1.0', '1.0', '1.0', '1', 23, 'hash-snap-2', "
+        " '2026-06-01T00:00:00', '2026-06-01T00:00:00', 'no_data', NULL, NULL, ?)",
+        (NOW,),
+    )
+    db_conn.commit()
+    res = dev_client.get(
+        f"/api/v1/workspaces/{workspace.id}/publications/1/analytics/history",
+        headers={"X-Dev-Actor": "dev:studio-user"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 2
+    assert data[0]["snapshot_id"] == 1
+    assert data[0]["metrics"] == {"views": 1234.0}
+    assert data[0]["experiment_id"] is None
+    assert data[1]["snapshot_id"] == 2
+    assert data[1]["observation_state"] == "no_data"
+    # A snapshot with nothing to report yet must not fabricate metric values.
+    assert data[1]["metrics"] == {}
+
+
+def test_analytics_history_surfaces_experiment_id(dev_client, db_conn, workspace):
+    _seed_workspace_with_publication(db_conn, workspace.id, with_analytics=True)
+    db_conn.execute(
+        "UPDATE analytics_snapshots SET experiment_id = ? WHERE id = 1",
+        ("exp-abc-123",),
+    )
+    db_conn.commit()
+    res = dev_client.get(
+        f"/api/v1/workspaces/{workspace.id}/publications/1/analytics/history",
+        headers={"X-Dev-Actor": "dev:studio-user"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data[0]["experiment_id"] == "exp-abc-123"
+
+
+def test_analytics_history_cross_workspace_404(dev_client, db_conn, workspace):
+    _seed_workspace_with_publication(db_conn, workspace.id, with_analytics=True)
+    other_ws = _uid()
+    res = dev_client.get(
+        f"/api/v1/workspaces/{other_ws}/publications/1/analytics/history",
+        headers={"X-Dev-Actor": "dev:studio-user"},
+    )
+    assert res.status_code == 404
+
+
+def test_analytics_history_unknown_publication_404(dev_client, workspace):
+    res = dev_client.get(
+        f"/api/v1/workspaces/{workspace.id}/publications/999/analytics/history",
         headers={"X-Dev-Actor": "dev:studio-user"},
     )
     assert res.status_code == 404

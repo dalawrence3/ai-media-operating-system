@@ -368,6 +368,59 @@
   margin-top: var(--sp-6);
 }
 
+/* ── Form fields ── */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-5);
+}
+
+.form-group:last-child { margin-bottom: 0; }
+
+.form-label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.form-input {
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  background: var(--surface-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-3);
+  width: 100%;
+}
+
+.form-input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -1px;
+}
+
+input[type="range"].form-input,
+input[type="range"] {
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--accent);
+}
+
+.form-hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.form-error {
+  font-size: var(--font-size-sm);
+  color: var(--status-error);
+  background: var(--status-error-bg);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-3);
+}
+
 /* ── Unavailable / setup-required state ── */
 .unavailable-state {
   display: flex;

@@ -91,6 +91,44 @@
   margin-bottom: var(--sp-1);
 }
 
+/* Advanced group toggle — a real <button> so it is keyboard operable and
+   exposes its expanded state to assistive technology. */
+.sidebar-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-1) var(--sp-2);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  text-align: left;
+}
+
+.sidebar-advanced-toggle:hover .sidebar-nav-section-label {
+  color: rgba(255,255,255,.5);
+}
+
+.sidebar-advanced-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sidebar-advanced-toggle .sidebar-nav-section-label {
+  margin-bottom: 0;
+  padding: 0;
+  transition: color var(--transition-fast);
+}
+
+.sidebar-advanced-caret {
+  font-size: 9px;
+  color: rgba(255,255,255,.3);
+  margin-left: auto;
+}
+
+.sidebar-advanced-toggle .nav-badge { margin-left: var(--sp-1); }
+
 .nav-link {
   display: flex;
   align-items: center;
@@ -150,6 +188,29 @@
   gap: var(--sp-2);
   font-size: var(--font-size-xs);
   color: rgba(255,255,255,.4);
+}
+
+/* The whole status chip is the link into diagnostics. */
+.sidebar-health-link {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: inherit;
+  text-decoration: none;
+  padding: var(--sp-1) var(--sp-2);
+  margin: calc(var(--sp-1) * -1) calc(var(--sp-2) * -1);
+  border-radius: var(--radius-md);
+  min-width: 0;
+}
+
+.sidebar-health-link:hover {
+  color: rgba(255,255,255,.75);
+  background: rgba(255,255,255,.05);
+}
+
+.sidebar-health-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .health-dot {

@@ -283,3 +283,198 @@ def learn_runs(
             f"{run.id:>5}  {run.topic_id:>6}  {pub:>5}  {run.status:<10}  "
             f"{run.recommendation_count:>4}  {run.created_at}"
         )
+
+
+# ── cross-pub ─────────────────────────────────────────────────────────────────
+
+
+@learn_app.command("cross-pub")
+def learn_cross_pub(
+    channel_id: Annotated[str, typer.Option("--channel", help="Channel ID to analyze.")],
+    workspace_id: Annotated[
+        str | None, typer.Option("--workspace", help="Workspace ID (optional).")
+    ] = None,
+) -> None:
+    """Run cross-publication learning for a channel.
+
+    Computes channel performance baselines and feature association observations
+    from all publications in this channel that have feature snapshots and analytics.
+    Idempotent: safe to re-run; updated when evidence changes.
+    """
+    from app.learning.cross_publication import run_cross_publication_learning
+
+    conn = _get_db()
+    try:
+        result = run_cross_publication_learning(
+            conn, channel_id=channel_id, workspace_id=workspace_id
+        )
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+
+    typer.echo(f"Cross-publication analysis complete  channel={channel_id}")
+    typer.echo(f"  Publications analyzed:  {result.publication_count}")
+    typer.echo(f"  Baselines computed:     {result.baselines_computed}")
+    typer.echo(f"  Observations computed:  {result.observations_computed}")
+    if result.metrics_with_data:
+        typer.echo(f"  Metrics with data:      {', '.join(result.metrics_with_data)}")
+    else:
+        typer.echo("  No analytics data found for this channel yet.")
+    typer.echo(f"  Schema:   {result.schema_version}  Observer: {result.observer_version}")
+    typer.echo(f"  Computed: {result.computed_at}")
+
+
+# ── baseline ──────────────────────────────────────────────────────────────────
+
+
+@learn_app.command("baseline")
+def learn_baseline(
+    channel_id: Annotated[str, typer.Option("--channel", help="Channel ID.")],
+    metric: Annotated[str | None, typer.Option("--metric", help="Filter by metric name.")] = None,
+) -> None:
+    """Show channel performance baselines.
+
+    Baselines are populated by 'ace learn cross-pub'.
+    Results are associations derived from existing publications — not causal claims.
+    """
+    from app.learning.cross_publication import get_channel_baselines
+
+    conn = _get_db()
+    try:
+        baselines = get_channel_baselines(conn, channel_id=channel_id, metric_name=metric)
+    finally:
+        conn.close()
+
+    if not baselines:
+        typer.echo(
+            f"No baselines found for channel={channel_id}.  "
+            "Run 'ace learn cross-pub --channel ...' first."
+        )
+        return
+
+    typer.echo(f"\nChannel performance baselines  channel={channel_id}")
+    typer.echo("─" * 72)
+    typer.echo(f"{'Metric':<26}  {'n':>4}  {'Mean':>10}  {'Median':>10}  {'StdDev':>9}  Maturity")
+    typer.echo("─" * 72)
+    for b in baselines:
+        mean_s = f"{b.mean:.4f}" if b.mean is not None else "—"
+        med_s = f"{b.median:.4f}" if b.median is not None else "—"
+        std_s = f"{b.std_dev:.4f}" if b.std_dev is not None else "—"
+        typer.echo(
+            f"{b.metric_name:<26}  {b.publication_count:>4}  "
+            f"{mean_s:>10}  {med_s:>10}  {std_s:>9}  {b.sample_maturity}"
+        )
+    typer.echo()
+
+
+# ── compare ───────────────────────────────────────────────────────────────────
+
+
+@learn_app.command("compare")
+def learn_compare(
+    channel_id: Annotated[str, typer.Option("--channel", help="Channel ID.")],
+    feature: Annotated[
+        str | None, typer.Option("--feature", help="Filter by feature name.")
+    ] = None,
+    metric: Annotated[
+        str | None, typer.Option("--metric", help="Filter by outcome metric.")
+    ] = None,
+    min_n: Annotated[
+        int, typer.Option("--min-n", help="Minimum publication count to display.")
+    ] = 1,
+) -> None:
+    """Show feature performance associations for a channel.
+
+    Observations are computed by 'ace learn cross-pub'.
+    These are ASSOCIATIONS only — not causal conclusions.
+    Column 'rel%' is relative difference from channel baseline (blank if n/a).
+    """
+    from app.learning.cross_publication import get_feature_observations
+
+    conn = _get_db()
+    try:
+        obs = get_feature_observations(
+            conn, channel_id=channel_id, feature_name=feature, metric_name=metric
+        )
+    finally:
+        conn.close()
+
+    obs = [o for o in obs if o.publication_count >= min_n]
+
+    if not obs:
+        typer.echo(
+            f"No observations found for channel={channel_id}.  "
+            "Run 'ace learn cross-pub --channel ...' first."
+        )
+        return
+
+    typer.echo(f"\nFeature performance associations  channel={channel_id}")
+    typer.echo("Note: these are associations, not causal effects.")
+    typer.echo("─" * 90)
+    typer.echo(
+        f"{'Feature':<26}  {'Bucket':<14}  {'Metric':<22}  {'n':>3}  "
+        f"{'Mean':>9}  {'rel%':>7}  Maturity"
+    )
+    typer.echo("─" * 90)
+    for o in obs:
+        mean_s = f"{o.mean:.4f}" if o.mean is not None else "—"
+        rel_s = (
+            f"{o.rel_diff_from_baseline * 100:+.1f}%"
+            if o.rel_diff_from_baseline is not None
+            else ""
+        )
+        typer.echo(
+            f"{o.feature_name:<26}  {o.feature_bucket:<14}  {o.metric_name:<22}  "
+            f"{o.publication_count:>3}  {mean_s:>9}  {rel_s:>7}  {o.sample_maturity}"
+        )
+    typer.echo()
+
+
+# ── coverage ──────────────────────────────────────────────────────────────────
+
+
+@learn_app.command("coverage")
+def learn_coverage(
+    channel_id: Annotated[str, typer.Option("--channel", help="Channel ID.")],
+    feature: Annotated[
+        str | None, typer.Option("--feature", help="Filter by feature name.")
+    ] = None,
+) -> None:
+    """Show exploration coverage — which feature values have been tested.
+
+    Coverage is populated by 'ace learn cross-pub'.
+    Untested feature values (absent here) are candidates for Phase 14 exploration.
+    """
+    from app.learning.cross_publication import get_exploration_coverage
+
+    conn = _get_db()
+    try:
+        coverage = get_exploration_coverage(conn, channel_id=channel_id, feature_name=feature)
+    finally:
+        conn.close()
+
+    if not coverage:
+        typer.echo(
+            f"No coverage data found for channel={channel_id}.  "
+            "Run 'ace learn cross-pub --channel ...' first."
+        )
+        return
+
+    typer.echo(f"\nExploration coverage  channel={channel_id}")
+    typer.echo("─" * 60)
+    for feat_name in sorted(coverage):
+        buckets = coverage[feat_name]
+        typer.echo(f"\n  {feat_name}")
+        for bkt in sorted(buckets):
+            info = buckets[bkt]
+            pub_ids = info["source_publication_ids"]
+            ids_str = ",".join(str(i) for i in sorted(pub_ids[:5]))
+            if len(pub_ids) > 5:
+                ids_str += "…"
+            typer.echo(
+                f"    {bkt:<20}  n={info['publication_count']:>3}  "
+                f"({info['sample_maturity']})  pubs=[{ids_str}]"
+            )
+    typer.echo()

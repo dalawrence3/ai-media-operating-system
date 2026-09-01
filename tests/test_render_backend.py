@@ -20,6 +20,11 @@ from app.media.errors import (
 from app.media.models import RenderManifestDraft, RenderSceneDraft, ResolvedAsset
 
 
+def _staging_path(output_path: Path) -> Path:
+    """Mirror FFmpegRenderBackend's staging name (keeps the real extension)."""
+    return output_path.with_name(f"{output_path.stem}.part{output_path.suffix}")
+
+
 def _make_draft(scenes: list[RenderSceneDraft] | None = None) -> RenderManifestDraft:
     if scenes is None:
         scenes = [
@@ -91,8 +96,10 @@ class TestFFmpegRenderBackend:
         mock_run.return_value = MagicMock(returncode=0, stderr="")
 
         output_path = tmp_path / "out.mp4"
-        # Write a real file so stat() works naturally
-        output_path.write_bytes(b"x" * 1024)
+        # Render now writes to the staging path first, then atomically promotes.
+        # The staging suffix keeps the real container extension (out.part.mp4),
+        # not out.part -- FFmpeg cannot infer a container from a bare ".part".
+        _staging_path(output_path).write_bytes(b"x" * 1024)
 
         b = FFmpegRenderBackend()
         draft = _make_draft()
@@ -103,6 +110,9 @@ class TestFFmpegRenderBackend:
         assert mock_run.called
         assert result.output_sha256 == "deadbeef"
         assert result.file_size_bytes == 1024
+        # After promotion the staging path is gone and the final path exists.
+        assert output_path.exists()
+        assert not _staging_path(output_path).exists()
 
     @patch("app.media.backend.shutil.which", return_value="/usr/bin/ffmpeg")
     @patch("app.media.backend.subprocess.run")
@@ -120,7 +130,7 @@ class TestFFmpegRenderBackend:
     def test_placeholder_clip_used_when_no_asset(self, mock_run, mock_which, tmp_path):
         mock_run.return_value = MagicMock(returncode=0, stderr="")
         output_path = tmp_path / "out.mp4"
-        output_path.write_bytes(b"x" * 100)
+        _staging_path(output_path).write_bytes(b"x" * 100)
 
         b = FFmpegRenderBackend()
         draft = _make_draft()
@@ -214,7 +224,7 @@ class TestFFmpegRenderBackend:
         """Render succeeds when stored sha256 matches actual file hash."""
         mock_run.return_value = MagicMock(returncode=0, stderr="")
         output_path = tmp_path / "out.mp4"
-        output_path.write_bytes(b"x" * 64)
+        _staging_path(output_path).write_bytes(b"x" * 64)
 
         asset_file = tmp_path / "img.jpg"
         asset_file.write_bytes(b"real image bytes")
@@ -253,6 +263,7 @@ class TestFFmpegRenderBackend:
             primary_asset=asset,
         )
         draft = _make_draft([scene])
+        draft.narration_run_id = None
 
         b = FFmpegRenderBackend()
         with patch.object(b, "_sha256", side_effect=[expected_sha, "output_sha"]):

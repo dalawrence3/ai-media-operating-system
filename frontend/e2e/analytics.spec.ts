@@ -1,21 +1,20 @@
 /**
- * Analytics page E2E tests.
+ * Analytics page E2E tests — Phase 17C channel performance and
+ * video-by-video view.
  *
- * Requires: make seed-dev (seeded dev workspace with analytics aggregates)
+ * The dev-seeded workspace (make seed-dev) has zero publications, so it
+ * exercises the empty state honestly. Populated-state behavior (KPIs, the
+ * video grid, navigation into a video's own analytics page) is verified
+ * against the real 'local-dev' Orvella workspace, mirroring the pattern
+ * already used by 17b-visual.spec.ts — read-only, no mutations.
+ *
  * Auth: dev auth bypass via X-Dev-Actor header — no real OAuth, no live publishing.
- *
- * Validates:
- * - Navigation to Analytics from app shell
- * - Seeded analytics aggregates are visible (populated state)
- * - UnavailableState is NOT shown when data exists
- * - Metric semantics table is always visible
- * - Period group headings rendered
  */
 
 import { test, expect } from './fixtures'
 import { gotoAndReady, resolveWorkspaceOrSkip } from './helpers'
 
-test.describe('Analytics page', () => {
+test.describe('Analytics page — dev-seeded workspace (empty)', () => {
   let wsId: string
 
   test.beforeAll(async ({ baseURL }) => {
@@ -34,46 +33,50 @@ test.describe('Analytics page', () => {
     await expect(page.getByText(/something went wrong|unhandled error/i)).not.toBeVisible()
   })
 
-  test('shows seeded aggregate data — populated state', async ({ page }) => {
+  test('shows an honest empty state when the channel has no videos', async ({ page }) => {
     await gotoAndReady(page, wsId, 'analytics')
-    // The seed creates lifetime aggregates; expect a period group heading.
-    await expect(page.getByRole('heading', { name: /lifetime/i, level: 2 })).toBeVisible({
-      timeout: 10_000,
-    })
+    await expect(page.getByText(/no videos yet/i)).toBeVisible({ timeout: 10_000 })
   })
+})
 
-  test('seeded data does not show unavailable state', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'analytics')
-    // Wait for data to render before asserting absence.
-    await expect(page.getByRole('heading', { name: /lifetime/i, level: 2 })).toBeVisible({
-      timeout: 10_000,
-    })
-    await expect(page.locator('[data-testid="unavailable-state"]')).not.toBeVisible()
-  })
+const REAL_WORKSPACE_ID = 'local-dev'
 
-  test('seeded views metric is rendered in the aggregates table', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'analytics')
-    await expect(page.getByRole('heading', { name: /lifetime/i, level: 2 })).toBeVisible({
-      timeout: 10_000,
+async function resolveRealWorkspaceId(baseURL: string): Promise<string | null> {
+  const backendBase = baseURL.replace(':5173', ':8000')
+  try {
+    const res = await fetch(`${backendBase}/api/v1/workspaces`, {
+      headers: { 'X-Dev-Actor': 'dev:studio-user' },
     })
-    // The seeded lifetime aggregate for views should appear as a formatted number.
-    // seed: 42_000 → formatted as "42.0K"
-    await expect(page.getByText('42.0K')).toBeVisible({ timeout: 5_000 })
-  })
+    if (!res.ok) return null
+    const workspaces: Array<{ id: string }> = await res.json()
+    return workspaces.find(w => w.id === REAL_WORKSPACE_ID)?.id ?? null
+  } catch {
+    return null
+  }
+}
 
-  test('metric semantics table is always visible alongside data', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'analytics')
-    await expect(page.getByRole('heading', { name: /lifetime/i, level: 2 })).toBeVisible({
-      timeout: 10_000,
-    })
-    await expect(page.getByText('Metric Semantics')).toBeVisible()
-  })
+test.describe('Analytics page — real Orvella data (populated)', () => {
+  test('shows channel KPIs, the video grid, and navigates into a video\'s own analytics', async ({ page, baseURL }) => {
+    const wsId = await resolveRealWorkspaceId(baseURL!)
+    test.skip(!wsId, 'local-dev workspace not found')
 
-  test('monthly period group is rendered for seeded monthly aggregates', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'analytics')
-    // Seed contains monthly aggregates for 2026-08 and 2026-07.
-    await expect(page.getByRole('heading', { name: /monthly/i, level: 2 })).toBeVisible({
-      timeout: 10_000,
-    })
+    await page.goto(`/workspaces/${wsId}/analytics`)
+    await expect(page.getByRole('heading', { level: 1, name: /analytics/i })).toBeVisible({ timeout: 15_000 })
+
+    // Channel KPI row.
+    await expect(page.locator('.metric-card-label', { hasText: /^Views$/ })).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('.metric-card-label', { hasText: 'Watch time' })).toBeVisible()
+
+    // Video performance grid.
+    await expect(page.getByText('Video performance')).toBeVisible()
+    const firstCard = page.locator('.video-card').first()
+    await expect(firstCard).toBeVisible()
+
+    // Clicking a video opens its own analytics page.
+    await firstCard.click()
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByRole('heading', { name: 'Performance', exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Performance over time' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Retention', exact: true })).toBeVisible()
   })
 })

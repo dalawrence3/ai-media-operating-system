@@ -36,7 +36,9 @@ from app.media.errors import (
     RenderBackendError,
     UnresolvedRequiredAssetError,
 )
-from app.media.models import RenderJobResult, RenderManifestDraft
+from app.media.models import RenderJobResult, RenderManifestDraft, RenderVisualBeat
+
+_VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 
 
 class RenderBackend(Protocol):
@@ -100,6 +102,10 @@ class FFmpegRenderBackend:
         tmp_dir.mkdir(parents=True, exist_ok=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # Write to a staging path so that an interrupted render never
+        # overwrites the last valid authoritative file.
+        staging_path = output_path.with_name(f"{output_path.stem}.part{output_path.suffix}")
+
         start = time.monotonic()
 
         clip_paths = self._generate_scene_clips(
@@ -109,7 +115,7 @@ class FFmpegRenderBackend:
         final_cmd = self._mux(
             clip_paths=clip_paths,
             audio_path=audio_path,
-            output_path=output_path,
+            output_path=staging_path,
             video_codec=video_codec,
             audio_codec=audio_codec,
             crf=crf,
@@ -119,8 +125,14 @@ class FFmpegRenderBackend:
         )
 
         render_time_s = time.monotonic() - start
-        file_size_bytes = output_path.stat().st_size
-        sha256 = self._sha256(output_path)
+
+        # Validate staging file before promoting — if this raises, the prior
+        # output_path is untouched.
+        file_size_bytes = staging_path.stat().st_size
+        sha256 = self._sha256(staging_path)
+
+        # Atomic promotion: replace() is atomic on the same filesystem.
+        staging_path.replace(output_path)
 
         return RenderJobResult(
             output_path=str(output_path),
@@ -146,9 +158,27 @@ class FFmpegRenderBackend:
         video_codec: str,
         *,
         allow_placeholders: bool,
-    ) -> list[Path]:
-        clips: list[Path] = []
+    ) -> list[tuple[Path, int]]:
+        """Return (clip_path, duration_ms) in playback order.
+
+        A scene carrying visual beats renders one clip per beat; a scene
+        without beats renders exactly one clip, as before.  Either way the
+        durations sum to the scene duration, so narration stays in sync.
+        """
+        clips: list[tuple[Path, int]] = []
         for scene in draft.scenes:
+            if getattr(scene, "visual_beats", None):
+                clips.extend(
+                    self._generate_beat_clips(
+                        scene,
+                        draft,
+                        tmp_dir,
+                        video_codec,
+                        allow_placeholders=allow_placeholders,
+                    )
+                )
+                continue
+
             clip_path = tmp_dir / f"scene_{scene.scene_index:03d}.mp4"
             duration_s = scene.duration_ms / 1000.0
             needs_placeholder = not (scene.primary_asset and scene.primary_asset.local_path)
@@ -170,8 +200,6 @@ class FFmpegRenderBackend:
                             f"expected {expected_sha!r}, got {actual_sha!r}. "
                             "Asset may have been modified or corrupted."
                         )
-                _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
-
                 if asset_path.suffix.lower() in _VIDEO_EXTS:
                     cmd = self._video_clip_cmd(
                         asset_path=asset_path,
@@ -204,7 +232,96 @@ class FFmpegRenderBackend:
                 )
 
             self._run(cmd)
-            clips.append(clip_path)
+            clips.append((clip_path, scene.duration_ms))
+        return clips
+
+    def _generate_beat_clips(
+        self,
+        scene: object,
+        draft: RenderManifestDraft,
+        tmp_dir: Path,
+        video_codec: str,
+        *,
+        allow_placeholders: bool,
+    ) -> list[tuple[Path, int]]:
+        """Render one clip per visual beat inside a scene.
+
+        Beat lengths are resolved on an absolute frame grid rather than
+        rounded independently: rounding each beat on its own accumulates, and
+        fifteen beats drifted the video track ~1.8s past the narration.
+        Deriving each clip's frame count from the difference of two absolute
+        frame positions makes the rounding telescope away.
+        """
+        from app.visuals.motion import motion_filter
+
+        clips: list[tuple[Path, int]] = []
+        beats: list[RenderVisualBeat] = list(scene.visual_beats)  # type: ignore[attr-defined]
+        fps = draft.fps
+
+        for beat in beats:
+            start_frame = round(beat.start_ms * fps / 1000)
+            end_frame = round(beat.end_ms * fps / 1000)
+            frames = max(1, end_frame - start_frame)
+            duration_ms = round(frames * 1000 / fps)
+            clip_path = (
+                tmp_dir / f"scene_{scene.scene_index:03d}_beat_{beat.beat_index:04d}.mp4"  # type: ignore[attr-defined]
+            )
+
+            if not beat.resolved:
+                if not allow_placeholders:
+                    raise UnresolvedRequiredAssetError(
+                        f"Visual beat {beat.beat_index} has no resolved asset. "
+                        "Pass allow_placeholders=True (dev only) to use placeholder slides."
+                    )
+                cmd = self._placeholder_clip_cmd(
+                    output=clip_path,
+                    duration_s=frames / fps,
+                    width=draft.width,
+                    height=draft.height,
+                    fps=fps,
+                    video_codec=video_codec,
+                    label=beat.label[:60],
+                )
+            else:
+                asset_path = Path(beat.local_path)  # type: ignore[arg-type]
+                if asset_path.suffix.lower() in _VIDEO_EXTS:
+                    cmd = self._video_clip_cmd(
+                        asset_path=asset_path,
+                        output=clip_path,
+                        duration_s=frames / fps,
+                        width=draft.width,
+                        height=draft.height,
+                        fps=fps,
+                        video_codec=video_codec,
+                    )
+                else:
+                    vf = motion_filter(
+                        beat.motion,
+                        width=draft.width,
+                        height=draft.height,
+                        frames=frames,
+                        fps=fps,
+                        fit=beat.fit_mode,
+                    )
+                    cmd = [
+                        self._ffmpeg,
+                        "-y",
+                        "-loop",
+                        "1",
+                        "-i",
+                        str(asset_path),
+                        "-vf",
+                        vf,
+                        "-frames:v",
+                        str(frames),
+                        "-c:v",
+                        video_codec,
+                        "-an",
+                        str(clip_path),
+                    ]
+
+            self._run(cmd)
+            clips.append((clip_path, duration_ms))
         return clips
 
     def _assemble_audio(self, draft: RenderManifestDraft, tmp_dir: Path) -> Path:
@@ -212,7 +329,20 @@ class FFmpegRenderBackend:
         audio_paths = [s.audio_path for s in draft.scenes if s.audio_path]
 
         if not audio_paths:
-            # Generate silent audio matching total duration
+            # A render manifest with narration lineage must never silently
+            # degrade to an anullsrc track.  Fake/test narration still
+            # produces real WAV assets, so an empty audio path set here means
+            # narration resolution failed upstream.
+            expects_narration = bool(getattr(draft, "narration_run_id", None)) or any(
+                getattr(scene, "narration_asset_id", None) is not None for scene in draft.scenes
+            )
+            if expects_narration:
+                raise RenderBackendError(
+                    "Narration was expected for this render, but no narration "
+                    "audio paths resolved. Refusing to produce a silent video."
+                )
+
+            # Explicitly narration-free media may still use a silent timing track.
             duration_s = draft.total_duration_ms / 1000.0
             cmd = [
                 self._ffmpeg,
@@ -251,7 +381,7 @@ class FFmpegRenderBackend:
     def _mux(
         self,
         *,
-        clip_paths: list[Path],
+        clip_paths: list[tuple[Path, int]],
         audio_path: Path,
         output_path: Path,
         video_codec: str,
@@ -263,9 +393,9 @@ class FFmpegRenderBackend:
     ) -> list[str]:
         concat_list = audio_path.parent / "video_concat.txt"
         lines = []
-        for i, (clip, scene) in enumerate(zip(clip_paths, draft.scenes, strict=False)):
+        for i, (clip, duration_ms) in enumerate(clip_paths):
             lines.append(f"file '{clip}'")
-            lines.append(f"duration {scene.duration_ms / 1000.0:.3f}")
+            lines.append(f"duration {duration_ms / 1000.0:.3f}")
             if i == len(clip_paths) - 1:
                 # FFmpeg concat demuxer: repeat last entry without duration
                 lines.append(f"file '{clip}'")

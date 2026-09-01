@@ -56,4 +56,18 @@ class OAuthInsufficientRoleError(OAuthError):
 
 
 class OAuthRefreshError(OAuthError):
-    """Access token refresh failed — credential may need to be reconnected."""
+    """Access token refresh failed — credential itself was rejected by the provider
+    (invalid_grant, revocation, or no refresh token available). Reconnection is
+    genuinely required; see OAuthTransientError for the network-failure case that
+    must NOT be treated the same way."""
+
+
+class OAuthTransientError(OAuthError):
+    """Token refresh could not be attempted/completed due to a transient network
+    or provider-transport failure (DNS resolution, connection refused, timeout).
+
+    The refresh token was never actually presented to Google, so nothing has
+    been learned about whether the credential itself is valid. Callers must not
+    mark the account credential_invalid on this error — only degrade health as
+    'unavailable' and let the next attempt retry.
+    """

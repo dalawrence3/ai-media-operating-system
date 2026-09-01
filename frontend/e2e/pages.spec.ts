@@ -10,18 +10,25 @@ import { getDevWorkspaceId, gotoWorkspacePage, expectPageHeading } from './helpe
 
 type PageDef = { route: string; heading: RegExp }
 
+// Phase 17B: dashboard's <h1> is now the channel's own identity (e.g. the
+// connected YouTube account's display name), not the literal word
+// "Dashboard" — so it's matched permissively here; the smoke test's job is
+// to prove a heading rendered and the page didn't crash, not to assert a
+// specific channel name that depends on dev-seed fixture content.
 const PAGES: PageDef[] = [
-  { route: 'dashboard',   heading: /dashboard/i },
-  { route: 'channels',    heading: /channels/i },
+  { route: 'dashboard',   heading: /.+/ },
+  { route: 'content',     heading: /content/i },
+  { route: 'analytics',   heading: /analytics/i },
+  { route: 'learn',       heading: /learn/i },
+  { route: 'channel',     heading: /.+/ },
+  // Advanced / system pages — collapsed in the sidebar by default (Phase 17A)
+  // but still directly reachable by URL.
   { route: 'pipelines',   heading: /pipelines/i },
   { route: 'reviews',     heading: /review/i },
   { route: 'exceptions',  heading: /exception/i },
   { route: 'operations',  heading: /operations/i },
-  { route: 'analytics',   heading: /analytics/i },
-  { route: 'learning',    heading: /learning/i },
   { route: 'experiments', heading: /experiments/i },
   { route: 'workflows',   heading: /workflows/i },
-  { route: 'publishing',  heading: /publishing/i },
   { route: 'health',      heading: /health/i },
   { route: 'audit',       heading: /audit/i },
   { route: 'settings',    heading: /settings/i },
@@ -49,15 +56,6 @@ test.describe('Page smoke tests', () => {
       await expectPageHeading(page, heading)
     })
   }
-
-  test('publishing page shows intentional unavailable state', async ({ page }) => {
-    if (wsId === '__skip__') test.skip()
-    await gotoWorkspacePage(page, wsId, 'publishing')
-    // UnavailableState renders an <h2> heading and a description paragraph.
-    const unavailable = page.locator('[data-testid="unavailable-state"]')
-    await expect(unavailable).toBeVisible({ timeout: 10_000 })
-    await expect(unavailable.getByRole('heading')).toContainText(/live integration not configured/i)
-  })
 
   // Note: analytics and learning pages show populated state when seed data
   // exists (make seed-dev). Detailed analytics/learning E2E live in

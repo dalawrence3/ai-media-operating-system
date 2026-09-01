@@ -6,6 +6,7 @@ import { LoadingState } from '@/components/common/LoadingState'
 import { ErrorState } from '@/components/common/ErrorState'
 import { EmptyState } from '@/components/common/EmptyState'
 import { StatTile } from '@/components/common/StatTile'
+import { TechnicalDetails } from '@/components/common/TechnicalDetails'
 import { useHealth } from '@/hooks/useWorkspace'
 
 export function Health() {
@@ -54,9 +55,7 @@ export function Health() {
               <h2 className="section-title">Detail</h2>
             </div>
             <div className="card">
-              <pre className="font-mono text-xs text-secondary" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                {JSON.stringify(h!.details, null, 2)}
-              </pre>
+              <TechnicalDetails summary="Raw health payload" data={h!.details} />
             </div>
           </section>
         )}

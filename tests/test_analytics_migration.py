@@ -12,7 +12,7 @@ from app.core.database import SCHEMA_VERSION, open_db
 
 class TestSchemaMigration:
     def test_schema_version_is_22(self):
-        assert SCHEMA_VERSION == 24
+        assert SCHEMA_VERSION == 51
 
     def test_fresh_db_at_current_version(self, tmp_path: Path):
         conn = open_db(tmp_path / "test.db")

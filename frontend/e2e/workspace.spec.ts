@@ -25,24 +25,33 @@ test.describe('Navigation / AppShell', () => {
     wsId = id!
   })
 
-  test('AppShell sidebar renders navigation links', async ({ page }) => {
+  test('AppShell sidebar renders the five primary destinations', async ({ page }) => {
     await gotoWorkspacePage(page, wsId, 'dashboard')
     const nav = page.getByRole('navigation', { name: /primary navigation/i })
     await expect(nav).toBeVisible()
-    for (const link of ['Dashboard', 'Channels', 'Pipelines', 'Reviews']) {
-      await expect(nav.getByRole('link', { name: new RegExp(link, 'i') })).toBeVisible()
+    for (const link of ['Dashboard', 'Content', 'Analytics', 'Learn', 'Channel']) {
+      await expect(nav.getByRole('link', { name: link, exact: true })).toBeVisible()
     }
+  })
+
+  test('Advanced pages are reachable once expanded', async ({ page }) => {
+    await gotoWorkspacePage(page, wsId, 'dashboard')
+    const nav = page.getByRole('navigation', { name: /primary navigation/i })
+    await nav.getByRole('button', { name: /advanced/i }).click()
+    await expect(nav.getByRole('link', { name: /pipelines/i })).toBeVisible()
   })
 
   test('sidebar links navigate to correct pages', async ({ page }) => {
     await gotoWorkspacePage(page, wsId, 'dashboard')
     await page.getByRole('navigation', { name: /primary navigation/i })
-      .getByRole('link', { name: /channels/i }).first().click()
-    await expect(page).toHaveURL(/\/channels/)
+      .getByRole('link', { name: 'Channel', exact: true }).click()
+    await expect(page).toHaveURL(/\/channel$/)
   })
 
-  test('dashboard page renders stat tiles', async ({ page }) => {
+  test('dashboard page renders a channel-identity heading', async ({ page }) => {
     await gotoWorkspacePage(page, wsId, 'dashboard')
-    await expect(page.getByRole('heading', { name: /dashboard/i })).toBeVisible({ timeout: 15_000 })
+    // Phase 17B: the <h1> is the channel's own identity, not the literal
+    // word "Dashboard" — assert a heading rendered at all (no crash).
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 15_000 })
   })
 })

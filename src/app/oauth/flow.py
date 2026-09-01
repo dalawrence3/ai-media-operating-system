@@ -40,6 +40,7 @@ from app.oauth.errors import (
     OAuthProviderError,
     OAuthRefreshError,
     OAuthTokenStoreError,
+    OAuthTransientError,
 )
 from app.oauth.state import OAuthStateClaims, get_state_store, validate_state
 from app.oauth.store import LocalFileTokenStore, StoredTokenPayload, get_token_store
@@ -131,14 +132,15 @@ def start_youtube_oauth(
 
     No tokens are touched here.
     """
-    _get_account_or_raise(conn, account_id, workspace_id, channel_id)
+    acct = _get_account_or_raise(conn, account_id, workspace_id, channel_id)
 
     # Generate nonce first so it can be embedded in the authorization URL.
     # The PKCE code_verifier is produced by the client during URL construction
     # (google-auth-oauthlib >= 1.2 embeds a code_challenge automatically).
     # We store both together so the verifier is available at callback time.
     nonce = secrets.token_hex(32)  # 256 bits
-    result = oauth_client.get_authorization_url(state_nonce=nonce, scopes=YOUTUBE_SCOPES)
+    scopes = _scopes_to_reconnect_with(acct)
+    result = oauth_client.get_authorization_url(state_nonce=nonce, scopes=scopes)
 
     # Bind the PKCE verifier AND the requested scopes to this nonce.
     # Both are consumed once at callback time: code_verifier for PKCE, requested_scopes
@@ -151,7 +153,7 @@ def start_youtube_oauth(
         account_id=account_id,
         created_at=time.monotonic(),
         code_verifier=result.code_verifier,
-        requested_scopes=YOUTUBE_SCOPES,
+        requested_scopes=scopes,
     )
     get_state_store().store(claims)
 
@@ -159,6 +161,50 @@ def start_youtube_oauth(
         authorization_url=result.authorization_url,
         state_nonce=nonce,
     )
+
+
+def _scopes_to_reconnect_with(acct: Any) -> list[str]:
+    """Reconnect must request at least the scope set this account already has.
+
+    The plain reconnect flow used to always request the bare identity-only
+    YOUTUBE_SCOPES. For an account with a broader standing grant (this app has
+    previously been authorized for upload/analytics/release), Google's
+    authorization response returns the union of everything already granted
+    regardless of what was requested — that is standard incremental-auth
+    behaviour, not a bug on Google's side. oauthlib then rejects the code
+    exchange because the flow's declared scopes (narrow) don't match what was
+    actually granted (broad): "Scope has changed from X to Y". Every plain
+    reconnect for such an account fails identically and permanently until this
+    is fixed — it is not transient and retrying does not help.
+
+    The fix is to ask for what we already know is granted, so the request and
+    the grant agree and the exchange succeeds. Reuses the existing scope-tier
+    constants (YOUTUBE_SCOPES < ..._UPLOAD_SCOPES < ..._ANALYTICS_SCOPES <
+    ..._RELEASE_SCOPES, each a superset of the last) rather than declaring a
+    new one — this is the same superset each dedicated upgrade-* endpoint
+    already requests, just selected automatically from the account's own
+    history instead of requiring the operator to know which upgrade to click.
+
+    A never-connected account (no metadata yet) falls back to the original
+    narrow default; callback validation is unchanged and stays exactly as
+    strict — this only changes what is asked for, never what is accepted.
+    """
+    import json
+
+    if not acct.metadata_json:
+        return YOUTUBE_SCOPES
+    try:
+        granted = set(json.loads(acct.metadata_json).get("granted_scopes") or [])
+    except (TypeError, ValueError):
+        return YOUTUBE_SCOPES
+
+    if YOUTUBE_RELEASE_SCOPE in granted:
+        return YOUTUBE_RELEASE_SCOPES
+    if YOUTUBE_ANALYTICS_SCOPE in granted:
+        return YOUTUBE_ANALYTICS_SCOPES
+    if YOUTUBE_UPLOAD_SCOPE in granted:
+        return YOUTUBE_UPLOAD_SCOPES
+    return YOUTUBE_SCOPES
 
 
 def complete_youtube_oauth(
@@ -473,6 +519,24 @@ def refresh_account_token(
 
     try:
         new_token = oauth_client.refresh_access_token(stored.refresh_token)
+    except OAuthTransientError as exc:
+        # The refresh token was never actually presented to Google — a DNS
+        # failure, timeout, or connection error happened first. This says
+        # nothing about whether the credential is valid, so the account must
+        # NOT be marked credential_invalid. Only health is degraded, using the
+        # 'unavailable' status that already exists precisely for "we could not
+        # reach the provider to check" as distinct from 'degraded' (checked and
+        # it was bad). The next successful refresh/verification heals this
+        # automatically via app.control_plane.accounts.restore_account_health.
+        record_health(
+            conn,
+            entity_type="platform_account",
+            entity_id=account_id,
+            status="unavailable",
+            recorded_by="system:token_refresh",
+            detail=f"Token refresh could not reach the provider (transient): {exc}",
+        )
+        raise
     except OAuthRefreshError:
         _mark_account_credential_invalid(conn, account_id, "system:token_refresh")
         record_health(
@@ -520,7 +584,10 @@ def verify_connection(
             oauth_client=oauth_client,
             token_store=token_store,
         )
-    except OAuthRefreshError:
+    except (OAuthRefreshError, OAuthTransientError):
+        # Both leave the credential unresolved for this call; refresh_account_token
+        # has already recorded the appropriate health for either case. Only a
+        # genuine OAuthRefreshError has also touched account.status.
         return get_connection_status(
             conn,
             account_id=account_id,
@@ -624,7 +691,24 @@ def verify_youtube_connection(
             failure_reason="Account has not completed OAuth — no registered Channel ID.",
         )
 
-    if acct.status != "connected" or acct.credential_profile_id is None:
+    # Phase 18E.2 — a recoverably-degraded account (credential_invalid,
+    # credential_expiring, quota_limited) must still be eligible for
+    # verification, or this function can never be the thing that proves the
+    # degradation was transient and clears it. Only genuinely operator-set
+    # states (disconnected, paused) refuse verification outright — those
+    # require an explicit reconnect/resume action, not a passive check.
+    from app.control_plane.accounts import (
+        OPERATOR_INTENT_STATUSES,
+        RECOVERABLE_ACCOUNT_STATUSES,
+    )
+
+    eligible_statuses = {"connected"} | RECOVERABLE_ACCOUNT_STATUSES
+    if acct.status not in eligible_statuses or acct.credential_profile_id is None:
+        reason = (
+            "Account is not connected (disconnected/paused) or has no credential profile."
+            if acct.status in OPERATOR_INTENT_STATUSES or acct.credential_profile_id is None
+            else f"Account status {acct.status!r} is not eligible for verification."
+        )
         return VerificationResult(
             account_id=account_id,
             verified=False,
@@ -632,7 +716,7 @@ def verify_youtube_connection(
             live_channel_id=None,
             channel_title=None,
             verified_at_utc=None,
-            failure_reason="Account is not connected or has no credential profile.",
+            failure_reason=reason,
         )
 
     try:
@@ -667,6 +751,19 @@ def verify_youtube_connection(
             channel_id=channel_id,
             oauth_client=oauth_client,
             token_store=store,
+        )
+    except OAuthTransientError as exc:
+        # Distinct failure_reason from the genuine case below: this did not
+        # learn anything about the credential, so it must not read like the
+        # account needs reconnecting.
+        return VerificationResult(
+            account_id=account_id,
+            verified=False,
+            registered_channel_id=registered_id,
+            live_channel_id=None,
+            channel_title=None,
+            verified_at_utc=None,
+            failure_reason=f"Provider temporarily unreachable — try again shortly: {exc}",
         )
     except (OAuthRefreshError, OAuthTokenStoreError):
         return VerificationResult(
@@ -734,11 +831,18 @@ def verify_youtube_connection(
         conn, account_id, acct.metadata_json, verified_at, identity.channel_id
     )
 
-    record_health(
+    # Phase 18E.2 — route through the canonical two-pass recovery so a
+    # credential_invalid account's status actually flips back to 'connected',
+    # not just its health record. A bare record_health(status="healthy") here
+    # (the pre-18E.2 behaviour) left cp_platform_accounts.status untouched,
+    # which is why the dashboard could keep reporting "credential invalid"
+    # even after a live verification proved the credential was fine.
+    from app.control_plane.accounts import restore_account_health
+
+    restore_account_health(
         conn,
-        entity_type="platform_account",
-        entity_id=account_id,
-        status="healthy",
+        account_id=account_id,
+        workspace_id=workspace_id,
         recorded_by="system:verify_connection",
         detail=f"Live verification succeeded: {identity.channel_id}",
     )

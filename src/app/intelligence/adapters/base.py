@@ -9,6 +9,7 @@ from app.intelligence.models import AdapterName, Channel, ChannelProfileVersion
 
 VALID_EVIDENCE_TYPES: frozenset[str] = frozenset(
     {
+        # YouTube / manual signals (Phase 3–12)
         "view_count",
         "like_count",
         "comment_count",
@@ -16,6 +17,20 @@ VALID_EVIDENCE_TYPES: frozenset[str] = frozenset(
         "top_video_age_days",
         "incumbent_subscriber_count",
         "manual_demand_note",
+        # External market intelligence signals (Phase 13F)
+        "market_demand_score",
+        "market_saturation_score",
+        "market_freshness_score",
+        "market_momentum_score",
+        "market_persistence_score",
+        "market_confidence",
+        "market_maturity",
+        "market_state_label",
+        # Provenance references (Phase 13F)
+        "market_canonical_cluster_id",
+        "market_cluster_snapshot_id",
+        "market_signal_snapshot_id",
+        "market_interpretation_run_id",
     }
 )
 

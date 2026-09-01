@@ -162,7 +162,12 @@ services:
     networks:
       - ace_internal
 
-  # ── Scheduler daemon ───────────────────────────────────────────────────────
+  # ── Scheduler / analytics observer daemon ─────────────────────────────────
+  # Runs run_scheduler_daemon():
+  #   - startup: reconcile_unobserved_publications() adopts already-public pubs
+  #   - every 60s: re-reconcile + dispatch due analytics_observation ticks inline
+  #   - other operation types enqueued to RQ
+  # Publishing gates are hard-wired off so this service can never trigger uploads.
   scheduler:
     build:
       context: .
@@ -176,6 +181,10 @@ services:
       ACE_DATABASE_URL: postgresql://ace:ace_dev_password_change_in_production@postgres:5432/ace
       ACE_REDIS_URL: redis://redis:6379/0
       ACE_LOG_LEVEL: ${ACE_LOG_LEVEL:-INFO}
+      ACE_PUBLISHING_LIVE_ENABLED: "false"
+      ACE_RELEASE_PUBLIC_ENABLED: "false"
+      YOUTUBE_CLIENT_SECRETS_PATH: ${YOUTUBE_CLIENT_SECRETS_PATH:-}
+      YOUTUBE_REDIRECT_URI: ${YOUTUBE_REDIRECT_URI:-http://localhost:8000/oauth/callback}
     depends_on:
       postgres:
         condition: service_healthy

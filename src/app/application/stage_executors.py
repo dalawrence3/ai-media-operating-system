@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import re
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -97,123 +98,9 @@ _STOP_WORDS = frozenset(
 )
 
 
-# ---------------------------------------------------------------------------
-# Visual query strategy
-# ---------------------------------------------------------------------------
-
-# Technology/concept nouns → concrete Pexels-friendly search phrase.
-# Ordered: first match wins. Triggers are checked case-insensitively in narration_text.
-_TECH_NOUN_MAP: list[tuple[frozenset[str], str]] = [
-    (
-        frozenset({"solar panel", "photovoltaic", "solar farm", "solar installation"}),
-        "solar panels installation",
-    ),
-    (frozenset({"solar"}), "solar energy farm"),
-    (frozenset({"wind turbine", "wind farm"}), "wind turbines aerial"),
-    (frozenset({"wind power", "wind energy", "wind"}), "wind energy turbines"),
-    (frozenset({"battery storage", "energy storage", "battery"}), "battery energy storage"),
-    (frozenset({"power grid", "electricity grid", "smart grid", "grid"}), "electricity power grid"),
-    (
-        frozenset({"electric vehicle", "electric car", "ev charging", "ev "}),
-        "electric vehicle charging",
-    ),
-    (frozenset({"hydrogen"}), "hydrogen fuel technology"),
-    (frozenset({"nuclear"}), "nuclear power plant"),
-    (frozenset({"coal", "fossil fuel"}), "coal power plant"),
-    (
-        frozenset({"city", "urban", "building", "business", "government", "corporation"}),
-        "sustainable city buildings",
-    ),
-    (frozenset({"people", "worker", "community"}), "people renewable energy"),
-]
-
-# Section-type overrides — bypass narration content for these roles.
-# CTA/conclusion/transition/hook get human/cinematic/aspirational imagery
-# instead of collapsing into the same technology search as body scenes.
-_SECTION_QUERY_POOLS: dict[str, list[str]] = {
-    "cta": [
-        "person watching smartphone",
-        "young adult mobile phone",
-        "hands holding phone social media",
-    ],
-    "conclusion": [
-        "renewable energy future city",
-        "green energy landscape horizon",
-        "people working clean energy",
-    ],
-    "transition": [
-        "electric vehicle charging station",
-        "smart city energy grid",
-        "battery storage facility",
-    ],
-    "hook": [
-        "renewable energy aerial dramatic",
-        "solar wind energy cinematic",
-        "clean energy landscape dramatic",
-    ],
-}
-
-
-def _concept_key(query: str) -> str:
-    """First non-trivial word — used to detect near-duplicate visual concepts."""
-    words = [w for w in query.lower().split() if len(w) > 2]
-    return words[0] if words else query
-
-
-def _scene_visual_query(
-    section_type: str,
-    narration_text: str,
-    fallback_raw: str,
-    used_concepts: set[str],
-) -> str:
-    """Return a concrete, visually distinct search query for one scene.
-
-    Priority:
-    1. Section-type overrides (CTA → person/phone; hook/conclusion/transition
-       → cinematic/aspirational), rotating through the pool for diversity.
-    2. Narration-based technology-noun detection for body/intro sections.
-    3. ``_distill_stock_query`` on the fallback text as last resort.
-
-    ``used_concepts`` is mutated: the chosen concept key is added so callers
-    can avoid repeating the same visual subject across scenes.
-    """
-
-    def _pick_from_pool(options: list[str]) -> str:
-        for opt in options:
-            ck = _concept_key(opt)
-            if ck not in used_concepts:
-                used_concepts.add(ck)
-                return opt
-        # All pool options already used — return first anyway (Pexels dedup
-        # handles ID uniqueness; different query wording still helps)
-        used_concepts.add(_concept_key(options[0]))
-        return options[0]
-
-    # ── Section-type overrides ───────────────────────────────────────────────
-    pool = _SECTION_QUERY_POOLS.get(section_type)
-    if pool:
-        return _pick_from_pool(pool)
-
-    # ── Technology-noun detection from narration text ────────────────────────
-    text_lower = (narration_text or fallback_raw or "").lower()
-    candidate: str | None = None
-    for triggers, phrase in _TECH_NOUN_MAP:
-        if any(t in text_lower for t in triggers):
-            candidate = phrase
-            break
-
-    if candidate is None:
-        candidate = _distill_stock_query(fallback_raw) or "renewable energy"
-
-    # ── Diversity rotation ───────────────────────────────────────────────────
-    if _concept_key(candidate) in used_concepts:
-        for _, phrase in _TECH_NOUN_MAP:
-            if _concept_key(phrase) not in used_concepts:
-                candidate = phrase
-                break
-
-    used_concepts.add(_concept_key(candidate))
-    return candidate
+# Scene planner records the script section type inside its visual rationale;
+# this recovers it without re-reading the production plan.
+_SECTION_RATIONALE_RE = re.compile(r"Section type '(\w+)'")
 
 
 def _distill_stock_query(raw: str, max_words: int = 4, fallback: str = "energy technology") -> str:
@@ -486,6 +373,18 @@ class ScriptGenerationExecutor:
                 script_kwargs["min_words"] = min_words
             if max_words is not None:
                 script_kwargs["max_words"] = max_words
+            # Phase 18B: propagate the strategy brief's content constraints
+            # (brand_voice/content_style/audience_description) when the
+            # caller supplies them — generate_script already accepts tone/
+            # audience; the manual pipeline simply never had a source for
+            # them before. Absent (the existing manual-pipeline default),
+            # generate_script's own defaults apply unchanged.
+            tone = _cfg_str(req.effective_config, "tone")
+            if tone:
+                script_kwargs["tone"] = tone
+            audience = _cfg_str(req.effective_config, "audience")
+            if audience:
+                script_kwargs["audience"] = audience
 
             result = generate_script(conn, provider, topic, evidence, **script_kwargs)
             conn.commit()
@@ -559,11 +458,19 @@ class NarrationExecutor:
 
         try:
             from app.core.config import get_config
+            from app.learning.application import (
+                consume_proposed_application,
+                resolve_speaking_rate_override,
+            )
             from app.narration.orchestrator import narrate_plan
             from app.production.repository import get_active_approved_production_plan
 
             cfg = get_config()
-            plan = get_active_approved_production_plan(conn, req.topic_id)
+            # Resolve experiment-linked plan first; fall back to non-experiment plan.
+            # Persisted experiment_id on the plan is authoritative (Phase 14B.1).
+            plan = get_active_approved_production_plan(
+                conn, req.topic_id, experiment_id=req.experiment_id
+            ) or get_active_approved_production_plan(conn, req.topic_id)
             if plan is None:
                 return _blocked(
                     req,
@@ -577,6 +484,72 @@ class NarrationExecutor:
                 # Error message returned as string sentinel
                 return _blocked(req, self.executor_key, "missing_credentials", provider)
 
+            # Phase 14B.1: authoritative lineage wins.
+            # plan.experiment_id is the persisted binding and cannot be overridden.
+            _plan_exp_id = plan.experiment_id
+            if (
+                _plan_exp_id is not None
+                and req.experiment_id is not None
+                and req.experiment_id != _plan_exp_id
+            ):
+                return _blocked(
+                    req,
+                    self.executor_key,
+                    "lineage_conflict",
+                    f"experiment_id mismatch: request supplied {req.experiment_id!r} but "
+                    f"production plan {plan.id} is bound to experiment {_plan_exp_id!r}",
+                )
+            effective_experiment_id = (
+                _plan_exp_id if _plan_exp_id is not None else req.experiment_id
+            )
+
+            # Derive channel for learning-application scope.
+            # Priority 1: experiment lineage (authoritative — persisted at experiment creation).
+            # Priority 2: req.channel_id (cp_channel UUID from pipeline execution) bridged to
+            #   INTEGER channels.id via cp_channel_id lookup.
+            # Fallback: NULL (legacy path for old pipeline runs with no channel identity).
+            _narration_channel_id: int | None = None
+            if effective_experiment_id is not None:
+                _ch_row = conn.execute(
+                    "SELECT channel_id FROM experiments WHERE id = ?",
+                    (effective_experiment_id,),
+                ).fetchone()
+                if _ch_row:
+                    _narration_channel_id = _ch_row["channel_id"]
+            elif req.channel_id is not None:
+                _bridge_row = conn.execute(
+                    "SELECT id FROM channels WHERE cp_channel_id = ?",
+                    (req.channel_id,),
+                ).fetchone()
+                if _bridge_row:
+                    _narration_channel_id = int(_bridge_row["id"])
+
+            active_app, speaking_rate_override = resolve_speaking_rate_override(
+                conn, topic_id=req.topic_id, channel_id=_narration_channel_id
+            )
+
+            # Phase 14F/14F.1: experiment execution contract governs speaking_rate when the
+            # experiment explicitly declares it as a TREATMENT or CONTROL factor.
+            # TREATMENT: experiment tests the rate at intended_value → override + suppress learn.
+            # CONTROL:   experiment holds the rate at baseline (ENFORCED) → override + suppress.
+            # NOT_GOVERNING: experiment has a contract but does not own this parameter →
+            #   Learning Application continues to govern (active_app unchanged).
+            if effective_experiment_id is not None:
+                from app.intelligence.experiments.execution_contract import ParameterAuthority
+                from app.intelligence.experiments.execution_service import (
+                    resolve_narration_speaking_rate_authority,
+                )
+
+                contract_rate, authority = resolve_narration_speaking_rate_authority(
+                    conn, effective_experiment_id
+                )
+                if authority in (
+                    ParameterAuthority.EXPERIMENT_TREATMENT,
+                    ParameterAuthority.EXPERIMENT_CONTROL,
+                ):
+                    speaking_rate_override = contract_rate
+                    active_app = None  # suppress: experiment governs, do not consume learning app
+
             run_result = narrate_plan(
                 conn,
                 plan_id=plan.id,
@@ -584,8 +557,18 @@ class NarrationExecutor:
                 voice_profile_id=voice_profile_id,
                 artifacts_path=artifacts_path,
                 provider=provider,
+                speaking_rate_override=speaking_rate_override,
+                experiment_id=effective_experiment_id,
             )
             conn.commit()
+
+            if active_app is not None and speaking_rate_override is not None:
+                consume_proposed_application(
+                    conn,
+                    active_app,
+                    narration_run_id=run_result.run_id,
+                    value_applied=speaking_rate_override,
+                )
 
         except Exception as exc:
             return _failed(req, self.executor_key, str(exc))
@@ -669,11 +652,31 @@ class CaptionsExecutor:
         try:
             from app.captions.orchestrator import generate_captions
 
+            _cap_plan_row = conn.execute(
+                "SELECT experiment_id FROM production_plans WHERE id = ?", (plan_id,)
+            ).fetchone()
+            # Phase 14B.1: authoritative lineage wins.
+            _cap_plan_exp_id = _cap_plan_row["experiment_id"] if _cap_plan_row else None
+            if (
+                _cap_plan_exp_id is not None
+                and req.experiment_id is not None
+                and req.experiment_id != _cap_plan_exp_id
+            ):
+                return _blocked(
+                    req,
+                    self.executor_key,
+                    "lineage_conflict",
+                    f"experiment_id mismatch: request supplied {req.experiment_id!r} but "
+                    f"production plan {plan_id} is bound to experiment {_cap_plan_exp_id!r}",
+                )
+            _cap_effective_experiment_id = (
+                _cap_plan_exp_id if _cap_plan_exp_id is not None else req.experiment_id
+            )
             caption_run = generate_captions(
                 conn,
                 plan_id=plan_id,
                 artifacts_path=artifacts_path,
-                experiment_id=req.experiment_id,
+                experiment_id=_cap_effective_experiment_id,
             )
 
         except Exception as exc:
@@ -740,9 +743,31 @@ class VisualIntelligenceExecutor:
             from app.scenes.planner import build_scene_manifest
             from app.scenes.repository import get_or_create_scene_manifest
 
+            # Phase 14B.1: authoritative lineage wins.
+            # Must resolve experiment_id BEFORE narration/caption lookups (they filter on it).
+            _vi_plan_row = conn.execute(
+                "SELECT experiment_id FROM production_plans WHERE id = ?", (plan_id,)
+            ).fetchone()
+            _vi_plan_exp_id = _vi_plan_row["experiment_id"] if _vi_plan_row else None
+            if (
+                _vi_plan_exp_id is not None
+                and req.experiment_id is not None
+                and req.experiment_id != _vi_plan_exp_id
+            ):
+                return _blocked(
+                    req,
+                    self.executor_key,
+                    "lineage_conflict",
+                    f"experiment_id mismatch: request supplied {req.experiment_id!r} but "
+                    f"production plan {plan_id} is bound to experiment {_vi_plan_exp_id!r}",
+                )
+            _vi_effective_experiment_id = (
+                _vi_plan_exp_id if _vi_plan_exp_id is not None else req.experiment_id
+            )
+
             # Load narration run
             narration_run = get_approved_narration_run_full(
-                conn, plan_id, experiment_id=req.experiment_id
+                conn, plan_id, experiment_id=_vi_effective_experiment_id
             )
             if narration_run is None:
                 return _blocked(
@@ -754,7 +779,7 @@ class VisualIntelligenceExecutor:
 
             # Load caption run (keyed off narration_run_id)
             caption_run = get_active_approved_caption_run(
-                conn, narration_run.run_id, experiment_id=req.experiment_id
+                conn, narration_run.run_id, experiment_id=_vi_effective_experiment_id
             )
             if caption_run is None:
                 return _blocked(
@@ -764,8 +789,10 @@ class VisualIntelligenceExecutor:
                     f"No approved caption run for narration run {narration_run.run_id}",
                 )
 
-            # Load production plan
-            production_plan = get_approved_production_plan_full(conn, req.topic_id)
+            # Load production plan — experiment-linked plans resolved first.
+            production_plan = get_approved_production_plan_full(
+                conn, req.topic_id, experiment_id=_vi_effective_experiment_id
+            ) or get_approved_production_plan_full(conn, req.topic_id)
             if production_plan is None:
                 return _blocked(
                     req,
@@ -802,6 +829,19 @@ class VisualIntelligenceExecutor:
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class VisualAssessmentOutcome:
+    """The visual-quality verdict for a render, plus how it was arrived at.
+
+    Carried out of visual planning so `execute` can persist it against the
+    render manifest id, which does not exist yet while the beats are being
+    resolved.
+    """
+
+    assessment: Any
+    remediation_attempted: bool = False
+
+
 class RenderingExecutor:
     """Compose and render the final MP4 using FFmpeg.
 
@@ -817,6 +857,203 @@ class RenderingExecutor:
 
     executor_key = "rendering_v1"
     executor_version = EXECUTOR_CONTRACT_VERSION
+
+    # ── Semantic visual planning ────────────────────────────────────────────
+
+    @staticmethod
+    def _section_type(approved_scene: Any) -> str:
+        """Recover the scene's script section type from its planner rationale."""
+        match = _SECTION_RATIONALE_RE.search(getattr(approved_scene, "visual_rationale", "") or "")
+        return match.group(1) if match else "body"
+
+    def _plan_visuals(
+        self,
+        conn: Any,
+        req: StageExecutionRequest,
+        *,
+        approved: Any,
+        scene_inputs: list,
+        artifacts_path: Path,
+        width: int,
+        height: int,
+    ) -> tuple[Any, Any, Any]:
+        """Plan semantic beats, resolve a visual for each, and audit the result.
+
+        Beats are attached to the scene inputs so the render backend can cut
+        the visual track without touching narration timing.  Returns the
+        resolved plan, its QA report, and its Phase 18E visual-quality
+        assessment.
+
+        Remediation happens HERE, before a single frame is encoded: when the
+        first resolution pass leaves the video dominated by fallback cards
+        because retrieval failed, the deficient beats are re-resolved with
+        widened queries and a lower (not absent) relevance bar.  Doing it at
+        this point is what makes it cheap — no render is thrown away, and the
+        run's provider-search memo means reconsidering a query already issued
+        costs nothing.
+        """
+        import logging as _logging
+
+        from app.captions.repository import get_caption_cues
+        from app.media.models import RenderVisualBeat, ResolvedAsset
+        from app.visuals.beats import BeatPlannerInput, CueWindow, plan_beats
+        from app.visuals.composition import composition_from_plan
+        from app.visuals.engine import VisualEngine, VisualEngineConfig
+        from app.visuals.policy import policy_from_config
+        from app.visuals.qa import audit_visual_plan
+        from app.visuals.quality import assess_composition
+        from app.visuals.repository import save_visual_plan
+
+        log = _logging.getLogger(__name__)
+        policy = policy_from_config(req.effective_config)
+
+        # Caption cues give clause-shaped, already-timed beat boundaries.
+        cues_by_segment: dict[int, list[CueWindow]] = {}
+        if approved.caption_run_id:
+            for cue in get_caption_cues(conn, approved.caption_run_id):
+                cues_by_segment.setdefault(cue.segment_id, []).append(
+                    CueWindow(text=cue.text, start_ms=cue.start_ms, end_ms=cue.end_ms)
+                )
+
+        planner_inputs = [
+            BeatPlannerInput(
+                scene_index=scene.scene_index,
+                scene_id=scene.scene_id,
+                segment_id=scene.segment_id,
+                start_ms=scene.start_ms,
+                duration_ms=scene.duration_ms,
+                narration_text=scene.narration_text,
+                section_type=self._section_type(scene),
+                claim_ids=list(getattr(scene, "claim_ids", []) or []),
+                cues=cues_by_segment.get(scene.segment_id),
+            )
+            for scene in approved.scenes
+        ]
+
+        beats = plan_beats(
+            planner_inputs,
+            target_beat_ms=policy.target_beat_ms,
+            min_beat_ms=policy.min_beat_ms,
+            max_beat_ms=policy.max_beat_ms,
+        )
+
+        engine = VisualEngine(
+            VisualEngineConfig(
+                width=width,
+                height=height,
+                policy=policy,
+                channel_key=req.channel_id,
+                scene_manifest_id=approved.manifest_id,
+                topic_id=approved.topic_id,
+                experiment_id=approved.experiment_id,
+                cache_dir=artifacts_path / "visuals" / "cache",
+                graphics_dir=artifacts_path
+                / "visuals"
+                / "graphics"
+                / f"manifest_{approved.manifest_id}",
+            ),
+            conn=conn,
+        )
+        plan = engine.resolve(beats)
+
+        # ── Bounded visual remediation (Phase 18E) ─────────────────────────
+        # One pass, targeting only beats that fell back because a PROVIDER
+        # failed. A beat that chose a diagram on purpose is never touched, and
+        # a beat that still finds nothing keeps the card it already has, so
+        # this can improve a plan but never damage one.
+        composition = composition_from_plan(plan)
+        assessment = assess_composition(composition, visual_style=policy.style)
+        remediated = False
+        if assessment.blocked and bool(
+            req.effective_config.get("visual_remediation_enabled", True)
+        ):
+            deficient = composition.deficient_beat_indexes()
+            if deficient:
+                log.info(
+                    "Visual quality %s before remediation (%.0f%% meaningful runtime); "
+                    "attempting to repair %d beat(s)",
+                    assessment.status,
+                    composition.meaningful_runtime_pct * 100,
+                    len(deficient),
+                )
+                plan = engine.remediate(plan, deficient)
+                composition = composition_from_plan(plan)
+                assessment = assess_composition(composition, visual_style=policy.style)
+                remediated = True
+                log.info(
+                    "Visual quality %s after remediation (%.0f%% meaningful runtime)",
+                    assessment.status,
+                    composition.meaningful_runtime_pct * 100,
+                )
+
+        save_visual_plan(conn, plan, workspace_id=req.workspace_id)
+        conn.commit()
+
+        # Attach beats to their scenes, and expose the scene's opening visual
+        # as its primary asset so downstream manifest projections stay populated.
+        by_scene: dict[int, list[RenderVisualBeat]] = {}
+        for resolution in plan.resolutions:
+            beat = resolution.beat
+            by_scene.setdefault(beat.scene_index, []).append(
+                RenderVisualBeat(
+                    beat_index=beat.beat_index,
+                    start_ms=beat.start_ms,
+                    end_ms=beat.end_ms,
+                    duration_ms=beat.duration_ms,
+                    local_path=resolution.local_path,
+                    media_type=resolution.media_type,
+                    motion=resolution.motion,
+                    fit_mode=resolution.fit_mode,
+                    asset_key=resolution.asset_key,
+                    provider=resolution.provider,
+                    license_status=resolution.license_status,
+                    commercial_safe=resolution.commercial_safe,
+                    visual_intent=beat.visual_intent,
+                    label=beat.primary_query or beat.narration_text[:60],
+                )
+            )
+
+        for scene_input in scene_inputs:
+            scene_beats = by_scene.get(scene_input.scene_index, [])
+            scene_input.visual_beats = scene_beats
+            first = next((b for b in scene_beats if b.resolved), None)
+            if first is not None:
+                scene_input.resolved_assets = [
+                    ResolvedAsset(
+                        asset_id=-1,
+                        scene_id=scene_input.scene_id,
+                        segment_id=scene_input.segment_id,
+                        asset_index=0,
+                        category=first.media_type,
+                        priority="required",
+                        local_path=first.local_path,
+                        local_sha256=None,
+                        source_url=None,
+                        license_status=first.license_status,
+                        commercial_safe=first.commercial_safe,
+                    )
+                ]
+
+        report = audit_visual_plan(plan, require_commercial_safe=policy.require_commercial_safe)
+        log.info(
+            "Visual plan: %d beats, QA=%s, providers=%s",
+            len(plan.beats),
+            report.status,
+            plan.provider_calls,
+        )
+        for finding in report.findings:
+            log.warning("Visual QA [%s] %s: %s", finding.severity, finding.code, finding.message)
+
+        for finding in assessment.findings:
+            log.warning(
+                "Visual quality [%s] %s: %s", finding.severity, finding.code, finding.message
+            )
+
+        return (
+            plan,
+            report,
+            VisualAssessmentOutcome(assessment=assessment, remediation_attempted=remediated),
+        )
 
     def execute(self, conn: Any, req: StageExecutionRequest) -> StageExecutionResult:
         if req.topic_id is None:
@@ -840,6 +1077,7 @@ class RenderingExecutor:
             from app.media.repository import (
                 create_render_job,
                 get_or_create_render_manifest,
+                list_render_jobs,
                 mark_render_job_completed,
                 mark_render_job_rendering,
             )
@@ -880,152 +1118,20 @@ class RenderingExecutor:
                 render_kwargs = {"width": rp.width, "height": rp.height, "fps": rp.fps}
                 render_w, render_h = rp.width, rp.height
 
-            # ── Visual asset resolution ────────────────────────────────────
-            # Fallback chain per scene (first success wins):
-            #   1. Pexels video clip (motion; preferred for Shorts)
-            #   2. Pexels photo (static; cropped to vertical)
-            #   3. Wikimedia Commons photo (free; no key required)
-            #   4. PIL gradient card (always succeeds)
-            # Dedup tracked via used_pexels_ids so no two scenes share an asset.
-            import re as _re
-
-            from app.media.models import ResolvedAsset
-            from app.media.pexels_fetcher import fetch_pexels_photo, fetch_pexels_video
-            from app.media.stock_fetcher import fetch_stock_image
-            from app.media.visual_generator import (
-                card_cache_key,
-                generate_scene_card,
-                prep_image_for_vertical,
+            # ── Semantic visual planning + asset resolution ────────────────
+            # Narration is segmented into semantic beats; each beat retrieves
+            # and scores its own candidates across the provider stack and
+            # falls back to a locally generated explanatory graphic when no
+            # candidate is relevant enough to be worth showing.
+            visual_plan, visual_qa, visual_outcome = self._plan_visuals(
+                conn,
+                req,
+                approved=approved,
+                scene_inputs=scene_inputs,
+                artifacts_path=artifacts_path,
+                width=render_w,
+                height=render_h,
             )
-
-            vis_cards_dir = (
-                artifacts_path / "visuals" / "cards" / f"manifest_{approved.manifest_id}"
-            )
-            stock_cache_dir = artifacts_path / "stock_cache" / "wikimedia"
-            pexels_cache_dir = artifacts_path / "stock_cache" / "pexels"
-            pexels_cache_dir.mkdir(parents=True, exist_ok=True)
-            _section_re = _re.compile(r"Section type '(\w+)'")
-
-            # Read Pexels API key from effective_config or environment
-            import os as _os
-
-            pexels_api_key: str | None = req.effective_config.get(
-                "pexels_api_key"
-            ) or _os.environ.get("ACE_PEXELS_API_KEY")
-            used_pexels_ids: set[int] = set()
-            used_visual_concepts: set[str] = set()
-
-            import logging as _logging
-
-            _vis_log = _logging.getLogger(__name__)
-
-            for i, (si, approved_scene) in enumerate(
-                zip(scene_inputs, approved.scenes, strict=False)
-            ):
-                has_asset = any(a.local_path for a in si.resolved_assets)
-                if has_asset:
-                    continue
-
-                # Derive section_type and base search query
-                m = _section_re.search(approved_scene.visual_rationale or "")
-                section_type = m.group(1) if m else "body"
-                asset_query = next(
-                    (a.search_query for a in approved_scene.assets if a.search_query),
-                    None,
-                )
-                raw_query = (
-                    asset_query or approved_scene.visual_objective or si.visual_objective or ""
-                ).strip()
-                search_q = _scene_visual_query(
-                    section_type=section_type,
-                    narration_text=approved_scene.narration_text,
-                    fallback_raw=raw_query,
-                    used_concepts=used_visual_concepts,
-                )
-
-                resolved_local: str | None = None
-                resolved_category = "generated_card"
-                resolved_license = "not_required"
-                resolved_commercial_safe = True
-                resolved_source: str | None = None
-
-                # --- 1. Pexels video (motion; preferred for Shorts) ---
-                if pexels_api_key:
-                    result = fetch_pexels_video(
-                        search_q, pexels_cache_dir, pexels_api_key, used_ids=used_pexels_ids
-                    )
-                    if result is not None:
-                        vid_path, _ = result
-                        resolved_local = str(vid_path)
-                        resolved_category = "pexels_video"
-                        resolved_license = "verified"
-                        resolved_commercial_safe = True
-                        resolved_source = str(vid_path.with_suffix(".attr.json"))
-                        _vis_log.info("Scene %d: Pexels VIDEO %r", i, search_q)
-
-                # --- 2. Pexels photo (static; cropped to vertical) ---
-                if resolved_local is None and pexels_api_key:
-                    result = fetch_pexels_photo(
-                        search_q, pexels_cache_dir, pexels_api_key, used_ids=used_pexels_ids
-                    )
-                    if result is not None:
-                        photo_path, _ = result
-                        prepped = vis_cards_dir / f"pp_{i}_{photo_path.stem}.jpg"
-                        if not prepped.exists():
-                            prep_image_for_vertical(photo_path, prepped, render_w, render_h)
-                        resolved_local = str(prepped)
-                        resolved_category = "pexels_photo"
-                        resolved_license = "verified"
-                        resolved_commercial_safe = True
-                        resolved_source = str(photo_path)
-                        _vis_log.info("Scene %d: Pexels PHOTO %r", i, search_q)
-
-                # --- 3. Wikimedia Commons photo (free; no API key) ---
-                if resolved_local is None:
-                    wm_path = fetch_stock_image(search_q, stock_cache_dir, min_dimension=800)
-                    if wm_path is not None:
-                        prepped = vis_cards_dir / f"wm_{i}_{wm_path.stem}.jpg"
-                        if not prepped.exists():
-                            prep_image_for_vertical(wm_path, prepped, render_w, render_h)
-                        resolved_local = str(prepped)
-                        resolved_category = "wikimedia_photo"
-                        resolved_license = "verified"
-                        resolved_commercial_safe = False
-                        resolved_source = str(wm_path)
-                        _vis_log.info("Scene %d: Wikimedia PHOTO %r", i, search_q)
-
-                # --- 4. PIL gradient card (always succeeds) ---
-                if resolved_local is None:
-                    _vis_log.warning("Scene %d: PIL card for %r", i, search_q)
-                    label = search_q[:57]
-                    ck = card_cache_key(section_type, label, render_w, render_h)
-                    card_path = vis_cards_dir / f"card_{i}_{ck}.png"
-                    if not card_path.exists():
-                        generate_scene_card(
-                            section_type=section_type,
-                            keyword_text=label,
-                            width=render_w,
-                            height=render_h,
-                            output_path=card_path,
-                        )
-                    resolved_local = str(card_path)
-
-                si.resolved_assets = [
-                    ResolvedAsset(
-                        asset_id=-1,
-                        scene_id=si.scene_id,
-                        segment_id=si.segment_id,
-                        asset_index=0,
-                        category=resolved_category,
-                        priority="required",
-                        local_path=resolved_local,
-                        local_sha256=None,
-                        source_url=resolved_source,
-                        license_status=resolved_license,
-                        commercial_safe=resolved_commercial_safe,
-                    )
-                ]
-                _vis_log.info("Scene %d: resolved as %s", i, resolved_category)
 
             render_draft = build_render_manifest(
                 scene_manifest_id=approved.manifest_id,
@@ -1038,10 +1144,48 @@ class RenderingExecutor:
                 script_id=approved.script_id,
                 scenes=scene_inputs,
                 caption_burn_in=approved.caption_run_id is not None,
+                experiment_id=approved.experiment_id,
                 **render_kwargs,
             )
 
             manifest, _ = get_or_create_render_manifest(conn, render_draft)
+
+            # ── Persist the visual-quality assessment (Phase 18E) ──────────
+            # Keyed on the render manifest and upserted, so a re-run of this
+            # stage refreshes the verdict instead of accumulating duplicates.
+            # Publishing preflight reads this row; it never re-measures.
+            try:
+                from app.visuals.assessment_repository import (
+                    record_remediation_attempt,
+                    save_assessment,
+                )
+                from app.visuals.repository import attach_render_manifest
+
+                save_assessment(
+                    conn,
+                    visual_outcome.assessment,
+                    render_manifest_id=manifest.id,
+                    scene_manifest_id=approved.manifest_id,
+                    workspace_id=req.workspace_id,
+                    channel_id=req.channel_id,
+                    experiment_id=approved.experiment_id,
+                    remediated=visual_outcome.remediation_attempted,
+                )
+                if visual_outcome.remediation_attempted:
+                    record_remediation_attempt(conn, manifest.id)
+                # Backfill asset-usage lineage now that the render manifest
+                # this plan belongs to actually exists.
+                attach_render_manifest(conn, approved.manifest_id, manifest.id)
+                conn.commit()
+            except Exception as assess_exc:  # noqa: BLE001
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "Visual quality assessment could not be persisted (non-fatal "
+                    "here; publishing preflight treats a missing assessment as a "
+                    "hard block): %s",
+                    assess_exc,
+                )
 
             renders_dir_raw = req.effective_config.get("renders_dir")
             if renders_dir_raw:
@@ -1050,6 +1194,25 @@ class RenderingExecutor:
                 renders_dir = artifacts_path / "renders" / str(approved.manifest_id)
             renders_dir.mkdir(parents=True, exist_ok=True)
             output_path = renders_dir / f"render_{manifest.id}.mp4"
+
+            # Idempotency: reuse existing completed render if the file is intact.
+            existing_jobs = list_render_jobs(conn, manifest.id)
+            for existing in existing_jobs:
+                if (
+                    existing.status == "completed"
+                    and existing.output_path
+                    and Path(existing.output_path).exists()
+                    and Path(existing.output_path).stat().st_size > 0
+                ):
+                    return StageExecutionResult(
+                        stage=req.stage,
+                        executor_key=self.executor_key,
+                        executor_version=self.executor_version,
+                        status="waiting_for_review",
+                        review_required=True,
+                        artifact_type="render_job",
+                        artifact_id=existing.output_path,
+                    )
 
             job = create_render_job(
                 conn,

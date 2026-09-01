@@ -78,6 +78,7 @@ def narrate_plan(
     pricing: TTSPricingRegistry | None = None,
     experiment_id: str | None = None,
     notes: str | None = None,
+    speaking_rate_override: float | None = None,
 ) -> NarrationRunResult:
     """Synthesise all narration segments for a production plan.
 
@@ -85,6 +86,13 @@ def narrate_plan(
     exists its result is returned without re-synthesis.  If a 'running' run
     exists (from a crashed prior attempt), it is reused and synthesis
     continues from where it left off.
+
+    Args:
+        speaking_rate_override: when set, overrides voice_profile.speaking_rate
+            for this run.  Used by the recommendation application framework
+            (Phase 12A) to inject a learning-derived speaking_rate.  The
+            override is captured in the input_hash so a different rate always
+            produces a distinct narration run.
     """
     pr = pricing or get_default_registry()
     artifacts_root = resolve_artifacts_path(artifacts_path)
@@ -93,13 +101,17 @@ def narrate_plan(
     vp = require_voice_profile(conn, voice_profile_id)
     settings_hash = compute_settings_hash(vp.settings_json)
 
+    effective_speaking_rate = (
+        speaking_rate_override if speaking_rate_override is not None else vp.speaking_rate
+    )
+
     draft = NarrationRunDraft(
         plan_id=plan_id,
         plan_input_hash=plan_input_hash,
         voice_profile_id=vp.id,
         voice_profile_version=vp.version,
         language=vp.language,
-        speaking_rate=vp.speaking_rate,
+        speaking_rate=effective_speaking_rate,
         style=vp.style,
         stability=vp.stability,
         similarity_boost=vp.similarity_boost,
@@ -118,7 +130,7 @@ def narrate_plan(
         voice_profile_id=vp.id,
         voice_profile_version=vp.version,
         language=vp.language,
-        speaking_rate=vp.speaking_rate,
+        speaking_rate=effective_speaking_rate,
         style=vp.style,
         stability=vp.stability,
         similarity_boost=vp.similarity_boost,
@@ -158,6 +170,7 @@ def narrate_plan(
                 segment_id=seg[0],
                 narration_text=seg[1],
                 vp=vp,
+                speaking_rate=effective_speaking_rate,
                 settings_hash=settings_hash,
                 artifacts_root=artifacts_root,
                 plan_id=plan_id,
@@ -186,6 +199,7 @@ def _narrate_segment(
     segment_id: int,
     narration_text: str,
     vp,
+    speaking_rate: float,
     settings_hash: str,
     artifacts_root: Path,
     plan_id: int,
@@ -211,7 +225,7 @@ def _narrate_segment(
         voice_profile_id=vp.id,
         voice_profile_version=vp.version,
         language=vp.language,
-        speaking_rate=vp.speaking_rate,
+        speaking_rate=speaking_rate,
         style=vp.style,
         stability=vp.stability,
         similarity_boost=vp.similarity_boost,
@@ -232,7 +246,7 @@ def _narrate_segment(
         voice_profile_id=vp.id,
         voice_profile_version=vp.version,
         language=vp.language,
-        speaking_rate=vp.speaking_rate,
+        speaking_rate=speaking_rate,
         style=vp.style,
         stability=vp.stability,
         similarity_boost=vp.similarity_boost,
@@ -254,7 +268,7 @@ def _narrate_segment(
         model=provider.default_model,
         voice_id=vp.voice_id,
         language=vp.language,
-        speaking_rate=vp.speaking_rate,
+        speaking_rate=speaking_rate,
         output_format=NARRATION_DEFAULT_OUTPUT_FORMAT,
         sample_rate_hz=NARRATION_DEFAULT_SAMPLE_RATE_HZ,
         style=vp.style,

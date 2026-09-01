@@ -6,6 +6,7 @@ import { LoadingState } from '@/components/common/LoadingState'
 import { ErrorState } from '@/components/common/ErrorState'
 import { EmptyState } from '@/components/common/EmptyState'
 import { StatusBadge } from '@/components/common/StatusBadge'
+import { TechnicalDetails } from '@/components/common/TechnicalDetails'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 
@@ -83,9 +84,7 @@ export function Settings() {
                 <p className="text-sm text-secondary mb-4">
                   Resolved configuration for this workspace — secrets are never exposed.
                 </p>
-                <pre className="font-mono text-xs text-secondary" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                  {JSON.stringify(config, null, 2)}
-                </pre>
+                <TechnicalDetails summary="Effective configuration" data={config} />
               </div>
 
             ) : activeSection === 'Workspace' ? (

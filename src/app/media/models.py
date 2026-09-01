@@ -33,6 +33,35 @@ class ResolvedAsset:
 
 
 @dataclass
+class RenderVisualBeat:
+    """One visual beat inside a render scene.
+
+    Beats subdivide the *visual* track only.  The parent scene keeps its
+    narration asset and audio path, so adding beats cannot alter audio
+    assembly, narration lineage, or caption timing.
+    """
+
+    beat_index: int
+    start_ms: int  # absolute, video timeline
+    end_ms: int
+    duration_ms: int
+    local_path: str | None
+    media_type: str
+    motion: str = "none"
+    fit_mode: str = "cover"
+    asset_key: str | None = None
+    provider: str = "programmatic"
+    license_status: str = "unknown"
+    commercial_safe: bool = True
+    visual_intent: str = ""
+    label: str = ""
+
+    @property
+    def resolved(self) -> bool:
+        return bool(self.local_path)
+
+
+@dataclass
 class RenderSceneDraft:
     """Per-scene render data assembled before persistence."""
 
@@ -50,6 +79,9 @@ class RenderSceneDraft:
     visual_objective: str
     caption_cue_ids: list[int]
     primary_asset: ResolvedAsset | None  # best resolved visual asset
+    # Optional finer-grained visual track.  Empty means the scene renders as a
+    # single clip from primary_asset, exactly as before beats existed.
+    visual_beats: list[RenderVisualBeat] = field(default_factory=list)
 
 
 @dataclass

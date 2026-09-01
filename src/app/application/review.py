@@ -113,6 +113,7 @@ def _approve_pipeline_review(
     conn: Any, pipeline_id: str, workspace_id: str, actor: str
 ) -> dict[str, Any]:
     from app.application import state as pipeline_state
+    from app.application.pipeline import _emit_event, _next_stage
 
     pv = pipeline_state.get_pipeline(conn, pipeline_id)
     if pv.workspace_id != workspace_id:
@@ -136,7 +137,38 @@ def _approve_pipeline_review(
         artifact_id=waiting_stage.artifact_id,
         artifact_type=waiting_stage.artifact_type,
     )
-    pipeline_state.update_pipeline_status(conn, pipeline_id, "running", current_stage=stage_name)
+
+    # Bug fix: this used to re-set current_stage back to the just-completed
+    # stage_name, leaving the pipeline permanently "stuck" pointing at a
+    # stage that was already marked completed — a caller driving the
+    # pipeline stage-by-stage (as the review-required loop is meant to
+    # support) would then re-execute that same stage forever, silently
+    # re-spending whatever external call it makes each time. The correct
+    # next stage must be computed exactly as advance_pipeline() (the
+    # manual-advance sibling of this review-approval path) already does.
+    next_stage = _next_stage(pv, stage_name)
+    if next_stage is None:
+        pipeline_state.update_pipeline_status(conn, pipeline_id, "completed")
+        _emit_event(
+            conn,
+            "pipeline.completed",
+            workspace_id,
+            actor,
+            {"pipeline_id": pipeline_id},
+            correlation_id=pv.correlation_id,
+        )
+    else:
+        pipeline_state.update_pipeline_status(
+            conn, pipeline_id, "running", current_stage=next_stage
+        )
+        _emit_event(
+            conn,
+            "pipeline.stage_started",
+            workspace_id,
+            actor,
+            {"pipeline_id": pipeline_id, "stage": next_stage},
+            correlation_id=pv.correlation_id,
+        )
 
     return {
         "status": "approved",

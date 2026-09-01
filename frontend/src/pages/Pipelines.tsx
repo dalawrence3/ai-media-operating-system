@@ -7,6 +7,7 @@ import { LoadingState } from '@/components/common/LoadingState'
 import { ErrorState } from '@/components/common/ErrorState'
 import { EmptyState } from '@/components/common/EmptyState'
 import { Modal } from '@/components/common/Modal'
+import { TechnicalDetails } from '@/components/common/TechnicalDetails'
 import {
   usePipelines, usePipeline, usePipelineMutations,
   useStartPipeline, useStageArtifact, usePipelineDiagnostics,
@@ -274,28 +275,43 @@ function ArtifactPanel({ artifact }: { artifact: StageArtifact }) {
       </div>
     )
   }
+  const summary = summarizeArtifactContent(artifact.content)
   return (
-    <div>
+    <div aria-label="Artifact content">
       <p className="text-xs text-muted mb-2">Type: <code>{artifact.content_type}</code></p>
-      <pre
-        style={{
-          fontSize: '11px',
-          background: 'var(--surface-elevated)',
-          borderRadius: 'var(--radius-sm)',
-          padding: 'var(--sp-3)',
-          overflowX: 'auto',
-          maxHeight: 240,
-          overflowY: 'auto',
-        }}
-        aria-label="Artifact content"
-      >
-        {JSON.stringify(artifact.content, null, 2)}
-      </pre>
+      {summary.length > 0 ? (
+        <div className="detail-meta-list">
+          {summary.map(([key, value]) => (
+            <div key={key} className="detail-meta-row">
+              <span className="detail-meta-label">{key.replace(/_/g, ' ')}</span>
+              <span className="detail-meta-value">{value}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted">No summarizable fields for this artifact.</p>
+      )}
       {artifact.truncated && (
         <p className="text-xs text-muted mt-1">Content truncated for display</p>
       )}
+      <TechnicalDetails summary="Raw artifact JSON" data={artifact.content} />
     </div>
   )
+}
+
+/** Top-level primitive fields only — enough to orient without dumping the
+    whole structure. Nested objects/arrays stay behind the raw-JSON toggle. */
+function summarizeArtifactContent(content: Record<string, unknown> | undefined): Array<[string, string]> {
+  if (!content) return []
+  const entries: Array<[string, string]> = []
+  for (const [key, value] of Object.entries(content)) {
+    if (value === null || value === undefined) continue
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      const str = String(value)
+      entries.push([key, str.length > 160 ? `${str.slice(0, 160)}…` : str])
+    }
+  }
+  return entries
 }
 
 // ── Diagnostics panel ────────────────────────────────────────────────────────

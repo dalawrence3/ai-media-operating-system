@@ -96,3 +96,30 @@ class AttributionError(LearningError):
 
 class MissingAttributionFieldError(AttributionError):
     """A required attribution field is missing from the analytics handoff."""
+
+
+# ── Application errors (Phase 12A) ───────────────────────────────────────────
+
+
+class ApplicationError(LearningError):
+    """Base class for recommendation application errors."""
+
+
+class RecommendationNotApplicableError(ApplicationError):
+    """Recommendation is not accepted+actionable and cannot be applied."""
+
+
+class ApplicationParameterError(ApplicationError):
+    """A parameter adjustment violates safety bounds or is otherwise invalid."""
+
+
+class DuplicateApplicationError(ApplicationError):
+    """An active application for this (recommendation, topic, parameter) already exists."""
+
+
+class InvalidApplicationTransitionError(ApplicationError):
+    """An illegal lifecycle transition was attempted on an application."""
+
+
+class ApplicationNotFoundError(ApplicationError):
+    """No application with the given ID exists."""

@@ -158,16 +158,35 @@ def _reduce_metrics(
             currency_code=currency,
         )
 
-    # AGG_SUM — deduplicate by (period_start, period_end)
-    base_period_seen: dict[tuple[str | None, str | None], tuple[int, float]] = {}
+    # AGG_SUM — collapse to one representative per period_start, then sum.
+    #
+    # Deduplicating by the full (period_start, period_end) pair is only
+    # correct when the observed windows are disjoint. The analytics observer
+    # always queries published_at → today, so successive observations of the
+    # same video produce nested cumulative windows that share a period_start
+    # and differ only in period_end. Summing those double counts: a video
+    # with 474 lifetime views observed on two consecutive days aggregated to
+    # 948, which then inflated channel baselines, min-views maturity gates,
+    # and every experiment outcome computed from them.
+    #
+    # Within one period_start the later window strictly contains the earlier
+    # one, so the latest observation is the whole truth for that start and
+    # replaces rather than adds to its predecessors. Genuinely disjoint
+    # periods still have distinct period_starts and are still summed.
+    latest_per_start: dict[str | None, tuple[str | None, int, float]] = {}
     for row in rows:
-        base_period_seen[(row.period_start, row.period_end)] = (
-            row.snapshot_id,
-            row.metric_value,
-        )
+        prev = latest_per_start.get(row.period_start)
+        # rows arrive in ingest order, so a row with an equal period_end is a
+        # re-ingest of the same window and the newer value wins.
+        if prev is None or (row.period_end or "") >= (prev[0] or ""):
+            latest_per_start[row.period_start] = (
+                row.period_end,
+                row.snapshot_id,
+                row.metric_value,
+            )
 
-    total = sum(v for _, v in base_period_seen.values())
-    source_ids = [sid for sid, _ in base_period_seen.values()]
+    total = sum(v for _, _, v in latest_per_start.values())
+    source_ids = [sid for _, sid, _ in latest_per_start.values()]
     return _ReductionResult(
         value=total,
         source_snapshot_ids=source_ids,

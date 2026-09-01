@@ -20,28 +20,44 @@ import type {
   AnalyticsAggregate,
   AnalyticsSnapshot,
   AuditView,
+  AutonomyPolicy,
+  AutonomyReadinessResponse,
+  ChannelAutomationPolicyResponse,
+  ChannelPublishingAuthorization,
+  ChannelPublishingAuthorizationResponse,
+  UpdatePublishingAuthorizationRequest,
   ChannelView,
   CostView,
   CPAccount,
   CPChannel,
   CPWorkspace,
   ControlEvent,
+  CrossPublicationLearning,
   DiagnosticReport,
   Experiment,
+  ExperimentStrategyBrief,
   ExceptionView,
   HealthView,
+  MarketExperiment,
+  MarketOpportunity,
   OperationView,
+  OpportunityEvidenceResponse,
   OptimizationRecommendation,
   PipelineView,
   PublicationAnalytics,
+  PublicationVisualQuality,
+  PublicationAnalyticsHistoryEntry,
   PublicationDetail,
   PublicationListItem,
   RecommendationReviewEvent,
   ReviewItemView,
   ScheduleView,
   StageArtifact,
+  ChannelStrategyResponse,
+  StrategyConfig,
   StrategyProfile,
   TopicView,
+  UpdateAutomationPolicyRequest,
   WorkspaceView,
   YouTubeVerificationResult,
 } from './types'
@@ -280,9 +296,65 @@ class ApiClient {
   }
 
   getChannelStrategy(workspaceId: string, channelId: string) {
-    return this.request<StrategyProfile | { status: string; message: string }>(
+    return this.request<ChannelStrategyResponse>(
       'GET',
       `/workspaces/${workspaceId}/channels/${channelId}/strategy`,
+    )
+  }
+
+  getChannelReadiness(workspaceId: string, channelId: string) {
+    return this.request<AutonomyReadinessResponse>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/readiness`,
+    )
+  }
+
+  getChannelAutomationPolicy(workspaceId: string, channelId: string) {
+    return this.request<ChannelAutomationPolicyResponse>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/automation-policy`,
+    )
+  }
+
+  updateChannelAutomationPolicy(workspaceId: string, channelId: string, body: UpdateAutomationPolicyRequest) {
+    return this.request<AutonomyPolicy>(
+      'PUT',
+      `/workspaces/${workspaceId}/channels/${channelId}/automation-policy`,
+      body,
+    )
+  }
+
+  getChannelPublishingAuthorization(workspaceId: string, channelId: string) {
+    return this.request<ChannelPublishingAuthorizationResponse>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/publishing-authorization`,
+    )
+  }
+
+  updateChannelPublishingAuthorization(
+    workspaceId: string,
+    channelId: string,
+    body: UpdatePublishingAuthorizationRequest,
+  ) {
+    return this.request<ChannelPublishingAuthorization>(
+      'PUT',
+      `/workspaces/${workspaceId}/channels/${channelId}/publishing-authorization`,
+      body,
+    )
+  }
+
+  listChannelStrategyHistory(workspaceId: string, channelId: string) {
+    return this.request<StrategyProfile[]>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/strategy/history`,
+    )
+  }
+
+  createChannelStrategyVersion(workspaceId: string, channelId: string, config: StrategyConfig) {
+    return this.request<StrategyProfile>(
+      'POST',
+      `/workspaces/${workspaceId}/channels/${channelId}/strategy`,
+      { config },
     )
   }
 
@@ -318,6 +390,8 @@ class ApiClient {
       verified_at: string | null
       granted_scopes: string[]
       upload_scope_granted: boolean
+      analytics_scope_granted: boolean
+      release_scope_granted: boolean
       credential_status: string | null
       health_status: string | null
     }>(
@@ -330,6 +404,23 @@ class ApiClient {
     return this.request<{ authorization_url: string }>(
       'POST',
       `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/oauth/youtube/upgrade-upload`,
+    )
+  }
+
+  upgradeYouTubeAnalyticsScope(workspaceId: string, channelId: string, accountId: string) {
+    return this.request<{ authorization_url: string }>(
+      'POST',
+      `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/oauth/youtube/upgrade-analytics`,
+    )
+  }
+
+  /** Request youtube.force-ssl, the scope required to change a video's privacy
+      status. The backend bundles the already-granted scopes into the same
+      request so upload and analytics survive the re-consent. */
+  upgradeYouTubeReleaseScope(workspaceId: string, channelId: string, accountId: string) {
+    return this.request<{ authorization_url: string }>(
+      'POST',
+      `/workspaces/${workspaceId}/channels/${channelId}/accounts/${accountId}/oauth/youtube/upgrade-release`,
     )
   }
 
@@ -563,12 +654,17 @@ class ApiClient {
 
   // ── Analytics ────────────────────────────────────────────────────────────
 
-  listAnalyticsAggregates(workspaceId: string, metricName?: string, periodType?: string) {
+  listAnalyticsAggregates(
+    workspaceId: string,
+    metricName?: string,
+    periodType?: string,
+    publicationId?: number,
+  ) {
     return this.request<AnalyticsAggregate[]>(
       'GET',
       `/workspaces/${workspaceId}/analytics/aggregates`,
       undefined,
-      { metric_name: metricName, period_type: periodType },
+      { metric_name: metricName, period_type: periodType, publication_id: publicationId },
     )
   }
 
@@ -578,6 +674,65 @@ class ApiClient {
       `/workspaces/${workspaceId}/analytics/snapshots`,
       undefined,
       { limit },
+    )
+  }
+
+  getEnvironmentReadiness(workspaceId: string) {
+    return this.request<Record<string, unknown>>(
+      'GET',
+      `/workspaces/${workspaceId}/environment`,
+    )
+  }
+
+  listMarketClusters(workspaceId: string, limit?: number) {
+    return this.request<Record<string, unknown>[]>(
+      'GET',
+      `/workspaces/${workspaceId}/market/clusters`,
+      undefined,
+      { limit },
+    )
+  }
+
+  listMarketOpportunities(workspaceId: string, cpChannelId?: string, limit?: number) {
+    return this.request<MarketOpportunity[]>(
+      'GET',
+      `/workspaces/${workspaceId}/market/opportunities`,
+      undefined,
+      { cp_channel_id: cpChannelId, limit },
+    )
+  }
+
+  listMarketExperiments(workspaceId: string, cpChannelId?: string, limit?: number) {
+    return this.request<MarketExperiment[]>(
+      'GET',
+      `/workspaces/${workspaceId}/market/experiments`,
+      undefined,
+      { cp_channel_id: cpChannelId, limit },
+    )
+  }
+
+  listStrategyBriefs(workspaceId: string, cpChannelId: string, status?: string) {
+    return this.request<ExperimentStrategyBrief[]>(
+      'GET',
+      `/workspaces/${workspaceId}/market/strategy-briefs`,
+      undefined,
+      { cp_channel_id: cpChannelId, status },
+    )
+  }
+
+  getCrossPublicationLearning(workspaceId: string, channelId: string) {
+    return this.request<CrossPublicationLearning>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/cross-publication`,
+    )
+  }
+
+  getOpportunityEvidence(workspaceId: string, opportunityId: number, cpChannelId: string) {
+    return this.request<OpportunityEvidenceResponse>(
+      'GET',
+      `/workspaces/${workspaceId}/market/opportunities/${opportunityId}/evidence`,
+      undefined,
+      { cp_channel_id: cpChannelId },
     )
   }
 
@@ -591,8 +746,22 @@ class ApiClient {
     return this.request<PublicationDetail>('GET', `/workspaces/${workspaceId}/publications/${publicationId}`)
   }
 
+  getPublicationVisualQuality(workspaceId: string, publicationId: number) {
+    return this.request<PublicationVisualQuality>(
+      'GET',
+      `/workspaces/${workspaceId}/publications/${publicationId}/visual-quality`,
+    )
+  }
+
   getPublicationAnalytics(workspaceId: string, publicationId: number) {
     return this.request<PublicationAnalytics>('GET', `/workspaces/${workspaceId}/publications/${publicationId}/analytics`)
+  }
+
+  getPublicationAnalyticsHistory(workspaceId: string, publicationId: number) {
+    return this.request<PublicationAnalyticsHistoryEntry[]>(
+      'GET',
+      `/workspaces/${workspaceId}/publications/${publicationId}/analytics/history`,
+    )
   }
 
   releasePublic(workspaceId: string, publicationId: number) {
@@ -625,12 +794,17 @@ class ApiClient {
 
   // ── Learning ─────────────────────────────────────────────────────────────
 
-  listRecommendations(workspaceId: string, status?: string, domain?: string) {
+  listRecommendations(
+    workspaceId: string,
+    status?: string,
+    domain?: string,
+    publicationId?: number,
+  ) {
     return this.request<OptimizationRecommendation[]>(
       'GET',
       `/workspaces/${workspaceId}/recommendations`,
       undefined,
-      { status, domain },
+      { status, domain, publication_id: publicationId },
     )
   }
 

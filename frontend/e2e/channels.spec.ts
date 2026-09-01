@@ -1,12 +1,21 @@
 /**
  * Channels page E2E tests.
  * Uses dev auth bypass + seeded dev workspace.
- * Tests: channel list, empty state, channel creation modal validation.
- * No real OAuth; no live platform calls.
+ *
+ * Phase 17B.1 redesigned this into a single-channel product view: the
+ * "New channel" creation action only renders in the channel-less empty
+ * state (see Channels.tsx), which no seeded or live workspace reaches —
+ * every workspace in this system already has a channel. That flow (modal
+ * open/close, required fields, slug autofill, submit-disabled-without-name)
+ * is already covered against a properly mocked empty state by
+ * Channels.test.tsx; duplicating it here would need the E2E suite to create
+ * and tear down a scratch workspace, which is out of scope for a narrow
+ * staleness fix. This file now covers only what's actually reachable:
+ * the page renders and shows the channel that exists.
  */
 
 import { test, expect } from './fixtures'
-import { getDevWorkspaceId, gotoWorkspacePage, expectPageHeading } from './helpers'
+import { getDevWorkspaceId, gotoWorkspacePage } from './helpers'
 
 test.describe('Channels', () => {
   let wsId: string
@@ -19,62 +28,20 @@ test.describe('Channels', () => {
 
   test('channels page renders', async ({ page }) => {
     await gotoWorkspacePage(page, wsId, 'channels')
-    await expectPageHeading(page, /channels/i)
+    // The single-channel view's <h1> is the channel's own identity (e.g. a
+    // connected platform account's display name), not the literal word
+    // "Channels" — matched permissively, same as the Dashboard/Channel
+    // smoke tests in pages.spec.ts.
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: 10_000 })
   })
 
-  test('shows channel list or empty state', async ({ page }) => {
+  test('shows the channel that exists', async ({ page }) => {
     await gotoWorkspacePage(page, wsId, 'channels')
-    // Wait for the page to finish loading before checking content.
     await page.waitForLoadState('networkidle')
-    const hasChannels = await page.locator('[data-testid="channel-card"]').first().isVisible()
-      .catch(() => false)
-    const hasEmptyState = await page.getByText(/no channels|create.*channel|get started/i).isVisible()
-      .catch(() => false)
-    const hasCreateBtn = await page
-      .getByRole('button', { name: /new channel|create channel/i })
-      .isVisible()
-      .catch(() => false)
-    expect(hasChannels || hasEmptyState || hasCreateBtn).toBe(true)
-  })
-
-  test('create channel button opens modal', async ({ page }) => {
-    await gotoWorkspacePage(page, wsId, 'channels')
-    const createBtn = page.getByRole('button', { name: /new channel|create channel/i }).first()
-    await expect(createBtn).toBeVisible({ timeout: 10_000 })
-    await createBtn.click()
-    await expect(page.getByRole('dialog')).toBeVisible()
-    await expect(page.getByRole('heading', { name: /new channel/i })).toBeVisible()
-  })
-
-  test('create channel modal has required fields', async ({ page }) => {
-    await gotoWorkspacePage(page, wsId, 'channels')
-    await page.getByRole('button', { name: /new channel|create channel/i }).first().click()
-    await expect(page.getByLabel(/name/i)).toBeVisible()
-    await expect(page.getByLabel(/slug/i)).toBeVisible()
-  })
-
-  test('create channel modal slug auto-fills from name', async ({ page }) => {
-    await gotoWorkspacePage(page, wsId, 'channels')
-    await page.getByRole('button', { name: /new channel|create channel/i }).first().click()
-    const nameField = page.getByLabel(/channel name/i)
-    await nameField.fill('My Test Channel')
-    const slugField = page.getByLabel(/slug/i)
-    await expect(slugField).toHaveValue('my-test-channel')
-  })
-
-  test('create channel modal submit is disabled without name', async ({ page }) => {
-    await gotoWorkspacePage(page, wsId, 'channels')
-    await page.getByRole('button', { name: /new channel|create channel/i }).first().click()
-    const submitBtn = page.getByRole('button', { name: /create|save/i }).last()
-    await expect(submitBtn).toBeDisabled()
-  })
-
-  test('cancel closes the modal', async ({ page }) => {
-    await gotoWorkspacePage(page, wsId, 'channels')
-    await page.getByRole('button', { name: /new channel|create channel/i }).first().click()
-    await expect(page.getByRole('dialog')).toBeVisible()
-    await page.getByRole('button', { name: /cancel/i }).click()
-    await expect(page.getByRole('dialog')).not.toBeVisible()
+    // Every seeded/live workspace already has a channel — this is the
+    // populated view, never the channel-less empty state.
+    await expect(page.getByText(/no channel yet/i)).not.toBeVisible()
+    await expect(page.locator('.card').first()).toBeVisible()
   })
 
   test('seeded channels are visible', async ({ page }) => {

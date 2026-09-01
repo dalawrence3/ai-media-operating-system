@@ -688,7 +688,7 @@ def test_cli_youtube_branch_does_not_return_fake_provider(tmp_path, tmp_db_with_
     with patch(_gate, return_value=expected_provider):
         with patch(_init, return_value=None):
             with patch(_cfg, return_value=mock_cfg):
-                provider, lineage, _pub_date = _build_youtube_provider_and_lineage(
+                provider, lineage, _pub_date, _derived_exp = _build_youtube_provider_and_lineage(
                     conn,
                     publication_id=pub.id,
                     account_id=account_id,
@@ -1049,7 +1049,7 @@ def test_cli_derives_period_start_from_published_at(tmp_path, tmp_db_with_accoun
     with patch(_gate, return_value=expected_provider):
         with patch(_init, return_value=None):
             with patch(_cfg, return_value=mock_cfg):
-                _provider, _lineage, pub_date = _build_youtube_provider_and_lineage(
+                _provider, _lineage, pub_date, _derived_exp = _build_youtube_provider_and_lineage(
                     conn,
                     publication_id=pub.id,
                     account_id=account_id,
@@ -1083,7 +1083,7 @@ def test_cli_returns_none_published_at_when_unset(tmp_path, tmp_db_with_account)
     with patch(_gate, return_value=expected_provider):
         with patch(_init, return_value=None):
             with patch(_cfg, return_value=mock_cfg):
-                _provider, _lineage, pub_date = _build_youtube_provider_and_lineage(
+                _provider, _lineage, pub_date, _derived_exp = _build_youtube_provider_and_lineage(
                     conn,
                     publication_id=pub.id,
                     account_id=account_id,
@@ -1110,3 +1110,20 @@ def test_cli_explicit_period_start_wins_over_published_at():
         "analytics_ingest() must only derive period_start when it is None — "
         "explicit --period-start must win"
     )
+
+
+def test_upgrade_analytics_dev_user_is_allowed():
+    """Synthetic development users may use OAuth scope-upgrade routes in dev mode."""
+    from app.api.jwt_auth import CurrentUser
+    from app.api.routes.oauth import _require_connect_permission
+
+    user = CurrentUser(
+        user_id=0,
+        email="dev@local",
+        workspace_roles={},
+        _is_dev=True,
+        _actor_override="dev:studio-user",
+    )
+
+    # Must not raise despite empty workspace_roles in explicit dev mode.
+    _require_connect_permission(user, "local-dev")

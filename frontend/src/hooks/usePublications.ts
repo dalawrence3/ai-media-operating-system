@@ -18,10 +18,26 @@ export function usePublication(workspaceId: string, publicationId: number | null
   })
 }
 
+export function usePublicationVisualQuality(workspaceId: string, publicationId: number | null) {
+  return useQuery({
+    queryKey: ['publication-visual-quality', workspaceId, publicationId],
+    queryFn: () => api.getPublicationVisualQuality(workspaceId, publicationId!),
+    enabled: !!workspaceId && publicationId !== null,
+  })
+}
+
 export function usePublicationAnalytics(workspaceId: string, publicationId: number | null) {
   return useQuery({
     queryKey: ['publication-analytics', workspaceId, publicationId],
     queryFn: () => api.getPublicationAnalytics(workspaceId, publicationId!),
+    enabled: !!workspaceId && publicationId !== null,
+  })
+}
+
+export function usePublicationAnalyticsHistory(workspaceId: string, publicationId: number | null) {
+  return useQuery({
+    queryKey: ['publication-analytics-history', workspaceId, publicationId],
+    queryFn: () => api.getPublicationAnalyticsHistory(workspaceId, publicationId!),
     enabled: !!workspaceId && publicationId !== null,
   })
 }

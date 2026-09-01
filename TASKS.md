@@ -1048,7 +1048,7 @@ and bounded ApplicationService facade for Phase 14.
 - No backend imports, no secrets, no mock data in production views
 - Frontend boundary preserved: React → typed client → FastAPI → ApplicationService → Control Plane / engines
 
-**What waits:** Phase 16 (TBD — operator-scoped roadmap item)
+**What waits:** Phase 16 — multi-channel foundation and operational hardening.
 
 ---
 
@@ -1066,7 +1066,52 @@ and bounded ApplicationService facade for Phase 14.
 - Backup: `scripts/backup.sh` (`pg_dump | gzip`, 14-backup retention)
 - N+1 fix in `list_pipelines`; 13 integration tests
 
-**What waits:** Phase 16 (TBD)
+**What waits:** Phase 16 — multi-channel foundation and operational hardening.
+
+---
+
+### Phase 16 — Multi-Channel Foundation & Operational Hardening ✅ Complete
+
+**Objective:** Prove the pipeline is safe to run for more than one channel at once, and give it the observability to run unattended for stretches of time.
+
+**Delivered:**
+- Channel isolation enforced end-to-end across intelligence, learning, market, and experiment data — verified by dedicated three-channel isolation and workspace-split regression test suites
+- Channel identity bridge (`src/app/intelligence/channel_bridge.py`) reconciling the control-plane channel with the intelligence-layer channel record, plus a channel onboarding flow (`onboarding.py`)
+- Analytics auto-observer (`src/app/analytics/auto_observer.py`, `observation.py`): reconciles unobserved publications on startup and dispatches due observation ticks every 60s, independent of any inbound API request — this is what the `scheduler` service in `docker-compose.yml` runs
+- Account/credential health recovery and observer supervision, so a stuck or failing observer is detected rather than silently stalling
+- Defect fixes to the Phase 7 visual intelligence engine found during this hardening pass
+
+**What waits:** Phase 17 — channel strategy weighting and the frontend redesign.
+
+---
+
+### Phase 17 — Channel Strategy, Market Refresh & Frontend Redesign ✅ Complete
+
+**Objective:** Give each channel an explicit, versioned strategy for what to try next, keep market intelligence current on a schedule, and rebuild the frontend around content/analytics/learning instead of a single publishing queue.
+
+**Delivered:**
+- Channel strategy profile (`src/app/intelligence/experiments/strategy_policy.py`): versioned bootstrap-vs-steady-state weighting between market intelligence and channel-specific evidence, with an explicit exploration/exploitation split and a diversity rule (max cluster share, max consecutive same-cluster picks)
+- Market refresh scheduling (`src/app/intelligence/market/refresh_service.py`) and semantic fit resolution for niche-adjacent opportunities
+- Autonomy readiness evaluation (`src/app/application/autonomy_readiness.py`) — the backing logic for the Channel tab's readiness view
+- Frontend redesign: primary navigation rebuilt around **Content / Analytics / Learn / Channel**; the old `/publishing`, `/channels`, `/learning` routes now redirect instead of disappearing
+
+**What waits:** Phase 18 — closing the autonomous loop end to end.
+
+---
+
+### Phase 18 — Closed-Loop Autonomy & Visual Quality ✅ Complete
+
+**Objective:** Make the system able to decide what to try next, produce it, and publish it without an operator in the loop for any individual video — while keeping every step that leaves the local machine behind an explicit, fail-closed authorization gate.
+
+**Delivered:**
+- 18A **Decision cycle** (`src/app/intelligence/autonomy/decision_cycle.py`): schedule-driven, queue-based experiment selection per channel. `custom_cron` cadence is accepted and stored for forward compatibility but not yet computed — it raises `NotImplementedError`, and that boundary is covered by a test, not silently stubbed.
+- 18B **Production cycle** (`production_cycle.py`): autonomous rendering and production-plan drafting for a filled, decision-approved slot. Output stays a private, unlisted publication until the publishing cycle separately authorizes release.
+- 18C **Publishing cycle** (`publishing_cycle.py`): autonomous upload and public release, gated independently by `ACE_PUBLISHING_LIVE_ENABLED` and `ACE_RELEASE_PUBLIC_ENABLED` (both default `false`; see README "Current status").
+- 18D **Closed-loop integration**: an audit against the live database found nine cross-cutting defects that independently broke or would have corrupted the loop — a missing publication→experiment handoff, content features never extracted autonomously, a channel-id namespace mismatch that left planner coverage permanently empty, a queue deadlock, an ignored schedule interval, a retired slot becoming re-eligible for production, and cumulative analytics windows double-counting, among others. All nine are fixed and documented in `docs/phase-18d-closed-loop-contract.md`, along with the lifecycle contract that resolves them.
+- 18E **Visual quality intelligence** (`src/app/visuals/quality.py`, `qa.py`): automated quality scoring and QA for generated visuals, plus topic refinement and credential-recovery hardening — see `docs/phase-18e-visual-quality-contract.md`.
+- Underlying market-intelligence and experimentation infrastructure that 16–18 are built on: exploration (cold-start, adjacent-concept expansion, niche selection, semantic clustering), experiment lineage/eligibility/planning, execution contracts with fidelity checking against what was actually produced, and strategy briefs (`src/app/intelligence/market/`, `src/app/intelligence/experiments/`).
+
+**What waits:** Nothing currently planned beyond the deferred Instagram/TikTok item below.
 
 ---
 

@@ -34,12 +34,36 @@ def get_config() -> Config:
 
 
 def get_db(config: Config = Depends(get_config)) -> Generator[Any]:
-    """Open a DB connection for the duration of one HTTP request."""
+    """Open a DB connection for the duration of one HTTP request.
+
+    Teardown runs even when the client disconnects mid-request, and anyio may
+    run it on a different thread than the one that opened the connection (hence
+    check_same_thread=False in open_db). Two defences matter here:
+
+    - rollback() first, so the connection is not carrying an open transaction
+      into close(). Closing with a live write transaction is what drives
+      sqlite3WalClose into an exclusive-lock wait, and that wait happens while
+      SQLite holds its global mutex — wedging every other connection in the
+      process, not just this one.
+    - never let a teardown failure escape. A raising finalizer would leak the
+      handle entirely, which is strictly worse than a logged failure.
+    """
     conn = open_db(config.db_path)
     try:
         yield conn
     finally:
-        conn.close()
+        try:
+            conn.rollback()
+        except Exception:  # pragma: no cover - best effort
+            pass
+        try:
+            conn.close()
+        except Exception as exc:  # pragma: no cover - best effort
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "get_db: connection close failed (handle leaked): %s", exc
+            )
 
 
 async def get_actor(

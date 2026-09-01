@@ -31,10 +31,19 @@ def _clip(value: float, lo: float = 0.0, hi: float = 1.0) -> float:
 def compute_trend_strength(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
     """
     Measures recency and engagement signal strength from the top video.
-    Renamed from trend_velocity because single-observation evidence measures
-    strength, not change over time.
+
+    Market path (Phase 13F): when market_momentum_score + market_freshness_score are present,
+    blend them confidence-modulated: trend = confidence * (0.60*momentum + 0.40*freshness).
+    Legacy video-age/view path is used when market signals are absent.
     """
     obs_ids = [obs.id for obs in ctx.observations if obs.id is not None]
+
+    # --- Phase 13F market path ---
+    market_momentum: float | None = None
+    market_freshness: float | None = None
+    market_confidence: float | None = None
+    market_ev_ids: list[int] = []
+    market_obs_ids: list[int] = []
 
     ages: list[float] = []
     total_views = 0.0
@@ -45,7 +54,21 @@ def compute_trend_strength(ctx: FactorContext, policy: ScoringPolicy) -> FactorR
     for obs in ctx.observations:
         evs = ctx.evidence.get(obs.id or 0, [])
         for ev in evs:
-            if ev.evidence_type == "top_video_age_days" and ev.evidence_value is not None:
+            if ev.evidence_type == "market_momentum_score" and ev.evidence_value is not None:
+                market_momentum = ev.evidence_value
+                if obs.id:
+                    market_obs_ids.append(obs.id)
+                if ev.id:
+                    market_ev_ids.append(ev.id)
+            elif ev.evidence_type == "market_freshness_score" and ev.evidence_value is not None:
+                market_freshness = ev.evidence_value
+                if ev.id:
+                    market_ev_ids.append(ev.id)
+            elif ev.evidence_type == "market_confidence" and ev.evidence_value is not None:
+                market_confidence = ev.evidence_value
+                if ev.id:
+                    market_ev_ids.append(ev.id)
+            elif ev.evidence_type == "top_video_age_days" and ev.evidence_value is not None:
                 ages.append(ev.evidence_value)
                 if obs.id:
                     contributing_obs_ids.append(obs.id)
@@ -62,6 +85,24 @@ def compute_trend_strength(ctx: FactorContext, policy: ScoringPolicy) -> FactorR
                 if ev.id:
                     ev_row_ids.append(ev.id)
 
+    # Market path takes precedence when both momentum and freshness are available
+    if market_momentum is not None and market_freshness is not None:
+        confidence = market_confidence if market_confidence is not None else 1.0
+        blended = 0.60 * market_momentum + 0.40 * market_freshness
+        score = _clip(confidence * blended)
+        return FactorResult(
+            name="trend_strength",
+            raw_score=score,
+            status=FactorStatus.present,
+            observation_ids=list(set(market_obs_ids)),
+            evidence_row_ids=list(set(market_ev_ids)),
+            notes=(
+                f"market: momentum={market_momentum:.3f} "
+                f"freshness={market_freshness:.3f} conf={confidence:.3f}"
+            ),
+        )
+
+    # Legacy video-age / view path
     has_age = bool(ages)
     has_views = total_views > 0
 
@@ -114,10 +155,19 @@ def compute_trend_strength(ctx: FactorContext, policy: ScoringPolicy) -> FactorR
 
 def compute_audience_demand(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
     """
-    Numeric demand from YouTube engagement metrics only.
-    manual_demand_note has evidence_value=None and contributes zero to the score.
-    Its presence is noted so confidence can account for the human signal.
+    Numeric demand signal.
+
+    Market path (Phase 13F): when market_demand_score is present, use it directly,
+    confidence-modulated. Avoids double-counting raw views that Phase 13E already
+    incorporated when computing demand_score.
+    Legacy path: YouTube engagement metrics (views, likes, comments).
     """
+    # --- Phase 13F market path ---
+    market_demand: float | None = None
+    market_confidence: float | None = None
+    market_ev_ids: list[int] = []
+    market_obs_ids: list[int] = []
+
     total_views = 0.0
     total_likes = 0.0
     total_comments = 0.0
@@ -131,7 +181,17 @@ def compute_audience_demand(ctx: FactorContext, policy: ScoringPolicy) -> Factor
     for obs in ctx.observations:
         evs = ctx.evidence.get(obs.id or 0, [])
         for ev in evs:
-            if ev.evidence_type == "manual_demand_note":
+            if ev.evidence_type == "market_demand_score" and ev.evidence_value is not None:
+                market_demand = ev.evidence_value
+                if obs.id:
+                    market_obs_ids.append(obs.id)
+                if ev.id:
+                    market_ev_ids.append(ev.id)
+            elif ev.evidence_type == "market_confidence" and ev.evidence_value is not None:
+                market_confidence = ev.evidence_value
+                if ev.id:
+                    market_ev_ids.append(ev.id)
+            elif ev.evidence_type == "manual_demand_note":
                 manual_note_count += 1
             elif ev.evidence_type == "view_count" and ev.evidence_value is not None:
                 total_views += ev.evidence_value
@@ -154,6 +214,18 @@ def compute_audience_demand(ctx: FactorContext, policy: ScoringPolicy) -> Factor
                 has_engagement_only = True
                 if ev.id:
                     ev_row_ids.append(ev.id)
+
+    if market_demand is not None:
+        confidence = market_confidence if market_confidence is not None else 1.0
+        score = _clip(market_demand * confidence)
+        return FactorResult(
+            name="audience_demand",
+            raw_score=score,
+            status=FactorStatus.present,
+            observation_ids=list(set(market_obs_ids)),
+            evidence_row_ids=list(set(market_ev_ids)),
+            notes=f"market: demand={market_demand:.3f} conf={confidence:.3f}",
+        )
 
     note_str = f"{manual_note_count} manual demand note(s) present" if manual_note_count else None
 
@@ -209,11 +281,20 @@ def compute_audience_demand(ctx: FactorContext, policy: ScoringPolicy) -> Factor
 
 def compute_competition(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
     """
-    Inverse of competition saturation.
-    video_count_in_niche and incumbent_subscriber_count are not currently
-    emitted by any adapter, so this factor returns absent for all M3.3 data.
-    Algorithm is fully specified for synthetic-data testing.
+    Competition attractiveness — higher = LESS competition = better opportunity.
+
+    Market path (Phase 13F): market_saturation_score ∈ [0,1] (higher = more supply).
+    Inverted: competition_attractiveness = 1.0 - saturation_score, then confidence-modulated.
+    This finally activates the factor for all market-intelligence opportunities.
+
+    Legacy path: video_count_in_niche + incumbent_subscriber_count.
     """
+    # --- Phase 13F market path ---
+    market_saturation: float | None = None
+    market_confidence: float | None = None
+    market_ev_ids: list[int] = []
+    market_obs_ids: list[int] = []
+
     video_count: float | None = None
     subscriber_count: float | None = None
     contributing_obs_ids: list[int] = []
@@ -222,7 +303,17 @@ def compute_competition(ctx: FactorContext, policy: ScoringPolicy) -> FactorResu
     for obs in ctx.observations:
         evs = ctx.evidence.get(obs.id or 0, [])
         for ev in evs:
-            if ev.evidence_type == "video_count_in_niche" and ev.evidence_value is not None:
+            if ev.evidence_type == "market_saturation_score" and ev.evidence_value is not None:
+                market_saturation = ev.evidence_value
+                if obs.id:
+                    market_obs_ids.append(obs.id)
+                if ev.id:
+                    market_ev_ids.append(ev.id)
+            elif ev.evidence_type == "market_confidence" and ev.evidence_value is not None:
+                market_confidence = ev.evidence_value
+                if ev.id:
+                    market_ev_ids.append(ev.id)
+            elif ev.evidence_type == "video_count_in_niche" and ev.evidence_value is not None:
                 video_count = ev.evidence_value
                 if obs.id:
                     contributing_obs_ids.append(obs.id)
@@ -233,6 +324,24 @@ def compute_competition(ctx: FactorContext, policy: ScoringPolicy) -> FactorResu
                 if ev.id:
                     ev_row_ids.append(ev.id)
 
+    if market_saturation is not None:
+        confidence = market_confidence if market_confidence is not None else 1.0
+        # Higher saturation → worse (more competition). Invert for attractiveness.
+        attractiveness = 1.0 - _clip(market_saturation)
+        score = _clip(attractiveness * confidence)
+        return FactorResult(
+            name="competition",
+            raw_score=score,
+            status=FactorStatus.present,
+            observation_ids=list(set(market_obs_ids)),
+            evidence_row_ids=list(set(market_ev_ids)),
+            notes=(
+                f"market: saturation={market_saturation:.3f} "
+                f"attractiveness={attractiveness:.3f} conf={confidence:.3f}"
+            ),
+        )
+
+    # Legacy path
     if video_count is None:
         return FactorResult(
             name="competition",
@@ -297,25 +406,55 @@ _TIMELESS_TOKENS: frozenset[str] = frozenset(
 
 def compute_evergreen_value(ctx: FactorContext, policy: ScoringPolicy) -> FactorResult:
     """
-    Heuristic: always computable from the topic string alone.
-    Multi-observation consistency across discovery runs adds a bonus.
-    Designed to be replaced by a classifier in a future milestone.
+    Heuristic evergreen score from topic lexical analysis.
+
+    Market path (Phase 13F): when market_persistence_score is present, blend it with
+    the lexical heuristic: 0.60 * persistence + 0.40 * lexical_base.
+    Lexical base is always computable; market persistence enriches it when available.
     """
     topic_lower = ctx.opportunity.normalized_topic.lower()
-
     temporal_hits = sum(1 for t in _TEMPORAL_TOKENS if t in topic_lower)
     timeless_hits = sum(1 for t in _TIMELESS_TOKENS if t in topic_lower)
-
-    base = _clip(0.5 - temporal_hits * 0.15 + timeless_hits * 0.15, 0.05, 0.95)
+    lexical_base = _clip(0.5 - temporal_hits * 0.15 + timeless_hits * 0.15, 0.05, 0.95)
 
     unique_run_ids = {obs.discovery_run_id for obs in ctx.observations}
     if len(unique_run_ids) >= 2:
-        base = min(base + 0.10, 0.95)
+        lexical_base = min(lexical_base + 0.10, 0.95)
 
     obs_ids = [obs.id for obs in ctx.observations if obs.id is not None]
+
+    # --- Phase 13F: blend with market persistence ---
+    market_persistence: float | None = None
+    market_ev_ids: list[int] = []
+    market_obs_ids: list[int] = []
+
+    for obs in ctx.observations:
+        evs = ctx.evidence.get(obs.id or 0, [])
+        for ev in evs:
+            if ev.evidence_type == "market_persistence_score" and ev.evidence_value is not None:
+                market_persistence = ev.evidence_value
+                if obs.id:
+                    market_obs_ids.append(obs.id)
+                if ev.id:
+                    market_ev_ids.append(ev.id)
+
+    if market_persistence is not None:
+        blended = _clip(0.60 * market_persistence + 0.40 * lexical_base)
+        return FactorResult(
+            name="evergreen_value",
+            raw_score=blended,
+            status=FactorStatus.present,
+            observation_ids=list(set(obs_ids + market_obs_ids)),
+            evidence_row_ids=list(set(market_ev_ids)),
+            notes=(
+                f"market_persist={market_persistence:.3f} lexical={lexical_base:.3f} "
+                f"temporal_hits={temporal_hits} timeless_hits={timeless_hits}"
+            ),
+        )
+
     return FactorResult(
         name="evergreen_value",
-        raw_score=base,
+        raw_score=lexical_base,
         status=FactorStatus.present,
         observation_ids=obs_ids,
         notes=f"temporal_hits={temporal_hits} timeless_hits={timeless_hits}",

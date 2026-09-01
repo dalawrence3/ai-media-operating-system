@@ -532,19 +532,29 @@ class TestCallbackFrontendRedirect:
                 pass
 
     def test_success_redirect_is_relative_without_frontend_url(
-        self, client, svc, db_conn, workspace, channel, pending_account
+        self, db_path, monkeypatch, svc, db_conn, workspace, channel, pending_account, token_store
     ):
         """Without ACE_FRONTEND_URL the redirect is a relative path (production behaviour)."""
-        state = self._get_state(client, svc, db_conn, workspace, channel, pending_account)
-        r = client.get(
-            f"/api/v1/oauth/youtube/callback?code=fake_code&state={state}",
-            follow_redirects=False,
-        )
-        assert r.status_code == 302
-        loc = r.headers["location"]
-        # Relative path — starts with /workspaces (no http scheme)
-        assert loc.startswith("/workspaces/")
-        assert "oauth_success=true" in loc
+        monkeypatch.delenv("ACE_FRONTEND_URL", raising=False)
+        reset_config()
+        gen = _make_client(db_path, monkeypatch, FakeGoogleOAuthClient(), token_store)
+        test_client = next(gen)
+        try:
+            state = self._get_state(test_client, svc, db_conn, workspace, channel, pending_account)
+            r = test_client.get(
+                f"/api/v1/oauth/youtube/callback?code=fake_code&state={state}",
+                follow_redirects=False,
+            )
+            assert r.status_code == 302
+            loc = r.headers["location"]
+            # Relative path — starts with /workspaces (no http scheme)
+            assert loc.startswith("/workspaces/")
+            assert "oauth_success=true" in loc
+        finally:
+            try:
+                next(gen)
+            except StopIteration:
+                pass
 
 
 # ---------------------------------------------------------------------------

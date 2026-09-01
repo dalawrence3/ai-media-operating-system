@@ -44,9 +44,12 @@ def list_publications(
     require_workspace_permission(current_user, workspace_id, "publish:view")
     rows = conn.execute(
         "SELECT p.id, p.provider, p.provider_video_id, p.provider_url, p.visibility, "
-        "p.status, p.published_at, p.created_at, pp.title, pp.render_manifest_id "
+        "p.status, p.published_at, p.created_at, pp.title, pp.render_manifest_id, "
+        "rm.total_duration_ms AS render_duration_ms, t.title AS topic_title "
         "FROM publications p "
         "JOIN publishing_plans pp ON pp.id = p.publishing_plan_id "
+        "LEFT JOIN render_manifests rm ON rm.id = pp.render_manifest_id "
+        "LEFT JOIN topics t ON t.id = pp.topic_id "
         "WHERE p.workspace_id = ? ORDER BY p.id DESC",
         (workspace_id,),
     ).fetchall()
@@ -69,10 +72,12 @@ def get_publication(
         "pp.title, pp.description, pp.tags_json, pp.render_manifest_id, "
         "rm.total_duration_ms AS render_duration_ms, "
         "rm.width AS render_width, rm.height AS render_height, "
-        "rm.fps AS render_fps, rm.status AS render_status, rm.approved_at AS render_approved_at "
+        "rm.fps AS render_fps, rm.status AS render_status, rm.approved_at AS render_approved_at, "
+        "t.title AS topic_title "
         "FROM publications p "
         "JOIN publishing_plans pp ON pp.id = p.publishing_plan_id "
         "LEFT JOIN render_manifests rm ON rm.id = pp.render_manifest_id "
+        "LEFT JOIN topics t ON t.id = pp.topic_id "
         "WHERE p.id = ?",
         (publication_id,),
     ).fetchone()
@@ -111,6 +116,77 @@ def get_publication(
 
     d.pop("platform_account_id", None)  # internal FK — not exposed to frontend
     return d
+
+
+@router.get("/{publication_id}/visual-quality")
+def get_publication_visual_quality(
+    workspace_id: str,
+    publication_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    conn: Any = Depends(get_db),
+) -> dict[str, Any]:
+    """The render's measured visual composition and quality verdict (Phase 18E).
+
+    Returns `{"assessed": false}` rather than 404 for a publication produced
+    before this phase: "we never measured this" is a real, displayable answer,
+    and a 404 would read in the UI as a broken endpoint.
+    """
+    require_workspace_permission(current_user, workspace_id, "publish:view")
+    _assert_publication_in_workspace(conn, publication_id, workspace_id)
+
+    from app.visuals.assessment_repository import get_assessment_for_publication
+
+    assessment = get_assessment_for_publication(conn, publication_id)
+    if assessment is None:
+        return {"assessed": False}
+
+    total_ms = assessment.total_duration_ms or 0
+
+    def _pct(ms: int) -> float:
+        return round(ms / total_ms, 4) if total_ms else 0.0
+
+    return {
+        "assessed": True,
+        "status": assessment.status,
+        "assessment_version": assessment.assessment_version,
+        "policy_version": assessment.policy_version,
+        "visual_style": assessment.visual_style,
+        "total_beat_count": assessment.total_beat_count,
+        "total_duration_ms": total_ms,
+        "scene_count": assessment.scene_count,
+        "meaningful_runtime_pct": round(assessment.meaningful_runtime_pct, 4),
+        "text_card_runtime_pct": round(assessment.text_card_runtime_pct, 4),
+        "meaningful_beat_count": assessment.meaningful_beat_count,
+        "visual_changes_per_minute": round(assessment.visual_changes_per_minute, 2),
+        "distinct_asset_count": assessment.distinct_asset_count,
+        "asset_reuse_ratio": round(assessment.asset_reuse_ratio, 4),
+        "max_meaningful_gap_ms": assessment.max_meaningful_gap_ms,
+        "avg_meaningful_gap_ms": round(assessment.avg_meaningful_gap_ms, 1),
+        "opening_meaningful_visual": assessment.opening_meaningful_visual,
+        "dominant_family": assessment.dominant_family,
+        "dominant_family_share": round(assessment.dominant_family_share, 4),
+        "family_diversity": round(assessment.family_diversity, 4),
+        "family_distribution": [
+            {
+                "family": family,
+                "beat_count": assessment.family_beat_count.get(family, 0),
+                "runtime_ms": ms,
+                "runtime_pct": _pct(ms),
+            }
+            for family, ms in sorted(assessment.family_runtime.items(), key=lambda kv: -kv[1])
+        ],
+        "fallback_beat_count": assessment.fallback_beat_count,
+        "provider_fallback_beats": assessment.provider_fallback_beats,
+        "creative_fallback_beats": assessment.creative_fallback_beats,
+        "provider_fallback_rate": round(assessment.provider_fallback_rate, 4),
+        "fallback_reasons": assessment.fallback_reasons,
+        "planned_meaningful_beats": assessment.planned_meaningful_beats,
+        "remediation_attempts": assessment.remediation_attempts,
+        "remediated": assessment.remediated,
+        "findings": assessment.findings,
+        "scene_diagnostics": assessment.scene_diagnostics,
+        "assessed_at": assessment.updated_at,
+    }
 
 
 @router.get("/{publication_id}/stream")
@@ -165,7 +241,7 @@ def get_publication_analytics(
     _assert_publication_in_workspace(conn, publication_id, workspace_id)
 
     snap = conn.execute(
-        "SELECT id, ingested_at, period_start, period_end FROM analytics_snapshots "
+        "SELECT id, ingested_at, period_start, period_end, experiment_id FROM analytics_snapshots "
         "WHERE publication_id = ? ORDER BY id DESC LIMIT 1",
         (publication_id,),
     ).fetchone()
@@ -194,7 +270,66 @@ def get_publication_analytics(
         "period_end": snap["period_end"] if snap else None,
         "metrics": metrics,
         "retention_point_count": retention_count,
+        "experiment_id": snap["experiment_id"] if snap else None,
     }
+
+
+@router.get("/{publication_id}/analytics/history")
+def get_publication_analytics_history(
+    workspace_id: str,
+    publication_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    conn: Any = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Full observation history for a publication — one entry per analytics
+    snapshot, oldest first.
+
+    Phase 17C addition. Additive and read-only; publication-scoped like
+    /analytics above, so it inherits the same protection against the two
+    known data-correctness gaps documented in the Phase 17B/17C reports:
+    it does not use workspace_topic_ids (which returns [] for topics with a
+    NULL workspace_id, e.g. topic_id=4) and it does not read
+    analytics_aggregates (which carries a contaminated 'youtube_dev_seed'
+    seed row for publication 1). Powers the per-video performance-over-time
+    chart — there is no channel-level equivalent because snapshot ingestion
+    dates do not align across videos, which is too sparse to plot honestly
+    as a single trend.
+
+    `observation_state` ('data' | 'no_data' | null) is passed through as
+    recorded by the ingestion pipeline: a provider can be polled and report
+    nothing yet (immature video, reporting latency), which is why `metrics`
+    can legitimately be `{}` for an entry even though the snapshot exists.
+    """
+    require_workspace_permission(current_user, workspace_id, "publish:view")
+    _assert_publication_in_workspace(conn, publication_id, workspace_id)
+
+    snapshots = conn.execute(
+        "SELECT id, ingested_at, observed_at, period_start, period_end, observation_state, "
+        "experiment_id FROM analytics_snapshots WHERE publication_id = ? ORDER BY id ASC",
+        (publication_id,),
+    ).fetchall()
+
+    history: list[dict[str, Any]] = []
+    for snap in snapshots:
+        metrics: dict[str, float] = {}
+        for mr in conn.execute(
+            "SELECT metric_name, metric_value FROM analytics_metrics WHERE snapshot_id = ?",
+            (snap["id"],),
+        ).fetchall():
+            metrics[mr["metric_name"]] = mr["metric_value"]
+        history.append(
+            {
+                "snapshot_id": snap["id"],
+                "ingested_at": snap["ingested_at"],
+                "observed_at": snap["observed_at"],
+                "period_start": snap["period_start"],
+                "period_end": snap["period_end"],
+                "observation_state": snap["observation_state"],
+                "experiment_id": snap["experiment_id"],
+                "metrics": metrics,
+            }
+        )
+    return history
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +372,17 @@ def release_publication_public(
       15. UPDATE publications SET visibility='public' (CRITICAL log on failure)
       16. create_event cp_events "publication.released_public"
     """
-    from datetime import UTC, datetime
+
+    # 0: Phase 18E — a public release is a real, irreversible provider effect,
+    # so it is refused in a test runtime regardless of which database is open.
+    # Database isolation cannot help here: the side effect leaves the database
+    # entirely.
+    from app.core.runtime_mode import RuntimeIsolationError, assert_live_effect_allowed
+
+    try:
+        assert_live_effect_allowed("provider_release_public")
+    except RuntimeIsolationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # 1–2: feature flags
     if not cfg.release_public_enabled:
@@ -355,132 +500,34 @@ def release_publication_public(
     else:
         yt_client = _yt_client_override
 
-    # 12: read-before-write — get current YouTube status
-    try:
-        list_resp = yt_client.get_video(video_id, ["status"])
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to read current video status from YouTube: {exc}",
-        ) from exc
+    # 12–17: delegate to the shared release service.
+    #
+    # Phase 18C extracted this sequence (read-before-write, ground-truth
+    # reconcile, videos.update, local persistence, audit) into
+    # app.publishing.release_service so the autonomous publishing cycle can
+    # execute exactly the same logic from a background worker. This route
+    # keeps its original behaviour and simply maps the typed outcome back to
+    # HTTP status codes — one implementation, two callers, so the safety
+    # properties cannot drift apart.
+    from app.publishing.release_service import ReleaseOutcome, release_publication_to_public
 
-    items = list_resp.get("items", [])
-    if not items:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Video '{video_id}' not found on YouTube.",
-        )
-    current_yt_status: dict = items[0].get("status", {})
+    release = release_publication_to_public(
+        conn,
+        publication_id=publication_id,
+        provider_video_id=video_id,
+        workspace_id=workspace_id,
+        platform_account_id=platform_account_id,
+        actor=current_user.actor,
+        yt_client=yt_client,
+    )
 
-    # 13: ground-truth reconcile — YouTube is already public
-    if current_yt_status.get("privacyStatus") == "public":
-        if pub["visibility"] != "public":
-            import uuid as _uuid_r
-
-            from app.control_plane.models import ControlEventDraft
-            from app.control_plane.repository import create_event
-
-            previous_visibility = pub["visibility"]
-            conn.execute(
-                "UPDATE publications SET visibility='public', updated_at=? WHERE id=?",
-                (datetime.now(UTC).isoformat(), publication_id),
-            )
-            conn.commit()
-            logger.info(
-                "release-public: reconciled local visibility for publication %d "
-                "(YouTube ground truth was already public)",
-                publication_id,
-            )
-            try:
-                create_event(
-                    conn,
-                    ControlEventDraft(
-                        id=str(_uuid_r.uuid4()),
-                        event_type="publication.visibility_reconciled_public",
-                        workspace_id=workspace_id,
-                        actor=current_user.actor,
-                        platform_account_id=platform_account_id,
-                        source_entity_id=str(publication_id),
-                        payload={
-                            "publication_id": publication_id,
-                            "provider_video_id": video_id,
-                            "previous_local_visibility": previous_visibility,
-                            "observed_provider_visibility": "public",
-                        },
-                    ),
-                )
-                conn.commit()
-            except Exception as exc:
-                logger.warning(
-                    "release-public: reconciliation audit event write failed (non-fatal): %s",
-                    exc,
-                )
+    if release.outcome is ReleaseOutcome.already_public_reconciled:
         return {"visibility": "public", "reconciled": True}
-
-    # 14: build the update status body
-    update_status: dict = {
-        k: v for k, v in current_yt_status.items() if k not in _STATUS_READ_ONLY_FIELDS
-    }
-    update_status["privacyStatus"] = "public"
-    update_status.pop("publishAt", None)  # clear scheduled release for immediate publish
-
-    # 15: call YouTube videos.update — DB is NOT changed until this succeeds
-    try:
-        yt_client.update_video(video_id, snippet={}, status=update_status)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"YouTube videos.update failed: {exc}",
-        ) from exc
-
-    # 16: update local DB — only after YouTube confirms success
-    now_str = datetime.now(UTC).isoformat()
-    try:
-        conn.execute(
-            "UPDATE publications SET visibility='public', updated_at=? WHERE id=?",
-            (now_str, publication_id),
-        )
-        conn.commit()
-    except Exception as exc:
-        logger.critical(
-            "CRITICAL: YouTube reports publication %d (%s) is now public but local DB "
-            "update failed: %s. Manual reconciliation required.",
-            publication_id,
-            video_id,
-            exc,
-        )
-        raise HTTPException(
-            status_code=500,
-            detail="YouTube update succeeded but local DB update failed. "
-            "Check server logs — manual reconciliation required.",
-        ) from exc
-
-    # 17: audit event in cp_events
-    import uuid as _uuid
-
-    from app.control_plane.models import ControlEventDraft
-    from app.control_plane.repository import create_event
-
-    try:
-        create_event(
-            conn,
-            ControlEventDraft(
-                id=str(_uuid.uuid4()),
-                event_type="publication.released_public",
-                workspace_id=workspace_id,
-                actor=current_user.actor,
-                platform_account_id=platform_account_id,
-                source_entity_id=str(publication_id),
-                payload={
-                    "publication_id": publication_id,
-                    "provider_video_id": video_id,
-                    "visibility_before": "private",
-                    "visibility_after": "public",
-                },
-            ),
-        )
-        conn.commit()
-    except Exception as exc:
-        logger.warning("release-public: audit event write failed (non-fatal): %s", exc)
-
-    return {"visibility": "public", "reconciled": False}
+    if release.outcome is ReleaseOutcome.released:
+        return {"visibility": "public", "reconciled": False}
+    if release.outcome is ReleaseOutcome.video_not_found:
+        raise HTTPException(status_code=502, detail=release.detail)
+    if release.outcome is ReleaseOutcome.local_persist_failed:
+        raise HTTPException(status_code=500, detail=release.detail)
+    # provider_read_failed / provider_update_failed
+    raise HTTPException(status_code=502, detail=release.detail)

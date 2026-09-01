@@ -72,6 +72,17 @@ class YouTubeAPIClient(Protocol):
 
     def health_check(self) -> bool: ...
 
+    def list_my_recent_videos(self, max_results: int = 10) -> list[dict]:
+        """Recent uploads on the authenticated channel, newest first.
+
+        Each entry is {"video_id": str, "title": str, "published_at": str}.
+        Used by Phase 18C's upload reconciliation to determine whether an
+        upload whose outcome is unknown actually created a video — YouTube
+        offers no idempotency key, so a bounded recent-uploads lookup is the
+        strongest duplicate-detection signal available.
+        """
+        ...
+
 
 class RealYouTubeAPIClient:
     """Live YouTube Data API v3 client using an OAuth access token.
@@ -160,6 +171,47 @@ class RealYouTubeAPIClient:
         result = self._service.channels().list(part="id", mine=True).execute()
         return bool(result.get("items"))
 
+    def list_my_recent_videos(self, max_results: int = 10) -> list[dict]:
+        """Recent uploads on the authenticated channel, newest first.
+
+        Resolves the channel's "uploads" playlist and reads its head. This
+        sees private and unlisted videos, which search.list does not — and a
+        video whose upload outcome is uncertain is exactly the private video
+        we need to find.
+        """
+        channels = self._service.channels().list(part="contentDetails", mine=True).execute()
+        items = channels.get("items", [])
+        if not items:
+            return []
+        uploads_playlist = (
+            items[0].get("contentDetails", {}).get("relatedPlaylists", {}).get("uploads")
+        )
+        if not uploads_playlist:
+            return []
+
+        playlist_items = (
+            self._service.playlistItems()
+            .list(
+                part="snippet,contentDetails",
+                playlistId=uploads_playlist,
+                maxResults=max(1, min(int(max_results), 50)),
+            )
+            .execute()
+        )
+        results: list[dict] = []
+        for entry in playlist_items.get("items", []):
+            snippet = entry.get("snippet", {}) or {}
+            details = entry.get("contentDetails", {}) or {}
+            results.append(
+                {
+                    "video_id": details.get("videoId")
+                    or snippet.get("resourceId", {}).get("videoId"),
+                    "title": snippet.get("title", ""),
+                    "published_at": details.get("videoPublishedAt") or snippet.get("publishedAt"),
+                }
+            )
+        return results
+
 
 class FakeYouTubeAPIClient:
     """Deterministic fake for tests — zero network calls."""
@@ -169,9 +221,14 @@ class FakeYouTubeAPIClient:
         *,
         video_id: str = "yt_fake_vid_001",
         raise_on_insert: Exception | None = None,
+        recent_videos: list[dict] | None = None,
     ) -> None:
         self._video_id = video_id
         self._raise_on_insert = raise_on_insert
+        # Lets tests model the provider's view of the channel independently of
+        # what the local database believes — which is the whole point of
+        # upload reconciliation.
+        self._recent_videos = recent_videos if recent_videos is not None else []
 
     def insert_video(self, snippet: dict, status: dict, file_path: str) -> dict:
         if self._raise_on_insert is not None:
@@ -194,6 +251,9 @@ class FakeYouTubeAPIClient:
 
     def health_check(self) -> bool:
         return True
+
+    def list_my_recent_videos(self, max_results: int = 10) -> list[dict]:
+        return list(self._recent_videos)[:max_results]
 
 
 # ── YouTube adapter ───────────────────────────────────────────────────────────

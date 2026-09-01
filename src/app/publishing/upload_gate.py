@@ -42,8 +42,17 @@ _MAX_DESCRIPTION_BYTES = 5000 * 4
 
 
 def check_live_publishing_gate() -> None:
-    """Raise LivePublishingNotEnabledError unless ACE_PUBLISHING_LIVE_ENABLED=true."""
+    """Raise unless live publishing is enabled AND this is not a test runtime.
+
+    Phase 18E adds the test-mode arm. This is the single chokepoint every live
+    upload passes through, which makes it the right place to guarantee that no
+    test run can ever create a real provider publication — an effect that
+    database isolation cannot undo, because it does not live in the database.
+    """
     from app.core.config import get_config
+    from app.core.runtime_mode import assert_live_effect_allowed
+
+    assert_live_effect_allowed("provider_upload")
 
     if not get_config().publishing_live_enabled:
         raise LivePublishingNotEnabledError(

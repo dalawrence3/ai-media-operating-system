@@ -1,0 +1,676 @@
+/* Product-layer components (Phase 17).
+
+   Builds on tokens.css. Everything here references design tokens — no raw
+   colors, spacing, or radii. Light/dark is inherited automatically because
+   the tokens themselves swap.
+*/
+
+/* ── Page header ─────────────────────────────────────────────────────────── */
+
+/* The header's leading block takes the free space so actions sit right. */
+.page-header > div:first-child { flex: 1; min-width: 0; }
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+
+/* ── Section header ──────────────────────────────────────────────────────── */
+
+.section-header { align-items: flex-start; }
+
+.section-description {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin-top: 2px;
+  max-width: 68ch;
+}
+
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-shrink: 0;
+}
+
+/* ── Metric card ─────────────────────────────────────────────────────────── */
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--sp-4);
+}
+
+.metric-card {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.metric-card-attention { border-color: var(--status-warn); }
+
+.metric-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+
+.metric-card-label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.metric-card-icon { font-size: var(--font-size-base); opacity: .5; }
+
+.metric-card-value {
+  font-size: var(--font-size-3xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-card-sub {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+/* ── Maturity badge ──────────────────────────────────────────────────────── */
+
+.maturity-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.maturity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px var(--sp-2);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+/* Each level pairs a distinct label with a distinct color, so meaning never
+   depends on color alone. */
+.maturity-neutral {
+  background: var(--status-neutral-bg);
+  color: var(--status-neutral);
+  border-color: var(--status-neutral);
+}
+.maturity-info {
+  background: var(--status-info-bg);
+  color: var(--status-info);
+  border-color: var(--status-info);
+}
+.maturity-warn {
+  background: var(--status-warn-bg);
+  color: var(--status-warn);
+  border-color: var(--status-warn);
+}
+.maturity-healthy {
+  background: var(--status-healthy-bg);
+  color: var(--status-healthy);
+  border-color: var(--status-healthy);
+}
+
+.maturity-sample {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+/* ── Technical details disclosure ────────────────────────────────────────── */
+
+.technical-details {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-bg);
+  margin-top: var(--sp-4);
+}
+
+.technical-details-summary {
+  cursor: pointer;
+  padding: var(--sp-3) var(--sp-4);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  user-select: none;
+  border-radius: var(--radius-md);
+}
+
+.technical-details-summary:hover { color: var(--text-primary); }
+
+.technical-details-summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.technical-details[open] .technical-details-summary {
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.technical-details-body { padding: var(--sp-4); overflow-x: auto; }
+
+.technical-details-pre {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+/* ── Video thumbnail ─────────────────────────────────────────────────────── */
+
+.video-thumb {
+  border-radius: var(--radius-md);
+  background: var(--surface-bg);
+  border: 1px solid var(--border);
+  object-fit: cover;
+  flex-shrink: 0;
+  display: block;
+}
+
+.video-thumb-sm { width: 96px;  height: 54px; }
+.video-thumb-md { width: 160px; height: 90px; }
+
+.video-thumb-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--font-size-xl);
+  color: var(--text-muted);
+}
+
+.video-thumb-private-overlay {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  font-size: var(--font-size-xs);
+  background: rgba(0, 0, 0, .6);
+  border-radius: var(--radius-sm);
+  padding: 2px 5px;
+  line-height: 1;
+}
+
+/* ── Segmented control ────────────────────────────────────────────────────── */
+
+.segmented {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+/* ── Video card ───────────────────────────────────────────────────────────── */
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--sp-4);
+}
+
+.video-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.video-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.video-card:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.video-card .video-thumb {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.video-card-body {
+  padding: var(--sp-3) var(--sp-4) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.video-card-title {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.35;
+  min-height: calc(1.35em * 2);
+}
+
+.video-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.video-card-topic {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+}
+
+.video-card-duration::before { content: '·'; margin-right: var(--sp-2); }
+
+.video-card-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.video-card-stat { white-space: nowrap; }
+
+/* ── Content detail ──────────────────────────────────────────────────────── */
+
+.detail-video-frame {
+  background: #000;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 240px;
+  max-height: 520px;
+}
+
+.detail-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+  font-size: var(--font-size-sm);
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-meta-row:last-child { border-bottom: none; }
+
+.detail-meta-label {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.detail-meta-value {
+  font-weight: 500;
+  text-align: right;
+  color: var(--text-primary);
+}
+
+.detail-meta-list .detail-meta-row:first-child { padding-top: 0; }
+
+/* ── Attention strip ─────────────────────────────────────────────────────── */
+
+.attention-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-bottom: var(--sp-4);
+}
+
+.attention-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-4);
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  color: var(--text-primary);
+  transition: opacity var(--transition-fast);
+}
+.attention-item:hover { opacity: .85; }
+
+.attention-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.attention-error { background: var(--status-error-bg); }
+.attention-error .attention-dot { background: var(--status-error); }
+
+.attention-warn { background: var(--status-warn-bg); }
+.attention-warn .attention-dot { background: var(--status-warn); }
+
+.attention-info { background: var(--status-info-bg); }
+.attention-info .attention-dot { background: var(--status-info); }
+
+.attention-text { flex: 1; }
+
+.attention-arrow {
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+}
+
+/* ── Opportunity card (Phase 17D — market intelligence) ─────────────────────── */
+
+.opportunity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--sp-4);
+}
+
+.opportunity-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.opportunity-card-title {
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 var(--sp-2);
+  text-transform: capitalize;
+}
+
+.opportunity-card-badges {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.opportunity-card-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.opportunity-card-score-value {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.opportunity-card-score-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.opportunity-card-factors {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-2) var(--sp-4);
+  margin: var(--sp-4) 0;
+  padding: var(--sp-3) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.opportunity-factor {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--font-size-xs);
+}
+
+.opportunity-factor-label { color: var(--text-secondary); }
+
+.opportunity-factor-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.opportunity-factor-value-absent {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.opportunity-card-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+}
+
+.opportunity-evidence-toggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.opportunity-evidence-toggle:hover { text-decoration: underline; }
+
+.opportunity-evidence-panel {
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+
+.evidence-snapshot { margin-bottom: var(--sp-3); }
+.evidence-snapshot:last-child { margin-bottom: 0; }
+
+.evidence-snapshot-time {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0 0 var(--sp-2);
+}
+
+.evidence-snapshot-items {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px var(--sp-4);
+}
+
+.evidence-item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--font-size-xs);
+}
+
+.evidence-item-label { color: var(--text-muted); }
+.evidence-item-value {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── Strategy brief card (Phase 17D — experiment planning) ───────────────────── */
+
+.strategy-brief-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.strategy-brief-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.strategy-brief-topic {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-muted);
+  margin: 0 0 4px;
+}
+
+.strategy-brief-hypothesis {
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.strategy-brief-risk-healthy { background: var(--status-healthy-bg); color: var(--status-healthy); flex-shrink: 0; }
+.strategy-brief-risk-warn { background: var(--status-warn-bg); color: var(--status-warn); flex-shrink: 0; }
+.strategy-brief-risk-error { background: var(--status-error-bg); color: var(--status-error); flex-shrink: 0; }
+
+.strategy-brief-reasons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.strategy-brief-reason-label { font-weight: 600; color: var(--text-primary); }
+
+.strategy-brief-footer {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ── Creative factor observation row (Phase 17D — cross-publication) ─────────── */
+
+.factor-observation-group { margin-bottom: var(--sp-5); }
+
+.factor-observation-group-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-muted);
+  margin: 0 0 var(--sp-2);
+}
+
+.factor-observation-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.factor-observation-row:last-child { border-bottom: none; }
+
+.factor-observation-main { flex: 1; min-width: 200px; }
+
+.factor-observation-feature {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.factor-observation-bucket {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  margin-left: var(--sp-2);
+}
+
+.factor-observation-stat {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.factor-observation-diff-up { color: var(--status-healthy); font-weight: 600; }
+.factor-observation-diff-down { color: var(--status-warn); font-weight: 600; }
+
+/* ── External vs. first-party evidence banner (Phase 17D) ────────────────────── */
+
+.evidence-source-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  margin-bottom: var(--sp-3);
+}
+
+.evidence-source-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.evidence-source-external .evidence-source-dot { background: var(--status-info); }
+.evidence-source-firstparty .evidence-source-dot { background: var(--status-healthy); }
+
+/* ── Responsive ──────────────────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .metric-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+  .metric-card { padding: var(--sp-4); }
+  .metric-card-value { font-size: var(--font-size-2xl); }
+  .video-thumb-md { width: 120px; height: 68px; }
+  .video-grid { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+  .opportunity-card-factors { grid-template-columns: 1fr; }
+}

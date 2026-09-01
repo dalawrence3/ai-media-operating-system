@@ -29,7 +29,9 @@ from app.api.routes import (
     channels,
     dev,
     diagnostics,
+    environment,
     learning,
+    market,
     oauth,
     operations,
     pipelines,
@@ -86,8 +88,26 @@ def _validate_production_config() -> None:
         sys.exit(1)
 
 
+def _validate_runtime_isolation() -> None:
+    """Refuse to serve when the runtime and the database disagree about mode.
+
+    Phase 18E. This is the structural replacement for per-test guards: an E2E
+    backend that would open the operational database dies here, before it can
+    accept the first request, and so does a live daemon accidentally pointed at
+    the E2E database.
+    """
+    from app.core.runtime_mode import RuntimeIsolationError, assert_runtime_isolation
+
+    try:
+        assert_runtime_isolation(get_config().db_path)
+    except RuntimeIsolationError as exc:
+        print(f"FATAL startup error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
+    _validate_runtime_isolation()
     _validate_production_config()
     yield
 
@@ -172,6 +192,8 @@ app.include_router(topics.router, prefix=_PREFIX)
 app.include_router(analytics.router, prefix=_PREFIX)
 app.include_router(publications.router, prefix=_PREFIX)
 app.include_router(learning.router, prefix=_PREFIX)
+app.include_router(market.router, prefix=_PREFIX)
+app.include_router(environment.router, prefix=_PREFIX)
 
 if cfg.ace_env == "development":
     app.include_router(dev.router, prefix=_PREFIX)
@@ -262,9 +284,24 @@ def metrics() -> Response:
 def meta() -> dict:
     _cfg = get_config()
     auth_mode = "dev" if _cfg.dev_auth_enabled else "jwt"
+
+    # Phase 18E — which runtime and which database this process ACTUALLY has
+    # open. The E2E suite reads this before running a single test: a config
+    # file that intends isolation is not evidence that the backend answering
+    # on the port has it. Only the database's basename is exposed, never the
+    # full path, since /api/meta is unauthenticated.
+    from app.core.runtime_mode import is_operational_db, test_mode
+
+    runtime = {
+        "test_mode": test_mode(),
+        "db_name": _cfg.db_path.name,
+        "operational_db": is_operational_db(_cfg.db_path),
+    }
+
     return {
         "status": "ok",
         "api_version": "15.0.0",
         "auth_mode": auth_mode,
         "environment": _cfg.ace_env,
+        "runtime": runtime,
     }

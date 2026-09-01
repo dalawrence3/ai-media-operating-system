@@ -149,6 +149,8 @@ EVENT_HEALTH_RESTORED = "health.restored"
 EVENT_EMERGENCY_STOP_TRIGGERED = "emergency_stop.triggered"
 EVENT_EMERGENCY_STOP_LIFTED = "emergency_stop.lifted"
 
+EVENT_PUBLICATION_RELEASED_PUBLIC = "publication.released_public"
+
 ALL_EVENT_TYPES = frozenset(
     {
         EVENT_WORKSPACE_CREATED,
@@ -185,6 +187,7 @@ ALL_EVENT_TYPES = frozenset(
         EVENT_HEALTH_RESTORED,
         EVENT_EMERGENCY_STOP_TRIGGERED,
         EVENT_EMERGENCY_STOP_LIFTED,
+        EVENT_PUBLICATION_RELEASED_PUBLIC,
     }
 )
 

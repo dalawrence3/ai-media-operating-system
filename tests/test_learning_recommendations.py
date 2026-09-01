@@ -217,10 +217,12 @@ class TestGenerateAll:
         result = generate_all_recommendations(db, _make_handoff(), learning_run_id=1)
         assert result.drafts == []
 
-    def test_no_data_all_generators_succeeded(self, db):
+    def test_no_data_all_generators_skipped_or_succeeded(self, db):
+        # With no analytics data, generators are SKIPPED (insufficient evidence),
+        # not FAILED.  The run is still considered complete.
         result = generate_all_recommendations(db, _make_handoff(), learning_run_id=1)
         assert len(result.generator_results) == 6
-        assert all(gr.status == "succeeded" for gr in result.generator_results)
+        assert all(gr.status in ("succeeded", "skipped") for gr in result.generator_results)
 
     def test_multiple_signals_produce_multiple_recommendations(self, db):
         _insert_aggregate(db, 1, "ctr", 0.01)
@@ -248,6 +250,10 @@ class TestGenerateAll:
         """A broken generator must be recorded as failed, not raise."""
         from unittest.mock import patch
 
+        # Insert CTR aggregate so the maturity check passes and the patched
+        # generator gets called (without this, maturity would skip it first).
+        _insert_aggregate(db, 1, "ctr", 0.03)
+
         def bad_gen(conn, handoff, learning_run_id):
             raise RuntimeError("Simulated generator failure")
 
@@ -262,7 +268,12 @@ class TestGenerateAll:
         """Remaining generators continue when one fails."""
         from unittest.mock import patch
 
-        _insert_aggregate(db, 1, "average_view_duration", 10.0)  # for retention generator
+        # Insert data so maturity passes for both CTR (required_metrics) and
+        # retention/others (min_lifetime_views), otherwise they'd be SKIPPED
+        # before the patch has a chance to be called.
+        _insert_aggregate(db, 1, "ctr", 0.03)
+        _insert_aggregate(db, 1, "views", 50.0)
+        _insert_aggregate(db, 1, "average_view_duration", 10.0)
 
         def bad_gen(conn, handoff, learning_run_id):
             raise RuntimeError("CTR generator failed")
@@ -270,5 +281,10 @@ class TestGenerateAll:
         with patch("app.learning.recommendations.generate_ctr_recommendations", bad_gen):
             result = generate_all_recommendations(db, _make_handoff(), learning_run_id=1)
 
-        succeeded = [gr for gr in result.generator_results if gr.status == "succeeded"]
-        assert len(succeeded) == 5  # all except CTR
+        # CTR must be recorded as failed
+        ctr_result = next(gr for gr in result.generator_results if gr.generator_name == "ctr")
+        assert ctr_result.status == "failed"
+
+        # All other generators must have run (succeeded or skipped, not failed)
+        others = [gr for gr in result.generator_results if gr.generator_name != "ctr"]
+        assert all(gr.status in ("succeeded", "skipped") for gr in others)

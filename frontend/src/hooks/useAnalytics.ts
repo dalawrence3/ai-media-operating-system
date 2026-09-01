@@ -5,10 +5,11 @@ export function useAnalyticsAggregates(
   workspaceId: string,
   metricName?: string,
   periodType?: string,
+  publicationId?: number,
 ) {
   return useQuery({
-    queryKey: ['analytics', 'aggregates', workspaceId, metricName, periodType],
-    queryFn: () => api.listAnalyticsAggregates(workspaceId, metricName, periodType),
+    queryKey: ['analytics', 'aggregates', workspaceId, metricName, periodType, publicationId],
+    queryFn: () => api.listAnalyticsAggregates(workspaceId, metricName, periodType, publicationId),
     enabled: !!workspaceId,
   })
 }

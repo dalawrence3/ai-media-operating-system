@@ -45,6 +45,8 @@ from app.oauth.flow import (
     complete_youtube_oauth,
     disconnect_youtube_account,
     get_connection_status,
+    has_analytics_scope,
+    has_release_scope,
     has_upload_scope,
     start_youtube_analytics_oauth,
     start_youtube_oauth,
@@ -76,6 +78,8 @@ def _redirect(path: str) -> RedirectResponse:
 
 def _require_connect_permission(current_user: CurrentUser, workspace_id: str) -> None:
     """Raise OAuthInsufficientRoleError unless user has platform_account:connect permission."""
+    if current_user.is_dev:
+        return
     if not has_permission("platform_account:connect", workspace_id, current_user.workspace_roles):
         raise OAuthInsufficientRoleError(
             f"Actor '{current_user.actor}' does not have permission to connect/disconnect "
@@ -506,6 +510,22 @@ def get_account_connection_status(
         workspace_id=workspace_id,
         channel_id=channel_id,
     )
+    analytics_scope_granted = has_analytics_scope(
+        db,
+        account_id=account_id,
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+    )
+    # Release is a genuinely separate capability, not something upload implies:
+    # youtube.upload authorizes videos.insert only, while making a video public
+    # is a videos.update call that requires youtube.force-ssl. Reported
+    # separately so no caller can infer one from the other.
+    release_scope_granted = has_release_scope(
+        db,
+        account_id=account_id,
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+    )
     return {
         "account_id": status.account_id,
         "connected": status.connected,
@@ -514,6 +534,8 @@ def get_account_connection_status(
         "verified_at": status.verified_at_utc.isoformat() if status.verified_at_utc else None,
         "granted_scopes": status.granted_scopes,
         "upload_scope_granted": upload_scope_granted,
+        "analytics_scope_granted": analytics_scope_granted,
+        "release_scope_granted": release_scope_granted,
         "credential_status": status.credential_status,
         "health_status": status.health_status,
     }

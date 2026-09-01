@@ -1,8 +1,8 @@
 # Project State Snapshot
 
-**Date:** 2026-08-08
-**Latest implemented milestone:** Final Acceptance Remediation (post-Phase 15)
-**Next milestone:** Phase 16 (TBD — operator-scoped roadmap item)
+**Date:** 2026-09-01
+**Latest implemented milestone:** Phase 18 — Closed-Loop Autonomy & Visual Quality
+**Next milestone:** None currently planned (Instagram/TikTok adapters remain deferred — see `TASKS.md`)
 
 ---
 
@@ -35,17 +35,20 @@
 | Phase 14 — Frontend Studio & Dashboard | ✅ Complete | 3368 + 111 frontend | 19 |
 | Phase 15 — Deployment, Infrastructure & Production Operations | ✅ Complete | 3558 backend + 111 frontend | 20 |
 | Final Acceptance Remediation | ✅ Complete | 3611 backend + 132 frontend | 20 |
+| Phase 16 — Multi-Channel Foundation & Operational Hardening | ✅ Complete | developed with 17–18, see below | 20→51 (16-18 combined) |
+| Phase 17 — Channel Strategy, Market Refresh & Frontend Redesign | ✅ Complete | developed with 16, 18, see below | 20→51 (16-18 combined) |
+| Phase 18 — Closed-Loop Autonomy & Visual Quality | ✅ Complete | 6784 backend + 404 frontend | 51 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 20`
+`SCHEMA_VERSION = 51`
 
 ### Test count
-**Backend:** 3611 passed, 1 skipped (ruff lint clean; skipped test is the always-skipped live smoke test)
-**Frontend:** 132 passed (14 test files; Vitest + RTL + MSW; typecheck clean; lint clean; build clean)
+**Backend:** 6784 passed, 1 skipped (ruff check + ruff format clean; skipped test is the always-skipped live smoke test)
+**Frontend:** 404 passed (23 test files; Vitest + RTL + MSW; typecheck clean; lint clean; build clean)
 
 ### Packages implemented
 
@@ -72,6 +75,10 @@
 | Workers (RQ queue, executor, scheduler) | `src/app/workers/` | ✅ |
 | Observability (structlog, Prometheus, health, middleware) | `src/app/observability/` | ✅ |
 | Object storage (metadata layer) | `src/app/storage/` | ✅ |
+| Market Intelligence (exploration, adjacent expansion, semantic clustering, refresh) | `src/app/intelligence/market/` | ✅ |
+| Experiments (lineage, eligibility, planning, execution contracts, strategy briefs) | `src/app/intelligence/experiments/` | ✅ |
+| Autonomy (decision / production / publishing cycles) | `src/app/intelligence/autonomy/` | ✅ |
+| Visual Quality Intelligence (scoring, QA) | `src/app/visuals/` | ✅ |
 
 ### CLI subcommand groups
 
@@ -107,6 +114,7 @@ ace doctor          — environment diagnostics
 | `ACE_ELEVENLABS_API_KEY` | *(unset)* | ElevenLabs API key (never logged or stored in DB) |
 | `ACE_TTS_LIVE_ENABLED` | `false` | Safety gate: must be `true` for live ElevenLabs calls |
 | `ACE_PUBLISHING_LIVE_ENABLED` | `false` | Safety gate: must be `true` for live provider uploads |
+| `ACE_RELEASE_PUBLIC_ENABLED` | `false` | Safety gate: must be `true` (in addition to `ACE_PUBLISHING_LIVE_ENABLED`) before a private/unlisted upload can be made public |
 | `YOUTUBE_CLIENT_SECRETS_PATH` | *(unset)* | Path to YouTube OAuth client secrets JSON (never stored in DB) |
 | `YOUTUBE_CREDENTIALS_PATH` | *(unset)* | Path to YouTube OAuth token file (never stored in DB) |
 | `ACE_LOG_LEVEL` | `WARNING` | Structured logging level |
@@ -646,3 +654,52 @@ Phase 16 (TBD — operator-scoped roadmap item).
 | No live calls in CI | All live-provider flags default false; Class B/C blocked |
 | No X-Dev-Actor in production | Removed from API; JWT-only auth path |
 | No automated push-to-production | CD boundary comment in ci.yml; manual operator gate |
+
+---
+
+## Phase 16–18 completion details
+
+Phases 16, 17, and 18 were developed and committed together as one body of
+work (SCHEMA_VERSION 20 → 51), so per-phase test-count checkpoints below are
+not available the way they are for earlier phases — the 6784/1-skip backend
+total and 404 frontend total above are the combined result. This section
+groups what was delivered by phase; see `docs/phase-18d-closed-loop-contract.md`
+and `docs/phase-18d-activation-runbook.md` and `docs/phase-18e-visual-quality-contract.md`
+for the detailed, audit-style write-ups behind 18D and 18E specifically.
+
+### Phase 16 — Multi-Channel Foundation & Operational Hardening
+
+- Channel isolation verified end-to-end (intelligence, learning, market, experiments) — `tests/test_three_channel_isolation_16b1.py`, `tests/test_workspace_split_regression_16a1.py`, `tests/test_channel_isolation_16a1.py`, `tests/test_multi_channel_runtime_hardening_16b1_2.py`
+- `src/app/intelligence/channel_bridge.py` — reconciles the control-plane channel with the intelligence-layer channel record
+- `src/app/intelligence/onboarding.py` — channel onboarding flow; `tests/test_channel_onboarding_16b2.py`, `tests/test_channel_identity_bridge_16b1.py`
+- `src/app/analytics/auto_observer.py`, `observation.py` — reconcile-on-startup + 60s scheduled observation ticks, run by the `scheduler` service in `docker-compose.yml`; `tests/test_analytics_auto_observer_16d4.py`, `tests/test_observer_supervision_16d4.py`, `tests/test_scheduler_autonomy_16d4.py`
+- Account/credential health recovery — `tests/test_account_health_recovery_16d4.py`, `tests/test_eligibility_provenance_16d1.py`
+- Visual intelligence defect fixes — `tests/test_16d3_1_defect_fixes.py`, `tests/test_visual_intelligence_16d3_2.py`
+
+### Phase 17 — Channel Strategy, Market Refresh & Frontend Redesign
+
+- `src/app/intelligence/experiments/strategy_policy.py` — versioned bootstrap-vs-steady-state channel strategy, exploration/exploitation split, diversity rule; `tests/test_channel_strategy_profile_17e.py`
+- `src/app/intelligence/market/refresh_service.py` — scheduled market refresh; `tests/test_market_refresh_17f.py`
+- Semantic fit resolution — `tests/test_semantic_fit_resolution_17g.py`
+- `src/app/application/autonomy_readiness.py` — backs the Channel tab's readiness view; `tests/test_autonomy_readiness_17g.py`
+- Frontend redesign: `frontend/src/pages/Content.tsx`, `VideoAnalytics.tsx`, `Environment.tsx` replace the old `Publishing.tsx`; primary nav is now Content / Analytics / Learn / Channel; `/publishing`, `/channels`, `/learning` redirect rather than 404 (`frontend/src/App.tsx`)
+
+### Phase 18 — Closed-Loop Autonomy & Visual Quality
+
+- 18A `src/app/intelligence/autonomy/decision_cycle.py` — schedule-driven, queue-based experiment selection; `custom_cron` cadence stored but not computed (`NotImplementedError`, tested); `tests/test_autonomy_decision_cycle_18a.py`
+- 18B `production_cycle.py` — autonomous rendering/production-plan drafting for a filled slot, output stays private; `tests/test_autonomy_production_cycle_18b.py`
+- 18C `publishing_cycle.py` — autonomous upload + public release, independently gated by `ACE_PUBLISHING_LIVE_ENABLED` and `ACE_RELEASE_PUBLIC_ENABLED`; `tests/test_autonomy_publishing_cycle_18c.py`
+- 18D closed-loop integration — nine cross-cutting defects found via a live-database audit and fixed (publication→experiment handoff, autonomous content-feature extraction, a channel-id namespace mismatch that left planner coverage permanently empty, a queue deadlock, an ignored schedule interval, a retired slot becoming re-eligible for production, cumulative analytics windows double-counting, among others); `tests/test_closed_loop_autonomy_18d.py`, `tests/test_operational_hardening_18d1.py`; full defect list and lifecycle contract in `docs/phase-18d-closed-loop-contract.md`
+- 18E `src/app/visuals/quality.py`, `qa.py` — visual quality scoring and QA, topic refinement, credential-recovery hardening; `tests/test_visual_quality_18e.py`, `tests/test_18e1_topic_refinement.py`, `tests/test_18e2_credential_recovery.py`, `tests/test_18e_closure.py`; contract in `docs/phase-18e-visual-quality-contract.md`
+- Supporting market-intelligence and experimentation infrastructure: exploration (`src/app/intelligence/market/cold_start.py`, `adjacent.py`, `selector.py`), experiment lineage/eligibility/planning (`src/app/intelligence/experiments/eligibility.py`, `planning.py`, `execution_contract.py`), and strategy briefs (`strategy_brief.py`)
+
+### Key Phase 16–18 invariants
+
+| Rule | Enforcement point |
+|---|---|
+| A channel's data is never visible to another channel | Isolation enforced in every intelligence/learning/market/experiment query, not just at the API boundary |
+| Autonomous production never implies public release | `ACE_PUBLISHING_LIVE_ENABLED` and `ACE_RELEASE_PUBLIC_ENABLED` are independent, both default `false` |
+| The analytics observer can never trigger an upload | Publishing gates hard-wired off in the `scheduler` daemon's own process, regardless of environment |
+| Autonomy is per-channel, not global | `decision_automation_enabled` / `production_automation_enabled` are per-channel flags on `autonomy_policies`, default off |
+| A working pipeline does not imply authorization | Readiness view evaluates decision, production, analytics/learning, provider connectivity, and publishing authorization as five independent checks |
+| `custom_cron` is not silently approximated | Raises `NotImplementedError`, covered by a test, rather than falling back to a wrong interval |

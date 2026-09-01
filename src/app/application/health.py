@@ -46,13 +46,26 @@ def get_workspace_health(conn: Any, workspace_id: str) -> HealthView:
         budget_status = "unknown"
 
     # CP health records — scoped via workspace/channel/account entity IDs.
+    # Read ONLY the latest record per entity (latest by recorded_at, id as tiebreaker).
+    # A historical degraded record must not mark an entity as unhealthy when a newer
+    # healthy record exists for it.
     entity_ids = _workspace_entity_ids(conn, workspace_id)
     degraded_entities: list[dict[str, Any]] = []
     if entity_ids:
         placeholders = ",".join("?" * len(entity_ids))
         health_rows = conn.execute(
-            f"SELECT entity_type, entity_id, status FROM cp_health_records "
-            f"WHERE entity_id IN ({placeholders}) ORDER BY recorded_at DESC LIMIT 50",
+            f"""
+            SELECT entity_type, entity_id, status
+            FROM cp_health_records h
+            WHERE entity_id IN ({placeholders})
+              AND id = (
+                SELECT id FROM cp_health_records h2
+                WHERE h2.entity_id = h.entity_id
+                  AND h2.entity_type = h.entity_type
+                ORDER BY h2.recorded_at DESC, h2.id DESC
+                LIMIT 1
+              )
+            """,
             entity_ids,
         ).fetchall()
         degraded_entities = [

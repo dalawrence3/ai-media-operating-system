@@ -1,133 +1,96 @@
 /**
- * Learning page E2E tests.
+ * Learn page E2E tests — Phase 17D.
  *
- * Requires: make seed-dev (seeded dev workspace with 3 pending recommendations)
  * Auth: dev auth bypass via X-Dev-Actor header — no real OAuth, no live publishing.
- * Data: DEV SEEDED DATA ONLY — no real workspace, no Orvella, no live data.
+ *
+ * Data source note: recommendations are now fetched by fanning out over the
+ * current channel's actual publications (see useChannelRecommendations),
+ * not the old workspace-wide/topic-scoped endpoint. This closes a
+ * cross-workspace leak (recs attached to a mis-scoped topic_id used to leak
+ * between workspaces — see Phase 17B/17D reports) but means the dev-studio
+ * seed workspace, which has zero publications, now honestly shows an empty
+ * state rather than displaying recommendations that don't actually belong
+ * to any of its own videos. So: dev-studio covers empty-state and smoke
+ * behavior; populated-state and filter behavior are verified read-only
+ * against the real local-dev/Orvella workspace, which does have
+ * publication-scoped recommendations. Accept/reject mutation flows are
+ * intentionally NOT exercised here against either workspace — dev-studio
+ * can no longer supply compatible fixture data for them, and mutating real
+ * Orvella recommendation state from an E2E run is unsafe. That interaction
+ * is already covered thoroughly (accept, reject-notes-required, badge
+ * updates) by the MSW-mocked unit suite in Learning.test.tsx.
  */
 
 import { test, expect } from './fixtures'
-import { gotoAndReady, resetLearningFixtures, resolveWorkspaceOrSkip } from './helpers'
+import { gotoAndReady, resolveWorkspaceOrSkip } from './helpers'
 
-/** Wait for at least one recommendation card to appear in the main content area. */
-async function waitForRecommendations(page: import('@playwright/test').Page) {
-  await expect(page.locator('[data-testid^="recommendation-"]').first()).toBeVisible({
-    timeout: 10_000,
-  })
-}
-
-test.describe('Learning page', () => {
+test.describe('Learn page — dev-seeded workspace (empty)', () => {
   let wsId: string
-  let resolvedBaseURL: string | undefined
 
   test.beforeAll(async ({ baseURL }) => {
-    resolvedBaseURL = baseURL
     wsId = await resolveWorkspaceOrSkip(baseURL)
   })
 
-  test('navigates to learning and renders the page heading', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'learning')
-    await expect(page.getByRole('heading', { name: /learning/i, level: 1 })).toBeVisible({
+  test('navigates to learn and renders the page heading', async ({ page }) => {
+    await gotoAndReady(page, wsId, 'learn')
+    await expect(page.getByRole('heading', { name: 'Learn', level: 1 })).toBeVisible({
       timeout: 10_000,
     })
   })
 
   test('does not crash or show an error boundary', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'learning')
+    await gotoAndReady(page, wsId, 'learn')
     await expect(page.getByText(/something went wrong|unhandled error/i)).not.toBeVisible()
   })
 
-  test('shows seeded recommendations — populated state', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'learning')
-    await waitForRecommendations(page)
-    // Seed creates 3 recommendations; at least one card must be present.
-    const cards = page.locator('[data-testid^="recommendation-"]')
-    await expect(cards).toHaveCount(3, { timeout: 5_000 })
-  })
-
-  test('seeded data does not show unavailable state', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'learning')
-    await waitForRecommendations(page)
-    await expect(page.locator('[data-testid="unavailable-state"]')).not.toBeVisible()
-  })
-
-  test('status filter buttons appear when data is present', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'learning')
-    await waitForRecommendations(page)
-    await expect(page.getByTestId('filter-all')).toBeVisible()
-    await expect(page.getByTestId('filter-pending')).toBeVisible()
-    await expect(page.getByTestId('filter-accepted')).toBeVisible()
-    await expect(page.getByTestId('filter-rejected')).toBeVisible()
-  })
-
-  test('filtering to accepted hides pending recommendations', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'learning')
-    await waitForRecommendations(page)
-    // All seeded recs are pending; accepted filter should show empty list.
-    await page.getByTestId('filter-accepted').click()
-    await expect(
-      page.locator('[data-testid^="recommendation-"]').first(),
-    ).not.toBeVisible({ timeout: 5_000 })
-  })
-
-  test('filtering back to all restores full recommendation list', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'learning')
-    await waitForRecommendations(page)
-    await page.getByTestId('filter-accepted').click()
-    await page.getByTestId('filter-all').click()
-    await waitForRecommendations(page)
-    await expect(page.locator('[data-testid^="recommendation-"]')).toHaveCount(3, {
-      timeout: 5_000,
-    })
-  })
-
-  test.describe('mutation flows — pending state required', () => {
-    test.beforeEach(async () => {
-      await resetLearningFixtures(resolvedBaseURL)
-    })
-
-    test('accept button triggers accept flow and updates status badge', async ({ page }) => {
-      await gotoAndReady(page, wsId, 'learning')
-      await waitForRecommendations(page)
-      const acceptBtn = page.locator('[data-testid^="accept-"]').first()
-      await expect(acceptBtn).toBeVisible({ timeout: 8_000 })
-      await acceptBtn.click()
-      await page.getByTestId('filter-accepted').click()
-      await expect(
-        page.locator('[data-testid^="recommendation-"]').first(),
-      ).toBeVisible({ timeout: 8_000 })
-    })
-
-    test('reject button opens notes textarea — confirm disabled until text entered', async ({
-      page,
-    }) => {
-      await gotoAndReady(page, wsId, 'learning')
-      await waitForRecommendations(page)
-      const rejectOpenBtn = page.locator('[data-testid^="reject-open-"]').first()
-      await expect(rejectOpenBtn).toBeVisible({ timeout: 8_000 })
-      await rejectOpenBtn.click()
-      const notesArea = page.locator('[data-testid^="reject-notes-"]').first()
-      await expect(notesArea).toBeVisible()
-      const confirmBtn = page.locator('[data-testid^="reject-confirm-"]').first()
-      await expect(confirmBtn).toBeDisabled()
-    })
-
-    test('reject confirm button enables after typing notes', async ({ page }) => {
-      await gotoAndReady(page, wsId, 'learning')
-      await waitForRecommendations(page)
-      const rejectOpenBtn = page.locator('[data-testid^="reject-open-"]').first()
-      await expect(rejectOpenBtn).toBeVisible({ timeout: 8_000 })
-      await rejectOpenBtn.click()
-      await page.locator('[data-testid^="reject-notes-"]').first().fill('Not applicable right now')
-      const confirmBtn = page.locator('[data-testid^="reject-confirm-"]').first()
-      await expect(confirmBtn).not.toBeDisabled()
-    })
+  test('shows an honest empty state for recommendations — no publications, no leaked data', async ({ page }) => {
+    await gotoAndReady(page, wsId, 'learn')
+    await expect(page.getByText(/no recommendations yet/i)).toBeVisible({ timeout: 10_000 })
   })
 
   test('confidence and evidence model section is always visible', async ({ page }) => {
-    await gotoAndReady(page, wsId, 'learning')
-    await expect(page.getByText('Confidence & Evidence Model')).toBeVisible({ timeout: 10_000 })
+    await gotoAndReady(page, wsId, 'learn')
+    await expect(page.getByText('Confidence & evidence model')).toBeVisible({ timeout: 10_000 })
     await expect(page.getByText('heuristic signal strength')).toBeVisible()
-    await expect(page.getByText('they describe associations, not causes')).toBeVisible()
+    const evidenceCard = page.locator('.diagnostic-finding', { hasText: 'Evidence Classification' })
+    await expect(evidenceCard.getByText(/they describe associations, not causes/i)).toBeVisible()
+  })
+})
+
+const REAL_WORKSPACE_ID = 'local-dev'
+
+async function resolveRealWorkspaceId(baseURL: string): Promise<string | null> {
+  const backendBase = baseURL.replace(':5173', ':8000')
+  try {
+    const res = await fetch(`${backendBase}/api/v1/workspaces`, {
+      headers: { 'X-Dev-Actor': 'dev:studio-user' },
+    })
+    if (!res.ok) return null
+    const workspaces: Array<{ id: string }> = await res.json()
+    return workspaces.find(w => w.id === REAL_WORKSPACE_ID)?.id ?? null
+  } catch {
+    return null
+  }
+}
+
+test.describe('Learn page — real Orvella data (populated, read-only)', () => {
+  test('shows real recommendations and supports status filtering without mutating anything', async ({ page, baseURL }) => {
+    const wsId = await resolveRealWorkspaceId(baseURL!)
+    test.skip(!wsId, 'local-dev workspace not found')
+
+    await page.goto(`/workspaces/${wsId}/learn`)
+    await expect(page.getByRole('heading', { name: 'Learn', level: 1 })).toBeVisible({ timeout: 15_000 })
+
+    const cards = page.locator('[data-testid^="recommendation-"]')
+    await expect(cards.first()).toBeVisible({ timeout: 10_000 })
+    const fullCount = await cards.count()
+    expect(fullCount).toBeGreaterThan(0)
+
+    // Filtering is a client-side read; safe to exercise against live data.
+    await page.getByTestId('filter-accepted').click()
+    await expect(page.locator('[data-testid^="accept-"]')).toHaveCount(0, { timeout: 5_000 })
+
+    await page.getByTestId('filter-all').click()
+    await expect(cards).toHaveCount(fullCount, { timeout: 5_000 })
   })
 })

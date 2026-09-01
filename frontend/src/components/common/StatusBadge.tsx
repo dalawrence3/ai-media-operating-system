@@ -44,6 +44,24 @@ const STATUS_MAP: Record<string, { cls: string; label: string }> = {
   manual:       { cls: 'badge-neutral',  label: 'Manual' },
   supervised:   { cls: 'badge-info',     label: 'Supervised' },
   autonomous:   { cls: 'badge-paused',   label: 'Autonomous' },
+
+  // Publication lifecycle (publications.status)
+  published:    { cls: 'badge-healthy',  label: 'On YouTube' },
+  uploading:    { cls: 'badge-info',     label: 'Uploading' },
+  uploaded:     { cls: 'badge-info',     label: 'Uploaded' },
+  scheduled:    { cls: 'badge-info',     label: 'Scheduled' },
+  deleted:      { cls: 'badge-neutral',  label: 'Archived' },
+
+  // Publication visibility
+  public:       { cls: 'badge-healthy',  label: 'Public' },
+  private:      { cls: 'badge-neutral',  label: 'Private' },
+
+  // Platform account connection state
+  connected:            { cls: 'badge-healthy', label: 'Connected' },
+  disconnected:         { cls: 'badge-error',   label: 'Disconnected' },
+  credential_invalid:   { cls: 'badge-error',   label: 'Needs reconnection' },
+  credential_expiring:  { cls: 'badge-warn',    label: 'Expiring soon' },
+  quota_limited:        { cls: 'badge-warn',    label: 'Quota limited' },
 }
 
 export function StatusBadge({ status, label }: Props) {

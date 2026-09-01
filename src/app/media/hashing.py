@@ -33,6 +33,10 @@ class RenderHashInput:
     experiment_id: str | None
     # ordered list of (scene_index, segment_id, audio_sha256_or_none)
     scene_tuples: list[tuple[int, int, str | None]]
+    # ordered list of (beat_index, duration_ms, asset_key_or_none).
+    # The visual plan is part of render identity: re-planning visuals must
+    # produce a new manifest rather than silently reusing the old render.
+    beat_tuples: list[tuple[int, int, str | None]] | None = None
 
 
 def compute_render_input_hash(inp: RenderHashInput) -> str:
@@ -57,5 +61,12 @@ def compute_render_input_hash(inp: RenderHashInput) -> str:
             for si, seg, sha in inp.scene_tuples
         ],
     }
+    # Omitted entirely when there is no beat layer, so manifests hashed before
+    # visual beats existed keep their original hash.
+    if inp.beat_tuples:
+        payload["beats"] = [
+            {"beat_index": bi, "duration_ms": ms, "asset_key": key}
+            for bi, ms, key in inp.beat_tuples
+        ]
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(serialized.encode()).hexdigest()

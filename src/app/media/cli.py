@@ -78,7 +78,7 @@ def render_plan(
         height=height,
         fps=fps,
         caption_burn_in=caption_burn_in,
-        experiment_id=experiment_id,
+        experiment_id=experiment_id or approved.experiment_id,
     )
 
     if dry_run:

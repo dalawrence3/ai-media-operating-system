@@ -231,6 +231,7 @@ KNOWN_GENERATORS: frozenset[str] = frozenset(
 
 GENERATOR_STATUS_SUCCEEDED = "succeeded"
 GENERATOR_STATUS_FAILED = "failed"
+GENERATOR_STATUS_SKIPPED = "skipped"
 
 # ── Evidence classification ───────────────────────────────────────────────────
 # Every recommendation must declare how its evidence was produced.
@@ -325,11 +326,35 @@ RETENTION_HIGH_THRESHOLD_S = 45.0  # ≥ 45 s → strong retention signal
 ENGAGEMENT_LOW_THRESHOLD = 0.01  # < 1% → content engagement concern
 
 # Net subscriber growth per video
-# Any net loss triggers the concern recommendation.
-SUBSCRIBER_LOSS_THRESHOLD = 0  # net <= 0 → content quality concern
+# A strictly negative net triggers the concern recommendation.
+# Zero net change (0 gained, 0 lost) is not a loss — do not fire for net == 0.
+SUBSCRIBER_LOSS_THRESHOLD = 0  # net < 0 → content quality concern
 
 # Watch-time: watch_time_seconds vs. views × retention benchmark
 WATCH_TIME_LOW_FACTOR = 0.5  # watch_time < 50% of views × RETENTION_HIGH → distribution concern
+
+# ── Evidence maturity / sufficiency thresholds ───────────────────────────────
+# These govern whether analytics are mature enough for a generator to make a
+# legitimate inference.  They answer "do we have enough evidence?" — not "how
+# strong is the evidence?" (which is handled by scoring.py).
+#
+# Maturity is evaluated before generators run.  Immature analytics produce a
+# GENERATOR_STATUS_SKIPPED result rather than a low-confidence recommendation.
+
+MIN_VIEWS_FOR_LEARNING = 10
+"""Minimum lifetime view count for view-dependent recommendation generators.
+
+Below this threshold, generators that interpret audience behaviour (retention,
+engagement, subscriber growth, shares, watch-time) are skipped entirely.
+
+Rationale: a publication with fewer than 10 lifetime views has had no
+meaningful audience exposure.  Applying threshold comparisons to zero-view
+data is mathematically valid but strategically meaningless — "0 s average
+view duration" does not indicate poor pacing; it indicates no-one has yet
+watched the video.  10 is small enough that a recently published video with
+some organic traffic can receive recommendations while still filtering out
+the zero-view case entirely.
+"""
 
 # Minimum data points required for medium/high confidence
 MIN_SNAPSHOTS_MEDIUM_CONFIDENCE = 2
@@ -364,3 +389,58 @@ SUBSYSTEM_ENTITY_TYPES: frozenset[str] = frozenset(
         ENTITY_PUBLICATION,
     }
 )
+
+# ── Phase 12A — Recommendation Application Framework ─────────────────────────
+
+APPLICATION_ENGINE_VERSION: str = "application-v1"
+APPLICATION_SCHEMA_VERSION: str = "application-schema-v1"
+
+# Application lifecycle statuses
+APPLICATION_STATUS_PROPOSED = "proposed"
+APPLICATION_STATUS_APPLIED = "applied"
+APPLICATION_STATUS_SUPERSEDED = "superseded"
+APPLICATION_STATUS_REVERTED = "reverted"
+APPLICATION_STATUS_FAILED = "failed"
+
+APPLICATION_STATUSES: frozenset[str] = frozenset(
+    {
+        APPLICATION_STATUS_PROPOSED,
+        APPLICATION_STATUS_APPLIED,
+        APPLICATION_STATUS_SUPERSEDED,
+        APPLICATION_STATUS_REVERTED,
+        APPLICATION_STATUS_FAILED,
+    }
+)
+
+# Intent directions
+DIRECTION_INCREASE = "increase"
+DIRECTION_DECREASE = "decrease"
+DIRECTION_MAINTAIN = "maintain"
+
+APPLICATION_DIRECTIONS: frozenset[str] = frozenset(
+    {
+        DIRECTION_INCREASE,
+        DIRECTION_DECREASE,
+        DIRECTION_MAINTAIN,
+    }
+)
+
+# ── Narration pace adapter safety bounds ──────────────────────────────────────
+# Absolute constraints on voice_profile.speaking_rate adjustments.
+# These protect against runaway automation — no single application can push
+# speaking_rate outside [min, max] or change it by more than max_delta.
+
+NARRATION_PACE_PARAMETER: str = "speaking_rate"
+
+NARRATION_PACE_SPEAKING_RATE_MIN: float = 0.7
+"""Lower bound for speaking_rate.  Below this, audio becomes unnatural."""
+
+NARRATION_PACE_SPEAKING_RATE_MAX: float = 1.5
+"""Upper bound for speaking_rate.  Above this, speech is unintelligible."""
+
+NARRATION_PACE_MAX_DELTA: float = 0.2
+"""Maximum absolute change allowed in a single application.
+
+Prevents large sudden shifts.  Split larger adjustments across multiple
+applications, with re-evaluation between each step.
+"""

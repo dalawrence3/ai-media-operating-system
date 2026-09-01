@@ -2,12 +2,27 @@
 
 import type {
   AnalyticsAggregate,
+  AutonomyPolicy,
+  AutonomyReadinessResponse,
+  ChannelAutomationPolicyResponse,
+  ChannelPerformanceBaseline,
+  ChannelStrategyResponse,
+  PublishingSlot,
+  ChannelPublishingAuthorizationResponse,
   CPWorkspace,
   CPChannel,
   CPAccount,
+  ExperimentStrategyBrief,
+  FeaturePerformanceObservation,
+  MarketExperiment,
+  MarketOpportunity,
+  OpportunityEvidenceResponse,
   PublicationAnalytics,
+  PublicationAnalyticsHistoryEntry,
   PublicationDetail,
   PublicationListItem,
+  StrategyConfig,
+  StrategyProfile,
   WorkspaceView,
   HealthView,
   OptimizationRecommendation,
@@ -20,6 +35,7 @@ import type {
   DiagnosticReport,
   Experiment,
   ControlEvent,
+  ScheduleView,
   TopicView,
   StageArtifact,
 } from '@/api/types'
@@ -362,6 +378,373 @@ export const recommendationAccepted: OptimizationRecommendation = {
   input_hash: 'hash-rec-002',
 }
 
+export const marketOpportunity: MarketOpportunity = {
+  id: 1,
+  channel_id: 1,
+  normalized_topic: 'crispr gene editing technology',
+  raw_topic: 'CRISPR gene editing technology',
+  title: 'CRISPR gene editing technology',
+  topic_summary: '',
+  format_recommendation: 'undecided',
+  strategic_role: 'discovery',
+  current_lifecycle_state: 'approved',
+  canonical_cluster_id: 4,
+  created_at: '2026-08-23T20:32:35',
+  canonical_label: 'CRISPR gene editing technology',
+  evidence_count: 22,
+  composite_score: 0.62,
+  confidence: 0.58,
+  score_trend_strength: null,
+  score_audience_demand: 0.61,
+  score_competition: 0.42,
+  score_evergreen_value: 0.7,
+  score_audience_fit: 0.5,
+  score_content_novelty: 0.9,
+  status_trend_strength: 'absent',
+  status_audience_demand: 'present',
+  status_competition: 'present',
+  status_evergreen_value: 'present',
+  status_audience_fit: 'present',
+  status_content_novelty: 'present',
+}
+
+export const opportunityEvidenceResponse: OpportunityEvidenceResponse = {
+  opportunity_id: 1,
+  evidence_count: 3,
+  snapshots: [
+    {
+      source_label: 'market_intelligence:canonical=4:snap=34',
+      collected_at: '2026-08-29T00:11:55',
+      items: [
+        { evidence_type: 'market_demand_score', label: 'Audience demand', value: 0.62, text: null, unit: 'score [0,1]' },
+        { evidence_type: 'market_maturity', label: 'Evidence maturity', value: null, text: 'actionable', unit: 'maturity_level' },
+        { evidence_type: 'market_signal_snapshot_id', label: 'Signal snapshot', value: 34, text: null, unit: 'id' },
+      ],
+    },
+  ],
+}
+
+export const marketRefreshSchedule: ScheduleView = {
+  id: 'sched-market-refresh-001',
+  workspace_id: WS_ID,
+  channel_id: CH_ID,
+  name: 'market-refresh:orvella',
+  operation_type: 'market_refresh',
+  schedule_type: 'interval',
+  schedule_config: { interval_seconds: 21600 },
+  timezone: 'UTC',
+  is_active: true,
+  last_run_at: '2026-08-29T00:11:55',
+  next_run_at: '2026-08-29T06:11:55',
+  actor: 'dev:studio-user',
+  created_at: '2026-08-29T00:00:00',
+  updated_at: '2026-08-29T00:11:55',
+}
+
+export const marketExperiment: MarketExperiment = {
+  id: 'exp-fixture-001',
+  channel_id: 1,
+  opportunity_id: 1,
+  experiment_type: 'exploration',
+  hypothesis: "Publishing on 'crispr gene editing technology' will produce measurable signal on average_view_percentage.",
+  status: 'draft',
+  created_at: '2026-08-24T04:02:24',
+}
+
+export const experimentStrategyBrief: ExperimentStrategyBrief = {
+  id: 'brief-fixture-001',
+  channel_id: 1,
+  planning_run_id: 'plan-fixture-001',
+  selection_decision_id: 1,
+  opportunity_id: 1,
+  canonical_cluster_id: 4,
+  channel_profile_version_id: 1,
+  brief_planning_intent: 'market_exploration',
+  experiment_type: 'exploration',
+  market_theme: 'crispr gene editing technology',
+  canonical_topic: 'crispr gene editing technology',
+  strategic_reason: "No prior experiments on cluster 'crispr gene editing technology'; baseline signal needed.",
+  information_gain_reason: 'Untested cluster: high cluster coverage gain, no feature confound.',
+  hypothesis: "Publishing on 'crispr gene editing technology' will produce measurable signal on average_view_percentage.",
+  target_metric: 'average_view_percentage',
+  target_direction: 'higher_is_better',
+  treatment_factors: [],
+  controlled_factors: [
+    { factor_name: 'narration_speaking_rate', baseline_value: null, baseline_source: 'voice_profile', tolerance: '±0.80' },
+  ],
+  content_constraints: {
+    excluded_topics: ['gambling'],
+    primary_niche: 'science and technology explained',
+    secondary_niches: [],
+    brand_voice: 'conversational',
+    content_style: 'explainer',
+    audience_description: 'Curious adults and young learners.',
+  },
+  confounding_risk: 'low',
+  policy_version: '1.0',
+  eligibility_classification: 'eligible',
+  score_decomposition_json: '{}',
+  brief_hash: 'hash-brief-fixture',
+  status: 'pending_approval',
+  created_at: '2026-08-24T04:02:24',
+  linked_experiment: {
+    id: marketExperiment.id,
+    status: marketExperiment.status,
+    experiment_type: marketExperiment.experiment_type,
+    created_at: marketExperiment.created_at,
+  },
+}
+
+export const channelPerformanceBaseline: ChannelPerformanceBaseline = {
+  id: 1,
+  channel_id: CH_ID,
+  workspace_id: WS_ID,
+  metric_name: 'views',
+  period_type: 'lifetime',
+  publication_count: 2,
+  mean: 150,
+  median: 150,
+  min_value: 19,
+  max_value: 474,
+  std_dev: 200,
+  sample_maturity: 'exploratory',
+  source_publication_ids_json: '[1,3]',
+  source_snapshot_ids_json: '[1,2]',
+  comparison_schema_version: 'cross-pub-v1',
+  observer_version: 'observer-v1',
+  input_hash: 'hash-baseline-fixture',
+  created_at: '2026-08-28T00:00:00',
+  updated_at: '2026-08-28T00:00:00',
+}
+
+export const featurePerformanceObservation: FeaturePerformanceObservation = {
+  id: 1,
+  channel_id: CH_ID,
+  workspace_id: WS_ID,
+  feature_name: 'scene_count',
+  feature_bucket: '6–9',
+  metric_name: 'views',
+  period_type: 'lifetime',
+  publication_count: 2,
+  mean: 246.5,
+  median: 246.5,
+  min_value: 19,
+  max_value: 474,
+  std_dev: 200,
+  baseline_mean: 150,
+  baseline_median: 150,
+  abs_diff_from_baseline: 96.5,
+  rel_diff_from_baseline: 0.64,
+  sample_maturity: 'exploratory',
+  observation_type: 'association',
+  source_publication_ids_json: '[1,3]',
+  source_snapshot_ids_json: '[1,2]',
+  comparison_schema_version: 'cross-pub-v1',
+  observer_version: 'observer-v1',
+  input_hash: 'hash-observation-fixture',
+  created_at: '2026-08-28T00:00:00',
+  updated_at: '2026-08-28T00:00:00',
+}
+
+export const strategyConfig: StrategyConfig = {
+  schema_version: '1.0',
+  bootstrap: {
+    target_publication_count: 18,
+    market_intelligence_weight: 0.8,
+    channel_evidence_weight: 0.2,
+    exploration_share: 0.67,
+  },
+  steady_state: {
+    market_intelligence_weight: 0.4,
+    channel_evidence_weight: 0.6,
+    exploration_share: 0.2,
+  },
+  transition: {
+    trigger_metric: 'average_view_percentage',
+    maturity_threshold: 'directional',
+  },
+  diversity: {
+    max_cluster_share: 0.4,
+    max_consecutive_same_cluster: 2,
+  },
+  creative_dimensions: ['topic_theme', 'hook', 'pacing', 'duration', 'structure', 'caption_density', 'publish_timing'],
+  total_portfolio_slots: 3,
+}
+
+export const strategyProfile: StrategyProfile = {
+  id: 'strat-fixture-001',
+  channel_id: CH_ID,
+  version: 1,
+  config_json: JSON.stringify(strategyConfig),
+  actor: 'dev:studio-user',
+  created_at: '2026-08-28T00:00:00',
+  is_active: true,
+}
+
+export const channelStrategyResponse: ChannelStrategyResponse = {
+  status: 'ok',
+  profile: strategyProfile,
+  effective: {
+    trigger_metric: 'average_view_percentage',
+    maturity_threshold: 'directional',
+    current_maturity: 'insufficient',
+    publication_count: 0,
+    effective_regime: 'bootstrap',
+    market_intelligence_weight: 0.8,
+    channel_evidence_weight: 0.2,
+    exploration_share: 0.67,
+  },
+  config_errors: null,
+}
+
+export const autonomyReadinessResponse: AutonomyReadinessResponse = {
+  channel_id: CH_ID,
+  checks: [
+    { key: 'market_intelligence_configured', label: 'Market intelligence configured', ready: true, status: 'ready', category: 'decision', detail: 'YouTube Data API key configured (ACE_YOUTUBE_API_KEY)' },
+    { key: 'recurring_market_refresh', label: 'Recurring market refresh active', ready: true, status: 'ready', category: 'decision', detail: 'Recurring market_refresh schedule active (next run 2026-08-29T06:15:14+00:00)' },
+    { key: 'strategy_profile_active', label: 'Strategy profile active', ready: true, status: 'ready', category: 'decision', detail: 'Active strategy profile v1' },
+    { key: 'eligible_opportunities_available', label: 'Eligible opportunities available', ready: true, status: 'ready', category: 'decision', detail: '2 of 8 checked opportunities are eligible' },
+    { key: 'decision_automation_enabled', label: 'Decision automation enabled', ready: true, status: 'ready', category: 'decision', detail: 'Enabled — cadence daily, queue target 1, America/New_York' },
+    { key: 'production_automation_enabled', label: 'Production automation enabled', ready: true, status: 'ready', category: 'production', detail: 'Enabled — filled slots are produced without per-video approval' },
+    { key: 'production_queue_healthy', label: 'Production queue healthy', ready: true, status: 'ready', category: 'production', detail: '0 of 1 queue slot(s) filled, 0 reserved' },
+    { key: 'analytics_observer_active', label: 'Analytics observer active', ready: true, status: 'ready', category: 'analytics_learning', detail: '3 publication(s) under active analytics observation' },
+    { key: 'channel_learning_evidence', label: 'Channel learning evidence', ready: false, status: 'degraded', category: 'analytics_learning', detail: "10 baseline metric(s) over 1 publication(s); maturity 'insufficient'" },
+    { key: 'experiment_ledger_current', label: 'Experiment ledger current', ready: true, status: 'ready', category: 'analytics_learning', detail: "Every public publication's experiment has advanced past production" },
+    { key: 'provider_account_healthy', label: 'Provider account healthy', ready: true, status: 'ready', category: 'provider_oauth', detail: "Connected YouTube account (status 'connected')" },
+    { key: 'release_scope_granted', label: 'Public-release OAuth scope granted', ready: true, status: 'ready', category: 'provider_oauth', detail: 'youtube.force-ssl granted — the credential can make a video public' },
+    { key: 'public_publishing_authorized', label: 'Autonomous public publishing authorized', ready: false, status: 'blocked', category: 'publishing_authorization', detail: 'Blocked by: global_publishing_gate_off, global_release_gate_off, channel_not_authorized' },
+    { key: 'global_publishing_gates', label: 'Global publishing gates', ready: true, status: 'ready', category: 'publishing_authorization', detail: 'Both global gates OFF — no process can publish or release' },
+    { key: 'autonomy_schedules_healthy', label: 'Autonomy schedules healthy', ready: true, status: 'ready', category: 'scheduler', detail: 'All 4 autonomy schedules active and on time' },
+  ],
+  ready_for_decision_automation: true,
+  authorized_for_public_publishing: false,
+  categories: [
+    { key: 'decision', label: 'Decision readiness', status: 'ready', check_keys: ['market_intelligence_configured', 'recurring_market_refresh', 'strategy_profile_active', 'eligible_opportunities_available', 'decision_automation_enabled'] },
+    { key: 'production', label: 'Production readiness', status: 'ready', check_keys: ['production_automation_enabled', 'production_queue_healthy'] },
+    { key: 'analytics_learning', label: 'Analytics & learning readiness', status: 'degraded', check_keys: ['analytics_observer_active', 'channel_learning_evidence', 'experiment_ledger_current'] },
+    { key: 'provider_oauth', label: 'OAuth / provider readiness', status: 'ready', check_keys: ['provider_account_healthy', 'release_scope_granted'] },
+    { key: 'publishing_authorization', label: 'Autonomous public publishing', status: 'blocked', check_keys: ['public_publishing_authorized', 'global_publishing_gates'] },
+    { key: 'scheduler', label: 'Scheduler health', status: 'ready', check_keys: ['autonomy_schedules_healthy'] },
+  ],
+  overall_status: 'blocked',
+}
+
+export const autonomyPolicyEnabled: AutonomyPolicy = {
+  channel_id: CH_ID,
+  workspace_id: WS_ID,
+  decision_automation_enabled: true,
+  production_automation_enabled: true,
+  cadence_type: 'daily',
+  cadence_interval_days: null,
+  cadence_cron: null,
+  preferred_local_hour: 9,
+  timezone: 'America/New_York',
+  queue_target: 1,
+  market_refresh_max_age_hours: 12,
+  semantic_fit_max_evaluations_per_run: 5,
+  last_decision_at: '2026-08-29T09:00:00',
+  last_decision_outcome: 'selected',
+  actor: 'dev:studio-user',
+  created_at: '2026-08-28T00:00:00',
+  updated_at: '2026-08-29T09:00:00',
+}
+
+export const publishingSlotFilled: PublishingSlot = {
+  id: 1,
+  channel_id: CH_ID,
+  workspace_id: WS_ID,
+  slot_key: '2026-08-30',
+  scheduled_for_local: '2026-08-30T09:00:00-04:00',
+  timezone: 'America/New_York',
+  scheduled_for_utc: '2026-08-30T13:00:00',
+  state: 'filled',
+  brief_id: 'brief-fixture-001',
+  selection_decision_id: 1,
+  opportunity_id: 7,
+  reserved_at: '2026-08-29T09:00:00',
+  filled_at: '2026-08-29T09:01:00',
+  cancelled_at: null,
+  cancellation_reason: null,
+  experiment_id: 'exp-slot-1',
+  production_status: 'ready',
+  production_pipeline_id: 'pipe-fixture-001',
+  production_publishing_plan_id: 1,
+  production_started_at: '2026-08-29T09:02:00',
+  production_ready_at: '2026-08-29T09:20:00',
+  production_failed_at: null,
+  production_failed_stage: null,
+  production_error: null,
+  production_retry_count: 0,
+  publish_status: null,
+  publication_id: null,
+  publish_provider_video_id: null,
+  publish_started_at: null,
+  publish_uploaded_at: null,
+  publish_released_at: null,
+  publish_failed_at: null,
+  publish_failure_category: null,
+  publish_error: null,
+  publish_retry_count: 0,
+  rescheduled_from_slot_id: null,
+}
+
+export const publishingAuthorizationUnauthorized: ChannelPublishingAuthorizationResponse = {
+  authorization: null,
+  decision: {
+    allowed: false,
+    blocked_by: [
+      'global_publishing_gate_off', 'global_release_gate_off',
+      'channel_not_authorized', 'release_scope_missing',
+    ],
+    detail:
+      'Blocked by: global_publishing_gate_off, global_release_gate_off, '
+      + 'channel_not_authorized, release_scope_missing',
+    global_publishing_enabled: false,
+    global_release_enabled: false,
+    channel_authorized: false,
+    publications_last_24h: 0,
+    max_publications_per_24h: 1,
+    account_id: 'acct-fixture-001',
+    account_status: 'connected',
+    release_scope_granted: false,
+  },
+}
+
+export const publishingAuthorizationAuthorized: ChannelPublishingAuthorizationResponse = {
+  authorization: {
+    channel_id: CH_ID,
+    workspace_id: WS_ID,
+    authorized: true,
+    authorized_at: '2026-08-29T10:00:00',
+    authorized_by: 'dev:studio-user',
+    revoked_at: null,
+    revoked_by: null,
+    policy_version: 1,
+    max_publications_per_24h: 1,
+    missed_slot_grace_minutes: 120,
+    created_at: '2026-08-29T10:00:00',
+    updated_at: '2026-08-29T10:00:00',
+  },
+  decision: {
+    allowed: true,
+    blocked_by: [],
+    detail: 'All publishing authorization layers passed.',
+    global_publishing_enabled: true,
+    global_release_enabled: true,
+    channel_authorized: true,
+    publications_last_24h: 0,
+    max_publications_per_24h: 1,
+    account_id: 'acct-fixture-001',
+    account_status: 'connected',
+    release_scope_granted: true,
+  },
+}
+
+export const channelAutomationPolicyResponse: ChannelAutomationPolicyResponse = {
+  policy: autonomyPolicyEnabled,
+  active_slots: [publishingSlotFilled],
+}
+
 export const TOPIC_ID = 7
 
 export const topicView: TopicView = {
@@ -430,6 +813,8 @@ export const publicationListItem: PublicationListItem = {
   status: 'published',
   published_at: '2026-08-17T21:21:38',
   render_manifest_id: 4,
+  render_duration_ms: 58607,
+  topic_title: 'Renewable Energy',
   created_at: '2026-08-17T21:21:38',
 }
 
@@ -451,6 +836,7 @@ export const publicationDetail: PublicationDetail = {
   render_fps: 30,
   render_status: 'approved',
   render_approved_at: '2026-08-17T17:41:14',
+  topic_title: 'Renewable Energy',
   created_at: '2026-08-17T21:21:38',
   release_eligible: true,
   release_enabled: false,
@@ -464,7 +850,31 @@ export const publicationAnalytics: PublicationAnalytics = {
   period_end: '2026-08-17',
   metrics: { views: 1234, ctr: 0.047 },
   retention_point_count: 0,
+  experiment_id: null,
 }
+
+export const publicationAnalyticsHistory: PublicationAnalyticsHistoryEntry[] = [
+  {
+    snapshot_id: 1,
+    ingested_at: '2026-08-18T01:19:39',
+    observed_at: '2026-08-18T01:19:39',
+    period_start: '2026-08-10',
+    period_end: '2026-08-17',
+    observation_state: 'data',
+    experiment_id: null,
+    metrics: { views: 0, watch_time_seconds: 0, average_view_percentage: 0 },
+  },
+  {
+    snapshot_id: 2,
+    ingested_at: '2026-08-27T01:19:39',
+    observed_at: '2026-08-27T01:19:39',
+    period_start: '2026-08-10',
+    period_end: '2026-08-26',
+    observation_state: 'data',
+    experiment_id: null,
+    metrics: { views: 1234, watch_time_seconds: 10380, average_view_percentage: 95.57 },
+  },
+]
 
 export const stageDiagnosticReport: DiagnosticReport = {
   subject: 'pipeline',
@@ -482,3 +892,74 @@ export const stageDiagnosticReport: DiagnosticReport = {
   generated_at: '2025-01-01T12:00:00',
   contract_version: '1.0',
 }
+
+// ── Phase 18E — visual quality ──────────────────────────────────────────────
+
+export const publicationVisualQuality = {
+  assessed: true,
+  status: 'blocked' as const,
+  assessment_version: 'visual-assessment-v1',
+  policy_version: 'visual-quality-policy-v1',
+  visual_style: 'balanced',
+  total_beat_count: 18,
+  total_duration_ms: 69_474,
+  scene_count: 5,
+  meaningful_runtime_pct: 0.162,
+  text_card_runtime_pct: 0.838,
+  meaningful_beat_count: 3,
+  visual_changes_per_minute: 13.8,
+  distinct_asset_count: 16,
+  asset_reuse_ratio: 0.11,
+  max_meaningful_gap_ms: 50_300,
+  avg_meaningful_gap_ms: 29_100,
+  opening_meaningful_visual: true,
+  dominant_family: 'text_card',
+  dominant_family_share: 0.838,
+  family_diversity: 0.64,
+  family_distribution: [
+    { family: 'text_card', beat_count: 15, runtime_ms: 58_200, runtime_pct: 0.838 },
+    { family: 'generated_diagram', beat_count: 3, runtime_ms: 11_274, runtime_pct: 0.162 },
+  ],
+  fallback_beat_count: 18,
+  provider_fallback_beats: 15,
+  creative_fallback_beats: 3,
+  provider_fallback_rate: 0.833,
+  fallback_reasons: { all_candidates_rejected: 15, structural_intent_prefers_graphic: 3 },
+  planned_meaningful_beats: 14,
+  remediation_attempts: 0,
+  remediated: false,
+  findings: [
+    {
+      code: 'visual_meaningful_runtime_below_floor',
+      severity: 'blocking' as const,
+      message:
+        'Only 16% of runtime carries a meaningful visual (floor 25%); 84% is text-card runtime.',
+      evidence: { meaningful_runtime_pct: 0.162 },
+    },
+    {
+      code: 'visual_text_card_heavy',
+      severity: 'warning' as const,
+      message: '84% of runtime is text cards.',
+      evidence: {},
+    },
+  ],
+  scene_diagnostics: [
+    {
+      beat_index: 0, scene_index: 0, start_ms: 0, duration_ms: 3_800,
+      visual_intent: 'timeline', planned: 'generated_diagram',
+      realized: 'generated_diagram', meaningful: true, provider: 'programmatic',
+      fallback_reason: 'structural_intent_prefers_graphic',
+      fallback_class: 'creative' as const,
+    },
+    {
+      beat_index: 1, scene_index: 0, start_ms: 3_800, duration_ms: 4_100,
+      visual_intent: 'action', planned: 'motion_footage',
+      realized: 'text_card', meaningful: false, provider: 'programmatic',
+      fallback_reason: 'all_candidates_rejected',
+      fallback_class: 'provider' as const,
+    },
+  ],
+  assessed_at: '2026-08-30T12:00:00',
+}
+
+export const publicationVisualQualityUnassessed = { assessed: false }

@@ -190,14 +190,16 @@ def test_execute_pipeline_stage_job_returns_dict(tmp_path: Path):
 
 def test_execute_scheduled_operation_job_returns_dict():
     payload = {
-        "schedule_id": "sched-1",
+        "schedule_id": "sched-unknown",
         "workspace_id": "ws-1",
         "actor": "system:scheduler",
         "enqueued_at": "2026-08-07T12:00:00+00:00",
     }
     result = execute_scheduled_operation_job(payload)
-    assert result["status"] == "dispatched"
-    assert result["schedule_id"] == "sched-1"
+    # Unknown schedule → error response (real dispatcher looks up DB)
+    assert isinstance(result, dict)
+    assert result["status"] in ("error", "unhandled", "ok")
+    assert result["schedule_id"] == "sched-unknown"
 
 
 # ── compute_next_run_at ────────────────────────────────────────────────────

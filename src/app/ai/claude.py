@@ -11,6 +11,7 @@ object so automated tests never make real network calls.
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -52,6 +53,21 @@ def _translate(exc: anthropic.APIError) -> AIError:  # type: ignore[name-defined
 
 # Re-export so callers can catch AIError without importing errors directly.
 from app.ai.errors import AIError  # noqa: E402
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
+
+
+def _strip_json_fences(text: str) -> str:
+    """Extract JSON from inside a markdown code fence, if one is present.
+
+    Handles ```json...``` and ```...``` wrappers that some models emit despite
+    instructions to return plain JSON. Returns the original text unchanged when
+    no fence is detected, so valid plain-JSON responses are unaffected.
+
+    Uses search (not match) so preamble text before the fence is ignored.
+    """
+    m = _JSON_FENCE_RE.search(text)
+    return m.group(1).strip() if m else text
 
 
 class ClaudeProvider:
@@ -115,7 +131,7 @@ class ClaudeProvider:
         parsed = None
         if request.response_schema is not None:
             try:
-                data = json.loads(raw_text)
+                data = json.loads(_strip_json_fences(raw_text))
             except json.JSONDecodeError as exc:
                 raise InvalidStructuredResponseError(
                     f"Claude response is not valid JSON: {type(exc).__name__}"

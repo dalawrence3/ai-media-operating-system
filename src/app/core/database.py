@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 51
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -269,8 +269,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
                                         'new', 'under_review', 'approved',
                                         'rejected', 'produced', 'archived')),
     created_at              TEXT    NOT NULL,
-    updated_at              TEXT    NOT NULL,
-    UNIQUE (channel_id, normalized_topic)
+    updated_at              TEXT    NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS opportunity_observations (
@@ -1801,7 +1800,7 @@ CREATE TABLE IF NOT EXISTS learning_run_generator_results (
                                     'watch_time','subscribers','shares'
                                 )),
     status                  TEXT NOT NULL
-                                CHECK (status IN ('succeeded','failed')),
+                                CHECK (status IN ('succeeded','failed','skipped')),
     recommendation_count    INTEGER NOT NULL DEFAULT 0,
     error_message           TEXT,
     created_at              TEXT NOT NULL
@@ -2428,6 +2427,857 @@ def _apply_v24_analytics_observation(conn: sqlite3.Connection) -> None:
         )
 
 
+def _apply_v25_generator_skipped_status(conn: sqlite3.Connection) -> None:
+    """Allow 'skipped' as a valid status in learning_run_generator_results.
+
+    SQLite does not support ALTER TABLE to modify CHECK constraints, so this
+    migration recreates the table with the updated constraint and re-populates
+    all existing rows.  The index is also recreated.
+    """
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='learning_run_generator_results'"
+    ).fetchone()
+    if not table_exists:
+        return
+
+    # Check if the current constraint already allows 'skipped'.
+    ddl_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='learning_run_generator_results'"
+    ).fetchone()
+    if ddl_row and "'skipped'" in ddl_row[0]:
+        return  # already migrated
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS learning_run_generator_results_v25 (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            learning_run_id         INTEGER NOT NULL
+                                        REFERENCES learning_runs(id),
+            generator_name          TEXT NOT NULL
+                                        CHECK (generator_name IN (
+                                            'ctr','retention','engagement',
+                                            'watch_time','subscribers','shares'
+                                        )),
+            status                  TEXT NOT NULL
+                                        CHECK (status IN (
+                                            'succeeded','failed','skipped'
+                                        )),
+            recommendation_count    INTEGER NOT NULL DEFAULT 0,
+            error_message           TEXT,
+            created_at              TEXT NOT NULL
+                                        DEFAULT (strftime('%Y-%m-%dT%H:%M:%S','now'))
+        );
+
+        INSERT INTO learning_run_generator_results_v25
+            (id, learning_run_id, generator_name, status,
+             recommendation_count, error_message, created_at)
+        SELECT
+            id, learning_run_id, generator_name, status,
+            recommendation_count, error_message, created_at
+        FROM learning_run_generator_results;
+
+        DROP TABLE learning_run_generator_results;
+
+        ALTER TABLE learning_run_generator_results_v25
+            RENAME TO learning_run_generator_results;
+
+        CREATE INDEX IF NOT EXISTS idx_lrgr_run
+            ON learning_run_generator_results (learning_run_id);
+        """
+    )
+
+
+# Phase 26 DDL — Recommendation Application Framework (Phase 12A).
+_DDL_V26_RECOMMENDATION_APPLICATIONS = """
+CREATE TABLE IF NOT EXISTS recommendation_applications (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- Source recommendation provenance
+    recommendation_id           INTEGER NOT NULL
+                                    REFERENCES optimization_recommendations(id),
+    learning_run_id             INTEGER NOT NULL
+                                    REFERENCES learning_runs(id),
+    -- Target parameter identity
+    domain                      TEXT NOT NULL,
+    subsystem                   TEXT NOT NULL,
+    parameter_name              TEXT NOT NULL,
+    -- Structured intent (explicit, never inferred from strings)
+    intent_direction            TEXT NOT NULL
+                                    CHECK (intent_direction IN (
+                                        'increase','decrease','maintain'
+                                    )),
+    intent_magnitude            REAL NOT NULL
+                                    CHECK (intent_magnitude >= 0.0),
+    intent_target_value         REAL NOT NULL,
+    -- Scope (always anchored to topic_id; never leaks across topics)
+    topic_id                    INTEGER NOT NULL REFERENCES topics(id),
+    channel_id                  INTEGER,
+    workspace_id                TEXT,
+    -- Publication + snapshot provenance
+    publication_id              INTEGER,
+    source_snapshot_ids_json    TEXT NOT NULL DEFAULT '[]',
+    -- Value tracking
+    value_before                REAL,
+    value_applied               REAL,
+    -- Which narration run consumed this application
+    narration_run_id            INTEGER,
+    -- Lifecycle
+    status                      TEXT NOT NULL DEFAULT 'proposed'
+                                    CHECK (status IN (
+                                        'proposed','applied','superseded','reverted','failed'
+                                    )),
+    -- Safety bounds snapshot (recorded at proposal for auditability)
+    safety_min                  REAL NOT NULL,
+    safety_max                  REAL NOT NULL,
+    safety_max_delta            REAL NOT NULL,
+    -- Deterministic identity hash
+    input_hash                  TEXT NOT NULL,
+    -- Error tracking
+    error_message               TEXT,
+    -- Timestamps
+    proposed_at                 TEXT NOT NULL,
+    applied_at                  TEXT,
+    reverted_at                 TEXT,
+    superseded_at               TEXT,
+    created_at                  TEXT NOT NULL,
+    updated_at                  TEXT NOT NULL,
+    -- Idempotency: one active application per (recommendation, topic, parameter)
+    UNIQUE (recommendation_id, topic_id, parameter_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_rec_app_topic_param
+    ON recommendation_applications (topic_id, parameter_name, status);
+"""
+
+
+def _apply_v26_recommendation_applications(conn: sqlite3.Connection) -> None:
+    """Add the recommendation_applications table (Phase 12A)."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='recommendation_applications'"
+    ).fetchone()
+    if table_exists:
+        return
+    conn.executescript(_DDL_V26_RECOMMENDATION_APPLICATIONS)
+
+
+# Phase 27 DDL — Content Feature Attribution (Phase 12B).
+# One immutable, versioned feature snapshot per publication.
+# Wide typed columns support direct SQL comparisons in Phase 12C learning queries.
+# A features_json overflow column holds future/experimental features not yet
+# promoted to typed columns, avoiding ALTER TABLE churn during iteration.
+_DDL_V27_CONTENT_FEATURES = """
+CREATE TABLE IF NOT EXISTS content_feature_snapshots (
+    id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Scope
+    publication_id                  INTEGER NOT NULL,
+    topic_id                        INTEGER NOT NULL,
+
+    -- Control plane scope (nullable for legacy/fake-provider publications)
+    workspace_id                    TEXT,
+    channel_id                      TEXT,
+
+    -- Versioning (frozen at extraction time; historical rows never updated)
+    feature_schema_version          TEXT    NOT NULL,
+    extractor_version               TEXT    NOT NULL,
+    input_hash                      TEXT    NOT NULL,
+    extracted_at                    TEXT    NOT NULL,
+    created_at                      TEXT    NOT NULL,
+
+    -- Full lineage IDs (join targets for Phase 12C; never inferred)
+    publishing_plan_id              INTEGER NOT NULL,
+    production_plan_id              INTEGER NOT NULL,
+    script_id                       INTEGER NOT NULL,
+    narration_run_id                INTEGER NOT NULL,
+    caption_run_id                  INTEGER NOT NULL,
+    scene_manifest_id               INTEGER NOT NULL,
+    render_manifest_id              INTEGER NOT NULL,
+    voice_profile_id                INTEGER NOT NULL,
+
+    -- SCRIPT features
+    script_format                   TEXT,   -- 'short' | 'long_form'
+    script_word_count               INTEGER,
+    script_segment_count            INTEGER,
+    script_section_count            INTEGER,
+    has_hook                        INTEGER NOT NULL DEFAULT 0,  -- 0/1
+    has_cta                         INTEGER NOT NULL DEFAULT 0,  -- 0/1
+    hook_word_count                 INTEGER,
+
+    -- PRODUCTION features
+    target_duration_s               INTEGER,
+
+    -- NARRATION features
+    narration_speaking_rate         REAL,
+    narration_provider              TEXT,
+    narration_model                 TEXT,
+    narration_voice_id              TEXT,
+    narration_language              TEXT,
+    narration_actual_duration_s     REAL,
+    narration_segment_count         INTEGER,
+
+    -- LEARNING APPLICATION features
+    learning_application_used       INTEGER NOT NULL DEFAULT 0,  -- 0/1
+    learning_application_id         INTEGER,
+    learning_application_parameter  TEXT,
+    learning_application_value      REAL,
+
+    -- CAPTION features
+    caption_total_cue_count         INTEGER,
+    caption_total_duration_ms       INTEGER,
+    caption_style_version           TEXT,
+    caption_segmentation_version    TEXT,
+    caption_timing_source           TEXT,   -- dominant timing source across cues
+
+    -- SCENE features
+    scene_count                     INTEGER,
+    scene_asset_count               INTEGER,
+    scene_has_ai_generated_assets   INTEGER NOT NULL DEFAULT 0,  -- 0/1
+    scene_ai_generated_asset_count  INTEGER,
+    scene_dominant_shot_type        TEXT,
+    scene_dominant_transition       TEXT,
+
+    -- RENDER features
+    render_width                    INTEGER,
+    render_height                   INTEGER,
+    render_fps                      INTEGER,
+    render_caption_burn_in          INTEGER NOT NULL DEFAULT 0,  -- 0/1
+    render_actual_duration_s        REAL,
+    render_file_size_bytes          INTEGER,
+
+    -- PUBLISHING features
+    publish_provider                TEXT,
+    publish_visibility              TEXT,
+    publish_made_for_kids           INTEGER NOT NULL DEFAULT 0,  -- 0/1
+    publish_category                TEXT,
+    publish_tag_count               INTEGER,
+    publish_published_at            TEXT,
+    publish_day_of_week             INTEGER,  -- 0=Monday … 6=Sunday
+    publish_hour_utc                INTEGER,  -- 0–23
+    publish_schedule_type           TEXT,
+
+    -- DERIVED features (computed at extraction; deterministic from typed fields above)
+    words_per_second                REAL,
+    scenes_per_minute               REAL,
+    avg_scene_duration_ms           REAL,
+    caption_cues_per_second         REAL,
+
+    -- Overflow for future / experimental features not yet promoted to typed columns
+    features_json                   TEXT    NOT NULL DEFAULT '{}',
+
+    -- One snapshot per publication; idempotent re-extraction
+    UNIQUE (publication_id),
+    UNIQUE (input_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cfs_topic
+    ON content_feature_snapshots (topic_id);
+CREATE INDEX IF NOT EXISTS idx_cfs_speaking_rate
+    ON content_feature_snapshots (narration_speaking_rate)
+    WHERE narration_speaking_rate IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfs_format
+    ON content_feature_snapshots (script_format)
+    WHERE script_format IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_cfs_provider
+    ON content_feature_snapshots (publish_provider)
+    WHERE publish_provider IS NOT NULL;
+"""
+
+
+def _apply_v27_content_features(conn: sqlite3.Connection) -> None:
+    """Add the content_feature_snapshots table (Phase 12B)."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='content_feature_snapshots'"
+    ).fetchone()
+    if table_exists:
+        return
+    conn.executescript(_DDL_V27_CONTENT_FEATURES)
+
+
+# Phase 28 DDL — Cross-Publication Learning Foundation (Phase 12C).
+# Persists channel-scoped performance baselines and feature × bucket association
+# observations.  These are the query targets for Phase 13/14 planning engines.
+_DDL_V28_CROSS_PUB_LEARNING = """
+CREATE TABLE IF NOT EXISTS channel_performance_baselines (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Scope
+    channel_id                  TEXT    NOT NULL,
+    workspace_id                TEXT,
+
+    -- What metric this baseline covers
+    metric_name                 TEXT    NOT NULL,
+    period_type                 TEXT    NOT NULL DEFAULT 'lifetime',
+
+    -- Descriptive statistics across all channel publications with this metric
+    publication_count           INTEGER NOT NULL DEFAULT 0,
+    mean                        REAL,
+    median                      REAL,
+    min_value                   REAL,
+    max_value                   REAL,
+    std_dev                     REAL,   -- NULL when publication_count < 2
+
+    -- Evidence quality
+    sample_maturity             TEXT    NOT NULL
+                                    CHECK (sample_maturity IN (
+                                        'insufficient','exploratory','directional','actionable'
+                                    )),
+
+    -- Source provenance
+    source_publication_ids_json TEXT    NOT NULL DEFAULT '[]',
+    source_snapshot_ids_json    TEXT    NOT NULL DEFAULT '[]',
+
+    -- Versioning
+    comparison_schema_version   TEXT    NOT NULL,
+    observer_version            TEXT    NOT NULL,
+    input_hash                  TEXT    NOT NULL,
+
+    created_at                  TEXT    NOT NULL
+                                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at                  TEXT    NOT NULL
+                                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+
+    -- One active baseline per (channel, metric)
+    UNIQUE (channel_id, metric_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cpb_channel
+    ON channel_performance_baselines (channel_id);
+
+
+CREATE TABLE IF NOT EXISTS feature_performance_observations (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Scope
+    channel_id                  TEXT    NOT NULL,
+    workspace_id                TEXT,
+
+    -- What is being compared
+    feature_name                TEXT    NOT NULL,
+    feature_bucket              TEXT    NOT NULL,  -- bucket label or categorical value
+    metric_name                 TEXT    NOT NULL,
+    period_type                 TEXT    NOT NULL DEFAULT 'lifetime',
+
+    -- Descriptive statistics for publications in this bucket × metric
+    publication_count           INTEGER NOT NULL DEFAULT 0,
+    mean                        REAL,
+    median                      REAL,
+    min_value                   REAL,
+    max_value                   REAL,
+    std_dev                     REAL,   -- NULL when publication_count < 2
+
+    -- Comparison to channel baseline (NULL when baseline unavailable or baseline=0 for rel)
+    baseline_mean               REAL,
+    baseline_median             REAL,
+    abs_diff_from_baseline      REAL,
+    rel_diff_from_baseline      REAL,
+
+    -- Evidence quality
+    sample_maturity             TEXT    NOT NULL
+                                    CHECK (sample_maturity IN (
+                                        'insufficient','exploratory','directional','actionable'
+                                    )),
+
+    -- Semantic label: results here are ASSOCIATIONS, not causal effects.
+    observation_type            TEXT    NOT NULL DEFAULT 'association',
+
+    -- Source provenance
+    source_publication_ids_json TEXT    NOT NULL DEFAULT '[]',
+    source_snapshot_ids_json    TEXT    NOT NULL DEFAULT '[]',
+
+    -- Versioning
+    comparison_schema_version   TEXT    NOT NULL,
+    observer_version            TEXT    NOT NULL,
+    input_hash                  TEXT    NOT NULL,
+
+    created_at                  TEXT    NOT NULL
+                                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at                  TEXT    NOT NULL
+                                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+
+    -- One observation per (channel, feature, bucket, metric)
+    UNIQUE (channel_id, feature_name, feature_bucket, metric_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_fpo_channel
+    ON feature_performance_observations (channel_id);
+CREATE INDEX IF NOT EXISTS idx_fpo_feature
+    ON feature_performance_observations (feature_name, feature_bucket);
+CREATE INDEX IF NOT EXISTS idx_fpo_metric
+    ON feature_performance_observations (metric_name);
+"""
+
+
+def _apply_v28_cross_pub_learning(conn: sqlite3.Connection) -> None:
+    """Add channel_performance_baselines and feature_performance_observations (Phase 12C)."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='channel_performance_baselines'"
+    ).fetchone()
+    if table_exists:
+        return
+    conn.executescript(_DDL_V28_CROSS_PUB_LEARNING)
+
+
+_DDL_V29_MARKET_INTELLIGENCE = """
+CREATE TABLE IF NOT EXISTS market_collection_jobs (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id                TEXT    REFERENCES cp_workspaces(id),
+    channel_id                  INTEGER REFERENCES channels(id),
+    job_type                    TEXT    NOT NULL
+                                        CHECK (job_type IN (
+                                            'search_scan', 'velocity_rescan',
+                                            'competitor_scan', 'channel_stats'
+                                        )),
+    origin_type                 TEXT    NOT NULL DEFAULT 'manual'
+                                        CHECK (origin_type IN (
+                                            'manual', 'channel_bootstrap',
+                                            'exploration_planner', 'adjacent_topic',
+                                            'refresh', 'velocity_rescan'
+                                        )),
+    parent_job_id               INTEGER REFERENCES market_collection_jobs(id),
+    exploration_depth           INTEGER NOT NULL DEFAULT 0,
+    provider                    TEXT    NOT NULL DEFAULT 'youtube_data_api',
+    platform                    TEXT    NOT NULL DEFAULT 'youtube',
+    seeds_json                  TEXT    NOT NULL DEFAULT '[]',
+    quota_policy_snapshot_json  TEXT,
+    status                      TEXT    NOT NULL DEFAULT 'pending'
+                                        CHECK (status IN (
+                                            'pending', 'running', 'completed',
+                                            'partial', 'failed'
+                                        )),
+    observation_count           INTEGER NOT NULL DEFAULT 0,
+    quota_consumed_total        INTEGER NOT NULL DEFAULT 0,
+    error_message               TEXT,
+    failure_stage               TEXT,
+    scheduled_for               TEXT,
+    started_at                  TEXT,
+    completed_at                TEXT,
+    created_at                  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcj_channel ON market_collection_jobs (channel_id);
+CREATE INDEX IF NOT EXISTS idx_mcj_workspace ON market_collection_jobs (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_mcj_status ON market_collection_jobs (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcj_parent ON market_collection_jobs (parent_job_id);
+
+CREATE TABLE IF NOT EXISTS market_intelligence_observations (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform                    TEXT    NOT NULL DEFAULT 'youtube',
+    provider                    TEXT    NOT NULL DEFAULT 'youtube_data_api',
+    collector_name              TEXT    NOT NULL,
+    external_video_id           TEXT,
+    external_channel_id         TEXT,
+    query_text                  TEXT,
+    normalized_query            TEXT,
+    region_code                 TEXT,
+    language_code               TEXT,
+    category_id                 TEXT,
+    signal_type                 TEXT    NOT NULL,
+    signal_value_numeric        REAL,
+    signal_value_text           TEXT,
+    content_published_at        TEXT,
+    content_age_days            REAL,
+    observed_at                 TEXT    NOT NULL,
+    provider_payload_fingerprint TEXT,
+    input_hash                  TEXT    NOT NULL UNIQUE,
+    retain_until                TEXT,
+    created_at                  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mio_platform_provider
+    ON market_intelligence_observations (platform, provider);
+CREATE INDEX IF NOT EXISTS idx_mio_video
+    ON market_intelligence_observations (external_video_id)
+    WHERE external_video_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_mio_channel_ext
+    ON market_intelligence_observations (external_channel_id)
+    WHERE external_channel_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_mio_signal_type
+    ON market_intelligence_observations (signal_type, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mio_query
+    ON market_intelligence_observations (normalized_query)
+    WHERE normalized_query IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_mio_observed_at
+    ON market_intelligence_observations (observed_at DESC);
+
+CREATE TABLE IF NOT EXISTS market_job_observations (
+    job_id          INTEGER NOT NULL REFERENCES market_collection_jobs(id),
+    observation_id  INTEGER NOT NULL REFERENCES market_intelligence_observations(id),
+    discovered_at   TEXT    NOT NULL,
+    PRIMARY KEY (job_id, observation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mjo_observation ON market_job_observations (observation_id);
+
+CREATE TABLE IF NOT EXISTS market_job_quota_usage (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id          INTEGER NOT NULL REFERENCES market_collection_jobs(id),
+    provider        TEXT    NOT NULL,
+    operation       TEXT    NOT NULL,
+    quota_bucket    TEXT    NOT NULL,
+    units_consumed  INTEGER NOT NULL DEFAULT 0,
+    call_count      INTEGER NOT NULL DEFAULT 1,
+    limit_snapshot  INTEGER,
+    window_type     TEXT    NOT NULL DEFAULT 'daily'
+                            CHECK (window_type IN ('daily', 'per_request', 'per_minute')),
+    observed_at     TEXT    NOT NULL,
+    UNIQUE (job_id, provider, operation, quota_bucket)
+);
+CREATE INDEX IF NOT EXISTS idx_mjqu_job ON market_job_quota_usage (job_id);
+CREATE INDEX IF NOT EXISTS idx_mjqu_provider
+    ON market_job_quota_usage (provider, quota_bucket, observed_at DESC);
+"""
+
+
+def _apply_v29_market_intelligence(conn: sqlite3.Connection) -> None:
+    """Add market_collection_jobs, market_intelligence_observations, and quota
+    tables (Phase 13A)."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_collection_jobs'"
+    ).fetchone()
+    if table_exists:
+        return
+    conn.executescript(_DDL_V29_MARKET_INTELLIGENCE)
+
+
+_DDL_V30_VELOCITY = """
+CREATE TABLE IF NOT EXISTS market_velocity_estimates (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform                    TEXT    NOT NULL DEFAULT 'youtube',
+    provider                    TEXT    NOT NULL DEFAULT 'youtube_data_api',
+    external_video_id           TEXT    NOT NULL,
+    signal_type                 TEXT    NOT NULL DEFAULT 'video_view_count',
+    start_observation_id        INTEGER NOT NULL
+                                        REFERENCES market_intelligence_observations(id),
+    end_observation_id          INTEGER NOT NULL
+                                        REFERENCES market_intelligence_observations(id),
+    start_time                  TEXT    NOT NULL,
+    end_time                    TEXT    NOT NULL,
+    start_value                 REAL    NOT NULL,
+    end_value                   REAL    NOT NULL,
+    raw_delta                   REAL    NOT NULL,
+    elapsed_seconds             REAL    NOT NULL,
+    units_per_hour              REAL,
+    units_per_day               REAL,
+    is_negative_delta           INTEGER NOT NULL DEFAULT 0,
+    video_age_hours_at_start    REAL,
+    video_age_hours_at_end      REAL,
+    velocity_maturity           TEXT    NOT NULL DEFAULT 'early'
+                                        CHECK (velocity_maturity IN (
+                                            'insufficient', 'early',
+                                            'establishing', 'mature'
+                                        )),
+    calculation_version         TEXT    NOT NULL DEFAULT 'v1',
+    input_hash                  TEXT    NOT NULL UNIQUE,
+    created_at                  TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mve_video
+    ON market_velocity_estimates
+    (platform, provider, external_video_id, signal_type, end_time DESC);
+CREATE INDEX IF NOT EXISTS idx_mve_end_obs
+    ON market_velocity_estimates (end_observation_id);
+CREATE INDEX IF NOT EXISTS idx_mve_maturity
+    ON market_velocity_estimates (velocity_maturity);
+"""
+
+
+def _apply_v30_velocity(conn: sqlite3.Connection) -> None:
+    """Add market_velocity_estimates table (Phase 13C)."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_velocity_estimates'"
+    ).fetchone()
+    if table_exists:
+        return
+    conn.executescript(_DDL_V30_VELOCITY)
+
+
+_DDL_V31_EXPLORATION = """
+CREATE TABLE IF NOT EXISTS market_exploration_runs (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id        TEXT    REFERENCES cp_workspaces(id),
+    channel_id          INTEGER REFERENCES channels(id),
+    planner_version     TEXT    NOT NULL DEFAULT 'v1',
+    prompt_version      TEXT,
+    provider            TEXT,
+    model               TEXT,
+    max_depth           INTEGER NOT NULL DEFAULT 3,
+    max_probes          INTEGER NOT NULL DEFAULT 10,
+    search_budget       INTEGER NOT NULL DEFAULT 20,
+    policy_json         TEXT    NOT NULL DEFAULT '{}',
+    input_hash          TEXT    NOT NULL UNIQUE,
+    status              TEXT    NOT NULL DEFAULT 'pending'
+                                CHECK (status IN (
+                                    'pending', 'running', 'completed',
+                                    'partial', 'failed'
+                                )),
+    candidate_count     INTEGER NOT NULL DEFAULT 0,
+    selected_count      INTEGER NOT NULL DEFAULT 0,
+    deferred_count      INTEGER NOT NULL DEFAULT 0,
+    rejected_count      INTEGER NOT NULL DEFAULT 0,
+    dispatched_count    INTEGER NOT NULL DEFAULT 0,
+    error_message       TEXT,
+    started_at          TEXT,
+    completed_at        TEXT,
+    created_at          TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mer_channel
+    ON market_exploration_runs (channel_id);
+CREATE INDEX IF NOT EXISTS idx_mer_workspace
+    ON market_exploration_runs (workspace_id);
+CREATE INDEX IF NOT EXISTS idx_mer_status
+    ON market_exploration_runs (status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS market_exploration_probes (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    exploration_run_id          INTEGER NOT NULL
+                                        REFERENCES market_exploration_runs(id),
+    workspace_id                TEXT    REFERENCES cp_workspaces(id),
+    channel_id                  INTEGER REFERENCES channels(id),
+    query_text                  TEXT    NOT NULL,
+    normalized_query            TEXT    NOT NULL,
+    probe_type                  TEXT    NOT NULL
+                                        CHECK (probe_type IN (
+                                            'channel_bootstrap', 'market_region',
+                                            'adjacent_topic', 'velocity_followup',
+                                            'validation'
+                                        )),
+    parent_probe_id             INTEGER REFERENCES market_exploration_probes(id),
+    parent_job_id               INTEGER REFERENCES market_collection_jobs(id),
+    exploration_depth           INTEGER NOT NULL DEFAULT 0,
+    region_code                 TEXT,
+    language_code               TEXT,
+    collection_policy_json      TEXT    NOT NULL DEFAULT '{}',
+    status                      TEXT    NOT NULL DEFAULT 'candidate'
+                                        CHECK (status IN (
+                                            'candidate', 'selected', 'deferred',
+                                            'rejected', 'dispatched'
+                                        )),
+    priority_score              REAL,
+    priority_components_json    TEXT,
+    niche_fit_score             REAL,
+    semantic_fit_status         TEXT
+                                CHECK (semantic_fit_status IN (
+                                    'eligible', 'ineligible', 'pending', NULL
+                                )),
+    decision_reason             TEXT,
+    corroboration_count         INTEGER NOT NULL DEFAULT 0,
+    dispatched_job_id           INTEGER REFERENCES market_collection_jobs(id),
+    planner_version             TEXT    NOT NULL DEFAULT 'v1',
+    input_hash                  TEXT    NOT NULL,
+    decided_at                  TEXT,
+    dispatched_at               TEXT,
+    created_at                  TEXT    NOT NULL,
+    UNIQUE (exploration_run_id, input_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_mep_run
+    ON market_exploration_probes (exploration_run_id, status);
+CREATE INDEX IF NOT EXISTS idx_mep_channel
+    ON market_exploration_probes (channel_id);
+CREATE INDEX IF NOT EXISTS idx_mep_parent_probe
+    ON market_exploration_probes (parent_probe_id)
+    WHERE parent_probe_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_mep_dispatched_job
+    ON market_exploration_probes (dispatched_job_id)
+    WHERE dispatched_job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_mep_probe_type
+    ON market_exploration_probes (probe_type, status);
+
+CREATE TABLE IF NOT EXISTS market_probe_evidence (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    probe_id        INTEGER NOT NULL REFERENCES market_exploration_probes(id),
+    evidence_type   TEXT    NOT NULL
+                            CHECK (evidence_type IN ('observation', 'velocity', 'job')),
+    observation_id  INTEGER REFERENCES market_intelligence_observations(id),
+    velocity_id     INTEGER REFERENCES market_velocity_estimates(id),
+    job_id          INTEGER REFERENCES market_collection_jobs(id),
+    evidence_notes  TEXT,
+    created_at      TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mpe_probe
+    ON market_probe_evidence (probe_id);
+CREATE INDEX IF NOT EXISTS idx_mpe_observation
+    ON market_probe_evidence (observation_id)
+    WHERE observation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_mpe_velocity
+    ON market_probe_evidence (velocity_id)
+    WHERE velocity_id IS NOT NULL;
+"""
+
+
+_DDL_V32_INTERPRETATION = """
+CREATE TABLE IF NOT EXISTS market_interpretation_runs (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform                TEXT    NOT NULL DEFAULT 'youtube',
+    provider                TEXT    NOT NULL DEFAULT 'youtube_data_api',
+    region_code             TEXT,
+    language_code           TEXT,
+    clustering_version      TEXT    NOT NULL DEFAULT 'v1',
+    scoring_version         TEXT    NOT NULL DEFAULT 'v1',
+    evidence_cutoff         TEXT    NOT NULL,
+    source_run_ids_json     TEXT    NOT NULL DEFAULT '[]',
+    policy_snapshot_json    TEXT    NOT NULL DEFAULT '{}',
+    status                  TEXT    NOT NULL DEFAULT 'pending',
+    cluster_count           INTEGER NOT NULL DEFAULT 0,
+    error_message           TEXT,
+    started_at              TEXT,
+    completed_at            TEXT,
+    input_hash              TEXT    NOT NULL UNIQUE,
+    created_at              TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mir_platform_provider
+    ON market_interpretation_runs (platform, provider);
+CREATE INDEX IF NOT EXISTS idx_mir_status
+    ON market_interpretation_runs (status);
+
+CREATE TABLE IF NOT EXISTS market_topic_clusters (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    interpretation_run_id   INTEGER NOT NULL
+                                REFERENCES market_interpretation_runs(id),
+    platform                TEXT    NOT NULL DEFAULT 'youtube',
+    provider                TEXT    NOT NULL DEFAULT 'youtube_data_api',
+    region_code             TEXT,
+    language_code           TEXT,
+    cluster_label           TEXT    NOT NULL,
+    normalized_label        TEXT    NOT NULL,
+    cluster_type            TEXT    NOT NULL DEFAULT 'market_region',
+    description             TEXT    NOT NULL DEFAULT '',
+    clustering_rationale    TEXT    NOT NULL DEFAULT '',
+    cluster_version         TEXT    NOT NULL DEFAULT 'v1',
+    llm_used                INTEGER NOT NULL DEFAULT 0,
+    llm_model               TEXT,
+    llm_prompt_version      TEXT,
+    member_probe_count      INTEGER NOT NULL DEFAULT 0,
+    member_video_count      INTEGER NOT NULL DEFAULT 0,
+    input_hash              TEXT    NOT NULL,
+    created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (interpretation_run_id, input_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_mtc_run
+    ON market_topic_clusters (interpretation_run_id);
+CREATE INDEX IF NOT EXISTS idx_mtc_normalized_label
+    ON market_topic_clusters (normalized_label);
+
+CREATE TABLE IF NOT EXISTS market_cluster_members (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id              INTEGER NOT NULL
+                                REFERENCES market_topic_clusters(id),
+    member_type             TEXT    NOT NULL DEFAULT 'evidence_video',
+    probe_id                INTEGER
+                                REFERENCES market_exploration_probes(id),
+    external_video_id       TEXT,
+    platform                TEXT    NOT NULL DEFAULT 'youtube',
+    provider                TEXT    NOT NULL DEFAULT 'youtube_data_api',
+    supporting_job_id       INTEGER,
+    created_at              TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (cluster_id, member_type, probe_id),
+    UNIQUE (cluster_id, member_type, external_video_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mcm_cluster
+    ON market_cluster_members (cluster_id);
+CREATE INDEX IF NOT EXISTS idx_mcm_probe
+    ON market_cluster_members (probe_id)
+    WHERE probe_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_mcm_video
+    ON market_cluster_members (external_video_id)
+    WHERE external_video_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS market_cluster_signals (
+    id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+    cluster_id                      INTEGER NOT NULL
+                                        REFERENCES market_topic_clusters(id),
+    interpretation_run_id           INTEGER NOT NULL
+                                        REFERENCES market_interpretation_runs(id),
+    demand_score                    REAL,
+    saturation_score                REAL,
+    freshness_score                 REAL,
+    momentum_score                  REAL,
+    persistence_score               REAL,
+    confidence                      REAL    NOT NULL DEFAULT 0.0,
+    signal_maturity                 TEXT    NOT NULL DEFAULT 'insufficient',
+    state_label                     TEXT,
+    supporting_video_count          INTEGER NOT NULL DEFAULT 0,
+    supporting_creator_count        INTEGER NOT NULL DEFAULT 0,
+    velocity_tracked_video_count    INTEGER NOT NULL DEFAULT 0,
+    demand_components_json          TEXT    NOT NULL DEFAULT '{}',
+    saturation_components_json      TEXT    NOT NULL DEFAULT '{}',
+    freshness_components_json       TEXT    NOT NULL DEFAULT '{}',
+    momentum_components_json        TEXT    NOT NULL DEFAULT '{}',
+    persistence_components_json     TEXT    NOT NULL DEFAULT '{}',
+    scoring_version                 TEXT    NOT NULL DEFAULT 'v1',
+    supporting_observation_ids_json TEXT    NOT NULL DEFAULT '[]',
+    input_hash                      TEXT    NOT NULL,
+    scored_at                       TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (cluster_id, interpretation_run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mcs_cluster
+    ON market_cluster_signals (cluster_id);
+CREATE INDEX IF NOT EXISTS idx_mcs_run
+    ON market_cluster_signals (interpretation_run_id);
+"""
+
+
+_DDL_V33_CANONICAL = """
+CREATE TABLE IF NOT EXISTS market_canonical_clusters (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    platform             TEXT    NOT NULL DEFAULT 'youtube',
+    provider             TEXT    NOT NULL DEFAULT 'youtube_data_api',
+    region_code          TEXT,
+    language_code        TEXT,
+    canonical_label      TEXT    NOT NULL,
+    normalized_label     TEXT    NOT NULL,
+    semantic_fingerprint TEXT    NOT NULL,
+    identity_version     TEXT    NOT NULL DEFAULT 'v1',
+    created_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+    updated_at           TEXT    NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (platform, provider, region_code, language_code, semantic_fingerprint)
+);
+CREATE INDEX IF NOT EXISTS idx_mcc_normalized_label
+    ON market_canonical_clusters (normalized_label);
+CREATE INDEX IF NOT EXISTS idx_mcc_scope
+    ON market_canonical_clusters (platform, provider, region_code, language_code);
+"""
+
+
+def _apply_v33_canonical_clusters(conn: sqlite3.Connection) -> None:
+    """Add canonical cluster identity table and two new columns (Phase 13E.1)."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_canonical_clusters'"
+    ).fetchone()
+    if table_exists:
+        return
+    conn.executescript(_DDL_V33_CANONICAL)
+    # Add canonical_cluster_id FK to existing market_topic_clusters.
+    try:
+        conn.execute(
+            "ALTER TABLE market_topic_clusters "
+            "ADD COLUMN canonical_cluster_id INTEGER "
+            "REFERENCES market_canonical_clusters(id)"
+        )
+    except sqlite3.OperationalError:
+        pass
+    # Add market_region_label to exploration probes for richer provenance.
+    try:
+        conn.execute("ALTER TABLE market_exploration_probes ADD COLUMN market_region_label TEXT")
+    except sqlite3.OperationalError:
+        pass
+
+
+def _apply_v32_interpretation(conn: sqlite3.Connection) -> None:
+    """Add 4 market interpretation tables (Phase 13E)."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_interpretation_runs'"
+    ).fetchone()
+    if table_exists:
+        return
+    conn.executescript(_DDL_V32_INTERPRETATION)
+
+
+def _apply_v31_exploration(conn: sqlite3.Connection) -> None:
+    """Add market_exploration_runs, market_exploration_probes,
+    market_probe_evidence (Phase 13D-A)."""
+    table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_exploration_runs'"
+    ).fetchone()
+    if table_exists:
+        return
+    conn.executescript(_DDL_V31_EXPLORATION)
+
+
 def _apply_v21_topic_workspace(conn: sqlite3.Connection) -> None:
     """Add workspace_id column to topics if the table exists and lacks the column."""
     table_exists = conn.execute(
@@ -2439,6 +3289,1317 @@ def _apply_v21_topic_workspace(conn: sqlite3.Connection) -> None:
     if "workspace_id" not in existing_cols:
         conn.execute("ALTER TABLE topics ADD COLUMN workspace_id TEXT")
     conn.executescript(_DDL_V21_TOPIC_WORKSPACE_INDEX)
+
+
+def _apply_v34_market_bridge(conn: sqlite3.Connection) -> None:
+    """Extend discovery_runs adapter CHECK + add canonical FK columns to
+    opportunities (Phase 13F)."""
+    # Skip entirely if opportunities table doesn't exist yet (hand-crafted test
+    # DBs, partial schemas)
+    opp_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='opportunities'"
+    ).fetchone()
+    if not opp_exists:
+        return
+
+    # Idempotency: skip if canonical_cluster_id already present in opportunities
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(opportunities)").fetchall()}
+    if "canonical_cluster_id" in cols:
+        return
+
+    # Rebuild discovery_runs to extend adapter_name CHECK constraint
+    dr_schema = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='discovery_runs'"
+    ).fetchone()
+    if dr_schema and "market_intelligence" not in (dr_schema[0] or ""):
+        conn.executescript("""
+PRAGMA foreign_keys = OFF;
+
+CREATE TABLE discovery_runs_v34 (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id              INTEGER NOT NULL REFERENCES channels(id),
+    profile_version_id      INTEGER NOT NULL REFERENCES channel_profile_versions(id),
+    adapter_name            TEXT    NOT NULL
+                                    CHECK (adapter_name IN (
+                                        'manual', 'youtube_data_api',
+                                        'market_intelligence')),
+    query_parameters_json   TEXT    NOT NULL DEFAULT '{}',
+    status                  TEXT    NOT NULL DEFAULT 'pending'
+                                    CHECK (status IN (
+                                        'pending', 'running', 'completed',
+                                        'partial', 'failed')),
+    candidate_count         INTEGER NOT NULL DEFAULT 0,
+    new_opportunity_count   INTEGER NOT NULL DEFAULT 0,
+    dedup_count             INTEGER NOT NULL DEFAULT 0,
+    failed_count            INTEGER NOT NULL DEFAULT 0,
+    quota_units_consumed    INTEGER NOT NULL DEFAULT 0,
+    error_message           TEXT,
+    started_at              TEXT    NOT NULL,
+    completed_at            TEXT
+);
+
+INSERT INTO discovery_runs_v34 SELECT * FROM discovery_runs;
+DROP TABLE discovery_runs;
+ALTER TABLE discovery_runs_v34 RENAME TO discovery_runs;
+
+PRAGMA foreign_keys = ON;
+""")
+
+    # Add canonical provenance columns to opportunities
+    conn.execute(
+        "ALTER TABLE opportunities ADD COLUMN canonical_cluster_id INTEGER "
+        "REFERENCES market_canonical_clusters(id)"
+    )
+    conn.execute("ALTER TABLE opportunities ADD COLUMN market_signal_snapshot_id INTEGER")
+    # Partial unique index: one active opportunity per (channel, canonical_cluster)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_opps_channel_canonical "
+        "ON opportunities(channel_id, canonical_cluster_id) "
+        "WHERE canonical_cluster_id IS NOT NULL"
+    )
+
+
+def _apply_v35_active_opportunity_identity(conn: sqlite3.Connection) -> None:
+    """Replace the v34 partial unique index with one that excludes rejected/archived rows.
+
+    v34 index:  WHERE canonical_cluster_id IS NOT NULL
+    v35 index:  WHERE canonical_cluster_id IS NOT NULL
+                  AND current_lifecycle_state NOT IN ('rejected', 'archived')
+
+    A rejected or archived Opportunity must not block future rediscovery of the same
+    canonical cluster by preventing a new active Opportunity from being created.
+
+    Idempotency: skipped if the index already contains the NOT IN clause.
+    Guard: skipped if the opportunities table does not exist.
+    """
+    opp_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='opportunities'"
+    ).fetchone()
+    if not opp_exists:
+        return
+
+    idx = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' AND name='uq_opps_channel_canonical'"
+    ).fetchone()
+    if idx and "NOT IN" in (idx[0] or ""):
+        return  # Already at v35 form
+
+    conn.execute("DROP INDEX IF EXISTS uq_opps_channel_canonical")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_opps_channel_canonical "
+        "ON opportunities(channel_id, canonical_cluster_id) "
+        "WHERE canonical_cluster_id IS NOT NULL "
+        "  AND current_lifecycle_state NOT IN ('rejected', 'archived')"
+    )
+
+
+_DDL_V37_EXPERIMENT_LEDGER = """
+CREATE TABLE IF NOT EXISTS experiments (
+    id                      TEXT    PRIMARY KEY,
+    channel_id              INTEGER NOT NULL REFERENCES channels(id),
+    opportunity_id          INTEGER REFERENCES opportunities(id),
+    experiment_type         TEXT    NOT NULL
+                                CHECK (experiment_type IN ('exploration', 'exploitation')),
+    status                  TEXT    NOT NULL DEFAULT 'draft'
+                                CHECK (status IN (
+                                    'draft', 'planned', 'in_production', 'published',
+                                    'observing', 'mature', 'analyzed',
+                                    'completed', 'cancelled'
+                                )),
+    hypothesis              TEXT    NOT NULL DEFAULT '',
+    hypothesis_null         TEXT    NOT NULL DEFAULT '',
+    hypothesis_metric       TEXT,
+    input_hash              TEXT    UNIQUE,
+    maturity_policy_json    TEXT    NOT NULL DEFAULT '{}',
+    policy_snapshot_json    TEXT    NOT NULL DEFAULT '{}',
+    created_at              TEXT    NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at              TEXT    NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    planned_at              TEXT,
+    in_production_at        TEXT,
+    published_at            TEXT,
+    observing_at            TEXT,
+    matured_at              TEXT,
+    analyzed_at             TEXT,
+    completed_at            TEXT,
+    cancelled_at            TEXT,
+    cancelled_reason        TEXT,
+    publication_id          INTEGER REFERENCES publications(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_experiments_channel
+    ON experiments (channel_id);
+CREATE INDEX IF NOT EXISTS idx_experiments_opportunity
+    ON experiments (opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_experiments_status
+    ON experiments (status);
+
+CREATE TABLE IF NOT EXISTS experiment_state_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    experiment_id   TEXT    NOT NULL REFERENCES experiments(id),
+    from_state      TEXT,
+    to_state        TEXT    NOT NULL,
+    actor           TEXT    NOT NULL DEFAULT 'system',
+    reason          TEXT    NOT NULL DEFAULT '',
+    created_at      TEXT    NOT NULL
+                        DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ese_experiment
+    ON experiment_state_events (experiment_id);
+
+CREATE TABLE IF NOT EXISTS experiment_metric_targets (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    experiment_id   TEXT    NOT NULL REFERENCES experiments(id),
+    metric_name     TEXT    NOT NULL,
+    direction       TEXT    NOT NULL
+                        CHECK (direction IN (
+                            'higher_is_better', 'lower_is_better',
+                            'target_range', 'informational_only'
+                        )),
+    target_value    REAL,
+    target_min      REAL,
+    target_max      REAL,
+    is_primary      INTEGER NOT NULL DEFAULT 0 CHECK (is_primary IN (0, 1)),
+    UNIQUE (experiment_id, metric_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_emt_experiment
+    ON experiment_metric_targets (experiment_id);
+
+CREATE TABLE IF NOT EXISTS experiment_factors (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    experiment_id   TEXT    NOT NULL REFERENCES experiments(id),
+    factor_name     TEXT    NOT NULL,
+    factor_role     TEXT    NOT NULL
+                        CHECK (factor_role IN ('treatment', 'controlled', 'observed')),
+    intended_value  TEXT,
+    actual_value    TEXT,
+    value_type      TEXT    NOT NULL DEFAULT 'string',
+    UNIQUE (experiment_id, factor_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ef_experiment
+    ON experiment_factors (experiment_id);
+"""
+
+
+def _apply_v37_experiment_ledger(conn: sqlite3.Connection) -> None:
+    """Add experiments, experiment_state_events, experiment_metric_targets,
+    experiment_factors (Phase 14A)."""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiments'"
+    ).fetchone():
+        return
+    conn.executescript(_DDL_V37_EXPERIMENT_LEDGER)
+
+
+_DDL_V38_EXPERIMENT_PLANNING = """
+CREATE TABLE IF NOT EXISTS experiment_planning_runs (
+    id                      TEXT    PRIMARY KEY,
+    channel_id              INTEGER NOT NULL REFERENCES channels(id),
+    status                  TEXT    NOT NULL DEFAULT 'completed'
+                                CHECK (status IN ('completed', 'dry_run', 'failed')),
+    policy_snapshot_json    TEXT    NOT NULL DEFAULT '{}',
+    eligible_count          INTEGER NOT NULL DEFAULT 0,
+    exploration_only_count  INTEGER NOT NULL DEFAULT 0,
+    general_eligible_count  INTEGER NOT NULL DEFAULT 0,
+    selected_count          INTEGER NOT NULL DEFAULT 0,
+    deferred_count          INTEGER NOT NULL DEFAULT 0,
+    input_hash              TEXT    NOT NULL,
+    created_at              TEXT    NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_planning_runs_channel
+    ON experiment_planning_runs (channel_id);
+
+CREATE TABLE IF NOT EXISTS experiment_candidate_scores (
+    id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+    planning_run_id                 TEXT    NOT NULL REFERENCES experiment_planning_runs(id),
+    opportunity_id                  INTEGER NOT NULL,
+    channel_id                      INTEGER NOT NULL,
+    canonical_cluster_id            INTEGER,
+    eligibility_classification      TEXT    NOT NULL,
+    planning_intent                 TEXT    NOT NULL
+                                        CHECK (planning_intent IN
+                                            ('exploration', 'exploitation', 'validation')),
+    experiment_type                 TEXT    NOT NULL
+                                        CHECK (experiment_type IN ('exploration', 'exploitation')),
+    primary_target_metric           TEXT    NOT NULL,
+    primary_metric_direction        TEXT    NOT NULL,
+    hypothesis_sketch               TEXT    NOT NULL DEFAULT '',
+    intended_treatment_factors_json TEXT    NOT NULL DEFAULT '[]',
+    controlled_factors_json         TEXT    NOT NULL DEFAULT '[]',
+    feature_change_risk             TEXT    NOT NULL DEFAULT 'low'
+                                        CHECK (feature_change_risk IN
+                                            ('low', 'medium', 'high', 'unknown')),
+    opportunity_attractiveness      REAL,
+    exploitation_value              REAL,
+    exploration_value               REAL,
+    information_gain                REAL,
+    internal_evidence_strength      REAL,
+    uncertainty                     REAL,
+    cluster_coverage_need           REAL,
+    production_feasibility          REAL,
+    final_planning_score            REAL    NOT NULL,
+    input_hash                      TEXT    NOT NULL,
+    UNIQUE (planning_run_id, input_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidate_scores_run
+    ON experiment_candidate_scores (planning_run_id);
+CREATE INDEX IF NOT EXISTS idx_candidate_scores_opportunity
+    ON experiment_candidate_scores (opportunity_id);
+
+CREATE TABLE IF NOT EXISTS experiment_selection_decisions (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    planning_run_id     TEXT    NOT NULL REFERENCES experiment_planning_runs(id),
+    candidate_score_id  INTEGER NOT NULL REFERENCES experiment_candidate_scores(id),
+    opportunity_id      INTEGER NOT NULL,
+    selected            INTEGER NOT NULL DEFAULT 0 CHECK (selected IN (0, 1)),
+    rank_in_pool        INTEGER,
+    pool_type           TEXT,
+    selection_reason    TEXT    NOT NULL DEFAULT '',
+    deferral_reason     TEXT,
+    is_validation_repeat INTEGER NOT NULL DEFAULT 0 CHECK (is_validation_repeat IN (0, 1)),
+    created_at          TEXT    NOT NULL
+                            DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_selection_decisions_run
+    ON experiment_selection_decisions (planning_run_id);
+"""
+
+
+def _apply_v38_experiment_planning(conn: sqlite3.Connection) -> None:
+    """Add experiment_planning_runs, experiment_candidate_scores,
+    experiment_selection_decisions (Phase 14D)."""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiment_planning_runs'"
+    ).fetchone():
+        return
+    conn.executescript(_DDL_V38_EXPERIMENT_PLANNING)
+
+
+_DDL_V39_STRATEGY_BRIEF = """
+CREATE TABLE IF NOT EXISTS experiment_strategy_briefs (
+    id                          TEXT    PRIMARY KEY,
+    channel_id                  INTEGER NOT NULL REFERENCES channels(id),
+    planning_run_id             TEXT    NOT NULL REFERENCES experiment_planning_runs(id),
+    selection_decision_id       INTEGER NOT NULL REFERENCES experiment_selection_decisions(id),
+    opportunity_id              INTEGER NOT NULL,
+    canonical_cluster_id        INTEGER,
+    channel_profile_version_id  INTEGER,
+    brief_planning_intent       TEXT    NOT NULL
+                                    CHECK (brief_planning_intent IN (
+                                        'market_exploration', 'feature_exploration',
+                                        'validation', 'exploitation')),
+    experiment_type             TEXT    NOT NULL
+                                    CHECK (experiment_type IN ('exploration', 'exploitation')),
+    market_theme                TEXT    NOT NULL DEFAULT '',
+    canonical_topic             TEXT    NOT NULL DEFAULT '',
+    strategic_reason            TEXT    NOT NULL DEFAULT '',
+    information_gain_reason     TEXT    NOT NULL DEFAULT '',
+    hypothesis                  TEXT    NOT NULL DEFAULT '',
+    target_metric               TEXT    NOT NULL DEFAULT '',
+    target_direction            TEXT    NOT NULL DEFAULT '',
+    treatment_factors_json      TEXT    NOT NULL DEFAULT '[]',
+    controlled_factors_json     TEXT    NOT NULL DEFAULT '[]',
+    content_constraints_json    TEXT    NOT NULL DEFAULT '{}',
+    confounding_risk            TEXT    NOT NULL DEFAULT 'low'
+                                    CHECK (confounding_risk IN ('low', 'moderate', 'high')),
+    policy_version              TEXT    NOT NULL DEFAULT '',
+    eligibility_classification  TEXT    NOT NULL DEFAULT '',
+    score_decomposition_json    TEXT    NOT NULL DEFAULT '{}',
+    brief_hash                  TEXT    NOT NULL UNIQUE,
+    status                      TEXT    NOT NULL DEFAULT 'pending_approval'
+                                    CHECK (status IN
+                                        ('pending_approval', 'approved', 'superseded')),
+    created_at                  TEXT    NOT NULL
+                                    DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_strategy_briefs_channel
+    ON experiment_strategy_briefs (channel_id);
+CREATE INDEX IF NOT EXISTS idx_strategy_briefs_planning_run
+    ON experiment_strategy_briefs (planning_run_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_strategy_briefs_selection_decision
+    ON experiment_strategy_briefs (selection_decision_id);
+
+CREATE TABLE IF NOT EXISTS experiment_idea_candidates (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    brief_id                TEXT    NOT NULL REFERENCES experiment_strategy_briefs(id),
+    channel_id              INTEGER NOT NULL,
+    title_sketch            TEXT    NOT NULL DEFAULT '',
+    hook_sketch             TEXT    NOT NULL DEFAULT '',
+    content_angle           TEXT    NOT NULL DEFAULT '',
+    constraint_flags_json   TEXT    NOT NULL DEFAULT '[]',
+    semantic_fit_score      REAL,
+    is_duplicate            INTEGER NOT NULL DEFAULT 0 CHECK (is_duplicate IN (0, 1)),
+    selection_rank          INTEGER,
+    status                  TEXT    NOT NULL DEFAULT 'candidate'
+                                CHECK (status IN
+                                    ('candidate', 'selected', 'rejected', 'superseded')),
+    created_at              TEXT    NOT NULL
+                                DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_idea_candidates_brief
+    ON experiment_idea_candidates (brief_id);
+"""
+
+
+def _apply_v39_strategy_brief(conn: sqlite3.Connection) -> None:
+    """Add experiment_strategy_briefs and experiment_idea_candidates (Phase 14E)."""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiment_strategy_briefs'"
+    ).fetchone():
+        return
+    conn.executescript(_DDL_V39_STRATEGY_BRIEF)
+
+
+_DDL_V40_EXECUTION_CONTRACT = """
+CREATE TABLE IF NOT EXISTS experiment_execution_contracts (
+    id                              TEXT PRIMARY KEY,
+    experiment_id                   TEXT NOT NULL UNIQUE
+                                        REFERENCES experiments(id),
+    brief_id                        TEXT NOT NULL
+                                        REFERENCES experiment_strategy_briefs(id),
+    idea_id                         INTEGER
+                                        REFERENCES experiment_idea_candidates(id),
+    channel_id                      INTEGER NOT NULL,
+    opportunity_id                  INTEGER NOT NULL,
+    canonical_cluster_id            INTEGER,
+
+    execution_mode                  TEXT NOT NULL CHECK (execution_mode IN ('dry_run', 'real')),
+
+    eligibility_recheck_result      TEXT,
+    eligibility_blocked             INTEGER NOT NULL DEFAULT 0,
+
+    treatment_factors_json          TEXT,
+    control_factors_json            TEXT,
+    narration_speaking_rate_override REAL,
+    treatment_delta_valid           INTEGER NOT NULL DEFAULT 1,
+    treatment_abs_valid             INTEGER NOT NULL DEFAULT 1,
+
+    status                          TEXT NOT NULL DEFAULT 'pending'
+                                        CHECK (status IN (
+                                            'pending', 'approved', 'executing',
+                                            'completed', 'failed', 'blocked'
+                                        )),
+    execution_policy_version        TEXT NOT NULL,
+
+    fidelity_json                   TEXT,
+    valid_for_learning              INTEGER,
+    confounding_risk_realized       TEXT NOT NULL DEFAULT 'low',
+
+    created_at                      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    approved_at                     TEXT,
+    executed_at                     TEXT,
+    completed_at                    TEXT
+);
+"""
+
+
+def _apply_v40_execution_contract(conn: sqlite3.Connection) -> None:
+    """Add experiment_execution_contracts table (Phase 14F)."""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiment_execution_contracts'"
+    ).fetchone():
+        return
+    conn.executescript(_DDL_V40_EXECUTION_CONTRACT)
+
+
+_DDL_V41_EXPERIMENT_OUTCOMES = """
+CREATE TABLE IF NOT EXISTS experiment_outcomes (
+    id                      TEXT    PRIMARY KEY,
+    experiment_id           TEXT    NOT NULL REFERENCES experiments(id),
+
+    readiness               TEXT    NOT NULL
+                                CHECK (readiness IN (
+                                    'not_ready', 'invalid_execution', 'insufficient_analytics',
+                                    'evaluable_provisional', 'evaluable_mature', 'unresolved'
+                                )),
+    classification          TEXT
+                                CHECK (classification IS NULL OR classification IN (
+                                    'positive_observation', 'negative_observation',
+                                    'neutral_observation', 'inconclusive',
+                                    'informational_only', 'baseline_unavailable'
+                                )),
+    evidence_maturity       TEXT
+                                CHECK (evidence_maturity IS NULL OR evidence_maturity IN (
+                                    'exploratory', 'directional', 'actionable'
+                                )),
+
+    baseline_source_type    TEXT    NOT NULL DEFAULT 'none'
+                                CHECK (baseline_source_type IN (
+                                    'channel_baseline', 'prior_experiment',
+                                    'validation_reference', 'control_publication', 'none'
+                                )),
+    baseline_experiment_id  TEXT    REFERENCES experiments(id),
+
+    target_metric_name      TEXT,
+    target_metric_direction TEXT,
+
+    treatment_metric_value  REAL,
+    baseline_metric_value   REAL,
+    absolute_delta          REAL,
+    relative_delta          REAL,
+
+    is_mature               INTEGER NOT NULL DEFAULT 0 CHECK (is_mature IN (0, 1)),
+    publication_age_hours   REAL,
+    observed_views          REAL,
+
+    reasons_json            TEXT    NOT NULL DEFAULT '[]',
+    warnings_json           TEXT    NOT NULL DEFAULT '[]',
+
+    outcome_policy_version  TEXT    NOT NULL,
+    input_hash              TEXT    NOT NULL,
+    evaluated_at            TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_eo_experiment
+    ON experiment_outcomes (experiment_id);
+CREATE INDEX IF NOT EXISTS idx_eo_evaluated_at
+    ON experiment_outcomes (evaluated_at);
+"""
+
+
+def _apply_v41_experiment_outcomes(conn: sqlite3.Connection) -> None:
+    """Add experiment_outcomes table (Phase 14G)."""
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiment_outcomes'"
+    ).fetchone():
+        return
+    conn.executescript(_DDL_V41_EXPERIMENT_OUTCOMES)
+
+
+def _apply_v42_cp_channel_bridge(conn: sqlite3.Connection) -> None:
+    """Add cp_channel_id bridge column to channels table (Phase 16B.1).
+
+    Creates an explicit, machine-verifiable 1:1 mapping between the intelligence
+    domain's integer-PK channels and the control-plane UUID-based cp_channels.
+    The UNIQUE partial index enforces that at most one intelligence channel maps
+    to each control-plane channel. Missing mapping fails loudly at lookup time.
+    Idempotent — no-op if channels table absent (partial test DBs) or column exists.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='channels'"
+    ).fetchone():
+        return
+    if conn.execute(
+        "SELECT 1 FROM pragma_table_info('channels') WHERE name='cp_channel_id'"
+    ).fetchone():
+        return
+    conn.execute("ALTER TABLE channels ADD COLUMN cp_channel_id TEXT REFERENCES cp_channels(id)")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_channels_cp_channel_id "
+        "ON channels (cp_channel_id) WHERE cp_channel_id IS NOT NULL"
+    )
+
+
+def _apply_v49_scheduled_publishing(conn: sqlite3.Connection) -> None:
+    """Channel publishing authorization + slot publish tracking (Phase 18C).
+
+    Three deliberate design decisions encoded here:
+
+    1. Channel authorization is its OWN table, not a column on
+       autonomy_policies. Authorizing a channel to publish publicly without
+       per-video approval is categorically different from configuring a
+       cadence, and it must be impossible to flip it as a side effect of
+       editing an unrelated policy field (Phase 18C section 6). A separate
+       table with its own grant/revoke audit columns makes that structural
+       rather than merely conventional.
+
+    2. Publish state lives on publishing_slots, matching the Phase 18B
+       precedent: publishing is a property of fulfilling a specific reserved
+       slot, not an independent entity.
+
+    3. publishing_upload_attempts exists solely to survive the one failure
+       mode that can create a duplicate YouTube video: provider.upload()
+       succeeding while the local write that records its provider_video_id
+       fails. An intent row is committed BEFORE the provider call, so a
+       crashed attempt is always discoverable afterwards and the next run
+       reconciles instead of blindly re-uploading (section 13).
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS channel_publishing_authorizations (
+            channel_id                  TEXT    PRIMARY KEY
+                                            REFERENCES cp_channels(id),
+            workspace_id                TEXT    NOT NULL REFERENCES cp_workspaces(id),
+
+            authorized                  INTEGER NOT NULL DEFAULT 0
+                                            CHECK (authorized IN (0, 1)),
+            authorized_at               TEXT,
+            authorized_by               TEXT,
+            revoked_at                  TEXT,
+            revoked_by                  TEXT,
+            policy_version              INTEGER NOT NULL DEFAULT 1,
+
+            max_publications_per_24h    INTEGER NOT NULL DEFAULT 1
+                                            CHECK (max_publications_per_24h > 0),
+            missed_slot_grace_minutes   INTEGER NOT NULL DEFAULT 120
+                                            CHECK (missed_slot_grace_minutes >= 0),
+
+            created_at                  TEXT    NOT NULL,
+            updated_at                  TEXT    NOT NULL,
+
+            -- An authorized row must always record who authorized it and when.
+            -- This is the schema-level guarantee behind section 6's audit
+            -- requirement: an anonymous authorization cannot be persisted.
+            CHECK (authorized = 0 OR (authorized_at IS NOT NULL AND authorized_by IS NOT NULL))
+        );
+
+        CREATE TABLE IF NOT EXISTS publishing_upload_attempts (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_key         TEXT    NOT NULL UNIQUE,
+            slot_id             INTEGER NOT NULL REFERENCES publishing_slots(id),
+            publishing_plan_id  INTEGER NOT NULL,
+            channel_id          TEXT    NOT NULL,
+            workspace_id        TEXT    NOT NULL,
+
+            state               TEXT    NOT NULL DEFAULT 'intent_recorded'
+                                    CHECK (state IN (
+                                        'intent_recorded', 'succeeded',
+                                        'uncertain', 'failed', 'reconciled'
+                                    )),
+            provider            TEXT    NOT NULL,
+            provider_video_id   TEXT,
+            error_message       TEXT,
+
+            created_at          TEXT    NOT NULL,
+            resolved_at         TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_upload_attempts_slot
+            ON publishing_upload_attempts (slot_id, state);
+        """
+    )
+
+    slot_columns = {
+        "publish_status": "TEXT CHECK (publish_status IN ("
+        "'pending', 'publishing', 'uploaded', 'released', "
+        "'failed', 'skipped_missed', 'blocked') "
+        "OR publish_status IS NULL)",
+        "publication_id": "INTEGER REFERENCES publications(id)",
+        "publish_provider_video_id": "TEXT",
+        "publish_started_at": "TEXT",
+        "publish_uploaded_at": "TEXT",
+        "publish_released_at": "TEXT",
+        "publish_failed_at": "TEXT",
+        "publish_failure_category": "TEXT",
+        "publish_error": "TEXT",
+        "publish_retry_count": "INTEGER NOT NULL DEFAULT 0",
+        "rescheduled_from_slot_id": "INTEGER REFERENCES publishing_slots(id)",
+    }
+    existing_cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info('publishing_slots')").fetchall()
+    }
+    for col, ddl in slot_columns.items():
+        if col not in existing_cols:
+            conn.execute(f"ALTER TABLE publishing_slots ADD COLUMN {col} {ddl}")
+
+    conn.executescript(
+        """
+        -- One slot may only ever own one publication. This is the database-level
+        -- reinforcement of slot→publication one-to-one lineage (section 15).
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_publishing_slots_publication
+            ON publishing_slots (publication_id)
+            WHERE publication_id IS NOT NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_publishing_slots_publish_status
+            ON publishing_slots (channel_id, publish_status);
+        """
+    )
+    conn.commit()
+
+
+def _apply_v50_visual_quality(conn: sqlite3.Connection) -> None:
+    """Visual Quality Intelligence (Phase 18E).
+
+    Adds one canonical table, render_visual_assessments, plus the realized
+    visual-composition columns on content_feature_snapshots that let Phase 12C
+    cross-publication learning see what a video actually LOOKED like.
+
+    Three design decisions encoded here:
+
+    1. The assessment is keyed on the RENDER manifest, not the publication.
+       A render is the artifact whose visual composition is being measured, it
+       exists before anything is published, and preflight must be able to block
+       a render that will never become a publication.  publication_id is a
+       nullable backfill so learning can join without a second identity.
+
+    2. Planned and realized composition are stored SEPARATELY
+       (planned_meaningful_beats vs meaningful_beat_count, and the
+       creative/provider split of fallback_beat_count).  A creative decision to
+       show a diagram and a provider failure that forced a text card produce
+       the same pixels; conflating them would teach the learner that the
+       creative strategy caused the outcome.
+
+    3. UNIQUE on render_manifest_id makes reassessment idempotent by
+       construction: the same render always upserts one row, so a restart
+       mid-preflight can never accumulate duplicate verdicts.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS render_visual_assessments (
+            id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+
+            -- Identity / lineage
+            render_manifest_id          INTEGER NOT NULL
+                                            REFERENCES render_manifests(id) ON DELETE CASCADE,
+            scene_manifest_id           INTEGER NOT NULL,
+            workspace_id                TEXT,
+            channel_id                  TEXT,
+            experiment_id               TEXT,
+            publication_id              INTEGER REFERENCES publications(id),
+
+            assessment_version          TEXT    NOT NULL,
+            composition_version         TEXT    NOT NULL,
+            policy_version              TEXT    NOT NULL,
+
+            -- Verdict
+            status                      TEXT    NOT NULL
+                                            CHECK (status IN (
+                                                'pass', 'pass_with_warnings', 'blocked'
+                                            )),
+
+            -- Scale
+            total_beat_count            INTEGER NOT NULL DEFAULT 0,
+            total_duration_ms           INTEGER NOT NULL DEFAULT 0,
+            scene_count                 INTEGER NOT NULL DEFAULT 0,
+
+            -- Realized composition
+            meaningful_beat_count       INTEGER NOT NULL DEFAULT 0,
+            meaningful_runtime_ms       INTEGER NOT NULL DEFAULT 0,
+            text_card_beat_count        INTEGER NOT NULL DEFAULT 0,
+            text_card_runtime_ms        INTEGER NOT NULL DEFAULT 0,
+            unresolved_beat_count       INTEGER NOT NULL DEFAULT 0,
+            family_runtime_json         TEXT    NOT NULL DEFAULT '{}',
+            family_beat_count_json      TEXT    NOT NULL DEFAULT '{}',
+            dominant_family             TEXT,
+            dominant_family_share       REAL    NOT NULL DEFAULT 0.0,
+            family_diversity            REAL    NOT NULL DEFAULT 0.0,
+
+            -- Assets
+            distinct_asset_count        INTEGER NOT NULL DEFAULT 0,
+            reused_asset_beat_count     INTEGER NOT NULL DEFAULT 0,
+            asset_reuse_ratio           REAL    NOT NULL DEFAULT 0.0,
+
+            -- Cadence
+            visual_change_count         INTEGER NOT NULL DEFAULT 0,
+            visual_changes_per_minute   REAL    NOT NULL DEFAULT 0.0,
+            avg_meaningful_gap_ms       REAL    NOT NULL DEFAULT 0.0,
+            max_meaningful_gap_ms       INTEGER NOT NULL DEFAULT 0,
+            opening_meaningful_visual   INTEGER NOT NULL DEFAULT 0
+                                            CHECK (opening_meaningful_visual IN (0, 1)),
+
+            -- Planned intent vs realized outcome
+            visual_style                TEXT,
+            planned_meaningful_beats    INTEGER NOT NULL DEFAULT 0,
+            intentional_text_beats      INTEGER NOT NULL DEFAULT 0,
+            fallback_beat_count         INTEGER NOT NULL DEFAULT 0,
+            fallback_runtime_ms         INTEGER NOT NULL DEFAULT 0,
+            provider_fallback_beats     INTEGER NOT NULL DEFAULT 0,
+            creative_fallback_beats     INTEGER NOT NULL DEFAULT 0,
+            provider_fallback_rate      REAL    NOT NULL DEFAULT 0.0,
+            fallback_reasons_json       TEXT    NOT NULL DEFAULT '{}',
+
+            -- Evidence
+            findings_json               TEXT    NOT NULL DEFAULT '[]',
+            scene_diagnostics_json      TEXT    NOT NULL DEFAULT '[]',
+
+            -- Bounded remediation bookkeeping
+            remediation_attempts        INTEGER NOT NULL DEFAULT 0,
+            remediated                  INTEGER NOT NULL DEFAULT 0
+                                            CHECK (remediated IN (0, 1)),
+
+            input_hash                  TEXT    NOT NULL,
+            created_at                  TEXT    NOT NULL,
+            updated_at                  TEXT    NOT NULL,
+
+            UNIQUE (render_manifest_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_visual_assessment_channel
+            ON render_visual_assessments (channel_id, status);
+        CREATE INDEX IF NOT EXISTS idx_visual_assessment_publication
+            ON render_visual_assessments (publication_id)
+            WHERE publication_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_visual_assessment_scene_manifest
+            ON render_visual_assessments (scene_manifest_id);
+        """
+    )
+
+    # Realized visual composition as learnable content features. Nullable with
+    # no default: a publication produced before this phase has no visual
+    # assessment, and NULL ("we do not know") must never be read as 0.0
+    # ("it had no meaningful visuals").
+    feature_columns = {
+        "visual_style": "TEXT",
+        "visual_quality_status": "TEXT",
+        "visual_meaningful_runtime_pct": "REAL",
+        "visual_text_card_runtime_pct": "REAL",
+        "visual_generated_diagram_runtime_pct": "REAL",
+        "visual_retrieved_imagery_runtime_pct": "REAL",
+        "visual_changes_per_minute": "REAL",
+        "visual_max_meaningful_gap_s": "REAL",
+        "visual_distinct_assets": "INTEGER",
+        "visual_asset_reuse_ratio": "REAL",
+        "visual_dominant_family": "TEXT",
+        "visual_opening_meaningful": "INTEGER",
+        "visual_provider_fallback_rate": "REAL",
+    }
+    existing = {
+        r["name"] for r in conn.execute("PRAGMA table_info('content_feature_snapshots')").fetchall()
+    }
+    if existing:
+        for col, ddl in feature_columns.items():
+            if col not in existing:
+                conn.execute(f"ALTER TABLE content_feature_snapshots ADD COLUMN {col} {ddl}")
+
+    conn.commit()
+
+
+def _apply_v51_slot_retirement(conn: sqlite3.Connection) -> None:
+    """Terminal retirement for deterministically unpublishable slots (Phase 18E).
+
+    Phase 18E's visual-quality gate created a queue deadlock: a blocked render
+    reaches publish_status='failed', 'failed' is not in
+    TERMINAL_PUBLISH_STATUSES, so list_active_slots kept counting it and a
+    channel with queue_target=1 could never queue anything again. That is
+    Phase 18D defect #4 re-entered through a new door.
+
+    Retirement is modelled as its OWN column rather than a seventh value of
+    publish_status, for two reasons:
+
+    1. It is a different axis. publish_status tracks progress toward being
+       published; retirement records that progress stopped permanently and
+       why. A slot can be retired without ever having progressed anywhere,
+       and overloading a progress enum to say that muddles both.
+
+    2. publish_status carries a CHECK constraint, and SQLite cannot alter one
+       in place — extending it means rebuilding publishing_slots, the table
+       holding all live publishing state, complete with its self-referencing
+       FK and partial unique index. An additive nullable column achieves the
+       same semantics with none of that risk on a live operational database.
+
+    Terminality stays defined in exactly one place: _NOT_TERMINAL_SQL in
+    app.intelligence.autonomy.repository now tests `retired_at IS NULL`
+    alongside the terminal status list, so every queue and eligibility query
+    picks it up together and none can be updated in isolation.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    columns = {
+        "retired_at": "TEXT",
+        "retirement_reason": "TEXT",
+    }
+    existing = {r["name"] for r in conn.execute("PRAGMA table_info('publishing_slots')").fetchall()}
+    if not existing:
+        return
+    for col, ddl in columns.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE publishing_slots ADD COLUMN {col} {ddl}")
+
+    conn.executescript(
+        """
+        -- Retired slots are excluded from every queue/eligibility scan, so the
+        -- partial index keeps those scans cheap as retirements accumulate.
+        CREATE INDEX IF NOT EXISTS idx_publishing_slots_retired
+            ON publishing_slots (channel_id, retired_at)
+            WHERE retired_at IS NOT NULL;
+        """
+    )
+
+    # Phase 18E — topic specificity / visual groundability, cached alongside
+    # the semantic-fit result it is produced with.
+    #
+    # These live on the SAME row, not a new table, because they come from the
+    # same structured LLM response about the same opportunity. Splitting them
+    # would mean two cache keys for one call and a way for the two halves to
+    # disagree about which evaluation they came from.
+    #
+    # Nullable with no default: a row cached under prompt v1 has no specificity
+    # answer, and NULL ("not evaluated") must not read as 0.0 ("a category").
+    fit_columns = {
+        "topic_specificity": "REAL",
+        "specificity_label": "TEXT",
+        "visual_groundability": "REAL",
+        "concrete_subjects_json": "TEXT",
+        "viewer_promise": "TEXT",
+        "refined_topic": "TEXT",
+    }
+    fit_existing = {
+        r["name"]
+        for r in conn.execute("PRAGMA table_info('opportunity_semantic_fit_results')").fetchall()
+    }
+    if fit_existing:
+        for col, ddl in fit_columns.items():
+            if col not in fit_existing:
+                conn.execute(f"ALTER TABLE opportunity_semantic_fit_results ADD COLUMN {col} {ddl}")
+
+    conn.commit()
+
+
+def _apply_v48_autonomous_production(conn: sqlite3.Connection) -> None:
+    """Autonomous production tracking on publishing_slots (Phase 18B).
+
+    Adds production_automation_enabled to autonomy_policies — a THIRD,
+    independent control alongside decision_automation_enabled and the
+    (unrelated, env-var-only) publishing gates. Enabling it only permits
+    spending resources to generate media artifacts; it grants no upload
+    authority whatsoever — that remains structurally impossible from this
+    code path (see app.intelligence.autonomy.production_cycle's module
+    docstring).
+
+    Adds production state directly to publishing_slots rather than a new
+    table: production is a property of filling a specific slot, not an
+    independent entity, and this keeps the one-slot-one-production
+    invariant trivially enforceable (no second FK to reconcile).
+
+    production_status is intentionally nullable (no default) — NULL means
+    "production not yet started for this slot", distinct from any of the
+    four real in-flight/terminal states.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM pragma_table_info('autonomy_policies') "
+        "WHERE name='production_automation_enabled'"
+    ).fetchone():
+        conn.execute(
+            "ALTER TABLE autonomy_policies ADD COLUMN production_automation_enabled "
+            "INTEGER NOT NULL DEFAULT 0 CHECK (production_automation_enabled IN (0, 1))"
+        )
+
+    slot_columns = {
+        "experiment_id": "TEXT REFERENCES experiments(id)",
+        "production_status": "TEXT CHECK (production_status IN ("
+        "'queued', 'producing', 'ready', 'failed') OR production_status IS NULL)",
+        "production_pipeline_id": "TEXT",
+        "production_publishing_plan_id": "INTEGER",
+        "production_started_at": "TEXT",
+        "production_ready_at": "TEXT",
+        "production_failed_at": "TEXT",
+        "production_failed_stage": "TEXT",
+        "production_error": "TEXT",
+        "production_retry_count": "INTEGER NOT NULL DEFAULT 0",
+    }
+    existing_cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info('publishing_slots')").fetchall()
+    }
+    for col, ddl in slot_columns.items():
+        if col not in existing_cols:
+            conn.execute(f"ALTER TABLE publishing_slots ADD COLUMN {col} {ddl}")
+
+    conn.executescript(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_publishing_slots_experiment
+            ON publishing_slots (experiment_id)
+            WHERE experiment_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_publishing_slots_production_status
+            ON publishing_slots (channel_id, production_status);
+        """
+    )
+    conn.commit()
+
+
+def _apply_v47_autonomy_orchestrator(conn: sqlite3.Connection) -> None:
+    """Autonomy decision cycle: per-channel policy + publishing slot reservations (Phase 18A).
+
+    autonomy_policies: one mutable row per channel (like analytics_observation_state,
+    not versioned like cp_strategy_profiles — this is an operator toggle/setting, not
+    an audited strategy decision). decision_automation_enabled cannot be true without
+    an explicit timezone — enforced at the schema level so no code path can silently
+    activate a channel's live cadence on a guessed timezone.
+
+    publishing_slots: a future publish-time reservation, deliberately upstream of any
+    `experiments` row (Phase 14E's own design keeps Experiment creation "downstream,
+    human-gated") — a slot's reserved content is represented by an
+    experiment_strategy_briefs.id, the existing artifact for "a selected, concrete,
+    market-grounded idea," not yet a committed Experiment. One slot per (channel,
+    slot_key) — UNIQUE constraint. One active slot per brief — partial UNIQUE index.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS autonomy_policies (
+            channel_id                          TEXT    PRIMARY KEY REFERENCES cp_channels(id),
+            workspace_id                         TEXT    NOT NULL REFERENCES cp_workspaces(id),
+            decision_automation_enabled          INTEGER NOT NULL DEFAULT 0
+                                                        CHECK (decision_automation_enabled IN
+                                                            (0, 1)),
+            cadence_type                         TEXT    NOT NULL DEFAULT 'daily'
+                                                        CHECK (cadence_type IN (
+                                                            'every_12h', 'daily', 'every_n_days',
+                                                            'weekly', 'custom_cron'
+                                                        )),
+            cadence_interval_days                INTEGER,
+            cadence_cron                         TEXT,
+            preferred_local_hour                 INTEGER NOT NULL DEFAULT 9
+                                                        CHECK (preferred_local_hour
+                                                            BETWEEN 0 AND 23),
+            timezone                             TEXT,
+            queue_target                         INTEGER NOT NULL DEFAULT 1
+                                                        CHECK (queue_target BETWEEN 1 AND 2),
+            market_refresh_max_age_hours         INTEGER NOT NULL DEFAULT 12,
+            semantic_fit_max_evaluations_per_run INTEGER NOT NULL DEFAULT 5,
+            last_decision_at                     TEXT,
+            last_decision_outcome                TEXT,
+            actor                                TEXT    NOT NULL,
+            created_at                           TEXT    NOT NULL,
+            updated_at                           TEXT    NOT NULL,
+            CHECK (decision_automation_enabled = 0 OR timezone IS NOT NULL)
+        );
+
+        CREATE TABLE IF NOT EXISTS publishing_slots (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id              TEXT    NOT NULL REFERENCES cp_channels(id),
+            workspace_id            TEXT    NOT NULL REFERENCES cp_workspaces(id),
+            slot_key                TEXT    NOT NULL,
+            scheduled_for_local     TEXT    NOT NULL,
+            timezone                TEXT    NOT NULL,
+            scheduled_for_utc       TEXT    NOT NULL,
+            state                   TEXT    NOT NULL DEFAULT 'reserved'
+                                            CHECK (state IN (
+                                                'reserved', 'filled', 'cancelled', 'expired'
+                                            )),
+            brief_id                TEXT    REFERENCES experiment_strategy_briefs(id),
+            selection_decision_id   INTEGER REFERENCES experiment_selection_decisions(id),
+            opportunity_id          INTEGER,
+            reserved_at             TEXT    NOT NULL,
+            filled_at               TEXT,
+            cancelled_at            TEXT,
+            cancellation_reason     TEXT,
+            created_at              TEXT    NOT NULL,
+            updated_at              TEXT    NOT NULL,
+            UNIQUE (channel_id, slot_key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_publishing_slots_channel_state
+            ON publishing_slots (channel_id, state, scheduled_for_utc);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_publishing_slots_brief_active
+            ON publishing_slots (brief_id)
+            WHERE brief_id IS NOT NULL AND state IN ('reserved', 'filled');
+        """
+    )
+    conn.commit()
+
+
+def _apply_v46_semantic_fit_cache(conn: sqlite3.Connection) -> None:
+    """Persisted semantic-fit evaluation cache (Phase 17G).
+
+    Caches the result of a real LLM semantic-fit call (assess_semantic_fit)
+    keyed by a deterministic input_hash over the opportunity content and the
+    channel profile version in effect at evaluation time. A new profile
+    version (channel constraints changed) or different opportunity content
+    naturally produces a different hash, so the cache self-invalidates
+    without any explicit invalidation logic.
+
+    Only successful evaluations are persisted — a failed/timed-out LLM call
+    is never cached, so it keeps resolving to UNRESOLVED on retry rather than
+    silently freezing into a wrong answer.
+
+    Append-only: a superseded hash's row is left in place as audit history,
+    never deleted or updated. Idempotent — safe to run at any prior version.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS opportunity_semantic_fit_results (
+            id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+            opportunity_id              INTEGER NOT NULL,
+            channel_id                  INTEGER NOT NULL,
+            channel_profile_version_id  INTEGER,
+            prompt_version              TEXT    NOT NULL,
+            input_hash                  TEXT    NOT NULL,
+            score                       REAL    NOT NULL,
+            fit_label                   TEXT    NOT NULL DEFAULT '',
+            rationale                   TEXT    NOT NULL DEFAULT '',
+            provider_name               TEXT    NOT NULL,
+            model                       TEXT    NOT NULL DEFAULT '',
+            evaluated_at                TEXT    NOT NULL,
+            UNIQUE (opportunity_id, input_hash)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_semantic_fit_opportunity
+            ON opportunity_semantic_fit_results (opportunity_id, input_hash);
+        CREATE INDEX IF NOT EXISTS idx_semantic_fit_channel
+            ON opportunity_semantic_fit_results (channel_id);
+        """
+    )
+    conn.commit()
+
+
+def _apply_v45_analytics_observation_state(conn: sqlite3.Connection) -> None:
+    """Per-publication observation lifecycle state (Phase 16D.4).
+
+    Tracks scheduling, outcome state, and retry counters for automatic
+    analytics observation. One row per publication_id; keyed separately from
+    app_schedule_definitions so schedule cadence and observation outcome state
+    have clean separation.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS analytics_observation_state (
+            publication_id          INTEGER PRIMARY KEY,
+            workspace_id            TEXT    NOT NULL,
+            channel_id              TEXT,
+            platform_account_id     TEXT,
+            schedule_id             TEXT,
+            observation_status      TEXT    NOT NULL DEFAULT 'active'
+                                            CHECK (observation_status IN (
+                                                'active', 'inactive', 'paused'
+                                            )),
+            last_attempted_at       TEXT,
+            last_success_at         TEXT,
+            latest_snapshot_id      INTEGER,
+            retention_acquired      INTEGER NOT NULL DEFAULT 0,
+            consecutive_no_data     INTEGER NOT NULL DEFAULT 0,
+            failure_count           INTEGER NOT NULL DEFAULT 0,
+            created_at              TEXT    NOT NULL,
+            updated_at              TEXT    NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_obs_state_status
+            ON analytics_observation_state (observation_status, publication_id);
+        """
+    )
+    conn.commit()
+
+
+def _apply_v44_visual_intelligence(conn: sqlite3.Connection) -> None:
+    """Semantic visual beats + channel-aware asset memory (Phase 16D.3.2).
+
+    Two tables:
+
+    visual_beats
+        The persisted visual plan.  A beat is strictly narrower than a scene:
+        the scene owns the narration segment and its audio asset, the beat owns
+        a stretch of the visual track inside it.  Keeping beats in their own
+        table means visuals can be re-planned without touching narration,
+        caption, or render lineage.
+
+    visual_asset_usage
+        Deterministic answer to "has this asset been used before, on which
+        channel, how recently, and for how long".  Keyed on the provider-scoped
+        asset identity so a query collision can never merge two assets.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS visual_beats (
+            id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+            scene_manifest_id           INTEGER NOT NULL,
+            scene_id                    INTEGER,
+            beat_index                  INTEGER NOT NULL,
+            scene_index                 INTEGER NOT NULL,
+            segment_id                  INTEGER NOT NULL,
+            start_ms                    INTEGER NOT NULL,
+            end_ms                      INTEGER NOT NULL,
+            duration_ms                 INTEGER NOT NULL,
+            narration_text              TEXT NOT NULL DEFAULT '',
+            keywords_json               TEXT NOT NULL DEFAULT '[]',
+            entities_json               TEXT NOT NULL DEFAULT '[]',
+            visual_intent               TEXT NOT NULL,
+            media_type_preferences_json TEXT NOT NULL DEFAULT '[]',
+            search_queries_json         TEXT NOT NULL DEFAULT '[]',
+            avoid_terms_json            TEXT NOT NULL DEFAULT '[]',
+            claim_ids_json              TEXT NOT NULL DEFAULT '[]',
+            preferred_motion            TEXT NOT NULL DEFAULT 'none',
+            importance                  REAL NOT NULL DEFAULT 0.5,
+            confidence                  REAL NOT NULL DEFAULT 0.5,
+            resolved_media_type         TEXT,
+            resolved_provider           TEXT,
+            resolved_asset_key          TEXT,
+            resolved_local_path         TEXT,
+            resolved_score              REAL,
+            resolved_motion             TEXT,
+            license_status              TEXT,
+            attribution_text            TEXT,
+            fallback_reason             TEXT,
+            engine_version              TEXT NOT NULL,
+            planner_version             TEXT NOT NULL,
+            created_at                  TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE (scene_manifest_id, beat_index),
+            FOREIGN KEY (scene_manifest_id) REFERENCES scene_manifests (id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_visual_beats_manifest
+            ON visual_beats (scene_manifest_id, beat_index);
+        CREATE INDEX IF NOT EXISTS idx_visual_beats_asset
+            ON visual_beats (resolved_asset_key);
+
+        CREATE TABLE IF NOT EXISTS visual_asset_usage (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            asset_key          TEXT NOT NULL,
+            provider           TEXT NOT NULL,
+            provider_asset_id  TEXT NOT NULL,
+            media_type         TEXT NOT NULL,
+            channel_key        TEXT,
+            workspace_id       TEXT,
+            topic_id           INTEGER,
+            experiment_id      TEXT,
+            scene_manifest_id  INTEGER,
+            render_manifest_id INTEGER,
+            publication_id     INTEGER,
+            beat_index         INTEGER,
+            scene_index        INTEGER,
+            duration_ms        INTEGER NOT NULL DEFAULT 0,
+            used_at            TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_visual_usage_channel_asset
+            ON visual_asset_usage (channel_key, asset_key, used_at);
+        CREATE INDEX IF NOT EXISTS idx_visual_usage_asset
+            ON visual_asset_usage (asset_key, used_at);
+        CREATE INDEX IF NOT EXISTS idx_visual_usage_manifest
+            ON visual_asset_usage (scene_manifest_id);
+        """
+    )
+
+
+def _apply_v43_eligibility_provenance(conn: sqlite3.Connection) -> None:
+    """Add semantic_fit_disposition column to experiment_candidate_scores (Phase 16D.1.1).
+
+    Records HOW the semantic fit score was obtained — "provider_called" (real Anthropic),
+    "replay_prior_real_call" (ReplayEligibilityProvider), "fake_provider_test" (FakeProvider),
+    "deterministic_bypass", "skipped_hard_block", or "provider_unavailable_unresolved".
+
+    Idempotent — no-op if the table does not exist or the column is already present.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiment_candidate_scores'"
+    ).fetchone():
+        return
+    if conn.execute(
+        "SELECT 1 FROM pragma_table_info('experiment_candidate_scores') "
+        "WHERE name='semantic_fit_disposition'"
+    ).fetchone():
+        return
+    conn.execute("ALTER TABLE experiment_candidate_scores ADD COLUMN semantic_fit_disposition TEXT")
+
+
+def _apply_v36_opportunities_topic_dedup_partial(conn: sqlite3.Connection) -> None:
+    """Replace the table-level UNIQUE(channel_id, normalized_topic) with a partial index.
+
+    Identity hierarchy after v36:
+      canonical Opportunities (canonical_cluster_id IS NOT NULL):
+        primary identity = (channel_id, canonical_cluster_id)
+          [enforced by uq_opps_channel_canonical]
+        normalized_topic = display label only; multiple canonical rows may share a topic
+      legacy Opportunities (canonical_cluster_id IS NULL):
+        primary identity = normalized_topic
+          [enforced by uq_opps_channel_topic_legacy, active rows only]
+        terminal (rejected/archived) legacy rows do not block replacement
+
+    The old table-level UNIQUE(channel_id, normalized_topic) covered ALL rows regardless of
+    lifecycle state or canonical identity, blocking:
+      - rediscovery of a canonical cluster whose old Opportunity was rejected/archived
+      - two different canonical clusters that share a label (distinct canonical identities)
+      - a new active replacement with the same topic as a terminal legacy Opportunity
+
+    Requires table recreation (SQLite cannot drop inline UNIQUE constraints via ALTER TABLE).
+    Uses the same PRAGMA foreign_keys = OFF/ON pattern established in _apply_v34_market_bridge.
+
+    Idempotency: if no SQLite autoindex exists on opportunities (the autoindex is created by the
+    inline UNIQUE in the DDL), the table was already rebuilt. The function still ensures both
+    partial indexes exist via IF NOT EXISTS and returns.
+    Guard: no-op if the opportunities table does not exist.
+    """
+    opp_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='opportunities'"
+    ).fetchone()
+    if not opp_exists:
+        return
+
+    autoindex = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='index' AND tbl_name='opportunities' AND name LIKE 'sqlite_autoindex%'"
+    ).fetchone()
+
+    if autoindex is None:
+        # Already rebuilt (or created fresh without inline UNIQUE). Ensure indexes exist.
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_opps_channel_canonical "
+            "ON opportunities(channel_id, canonical_cluster_id) "
+            "WHERE canonical_cluster_id IS NOT NULL "
+            "  AND current_lifecycle_state NOT IN ('rejected', 'archived')"
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_opps_channel_topic_legacy "
+            "ON opportunities(channel_id, normalized_topic) "
+            "WHERE canonical_cluster_id IS NULL "
+            "  AND current_lifecycle_state NOT IN ('rejected', 'archived')"
+        )
+        return
+
+    # Table rebuild: remove inline UNIQUE, preserve all columns and data.
+    conn.executescript("""
+PRAGMA foreign_keys = OFF;
+
+CREATE TABLE opportunities_v36_new (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel_id              INTEGER NOT NULL REFERENCES channels(id),
+    discovery_run_id        INTEGER NOT NULL REFERENCES discovery_runs(id),
+    normalized_topic        TEXT    NOT NULL,
+    raw_topic               TEXT    NOT NULL,
+    title                   TEXT    NOT NULL DEFAULT '',
+    topic_summary           TEXT    NOT NULL DEFAULT '',
+    format_recommendation   TEXT    NOT NULL DEFAULT 'undecided'
+                            CHECK (format_recommendation IN (
+                                'short', 'long_form', 'both',
+                                'content_package', 'undecided')),
+    strategic_role          TEXT    NOT NULL DEFAULT 'discovery'
+                            CHECK (strategic_role IN (
+                                'discovery', 'monetization', 'subscriber_growth',
+                                'authority', 'retention', 'experimentation')),
+    current_lifecycle_state TEXT    NOT NULL DEFAULT 'new'
+                            CHECK (current_lifecycle_state IN (
+                                'new', 'under_review', 'approved',
+                                'rejected', 'produced', 'archived')),
+    created_at              TEXT    NOT NULL,
+    updated_at              TEXT    NOT NULL,
+    canonical_cluster_id    INTEGER REFERENCES market_canonical_clusters(id),
+    market_signal_snapshot_id INTEGER
+);
+
+INSERT INTO opportunities_v36_new
+    SELECT id, channel_id, discovery_run_id, normalized_topic, raw_topic,
+           title, topic_summary, format_recommendation, strategic_role,
+           current_lifecycle_state, created_at, updated_at,
+           canonical_cluster_id, market_signal_snapshot_id
+    FROM opportunities;
+
+DROP TABLE opportunities;
+ALTER TABLE opportunities_v36_new RENAME TO opportunities;
+
+PRAGMA foreign_keys = ON;
+""")
+
+    # Recreate partial indexes on the new table.
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_opps_channel_canonical "
+        "ON opportunities(channel_id, canonical_cluster_id) "
+        "WHERE canonical_cluster_id IS NOT NULL "
+        "  AND current_lifecycle_state NOT IN ('rejected', 'archived')"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_opps_channel_topic_legacy "
+        "ON opportunities(channel_id, normalized_topic) "
+        "WHERE canonical_cluster_id IS NULL "
+        "  AND current_lifecycle_state NOT IN ('rejected', 'archived')"
+    )
 
 
 def _get_version(conn: sqlite3.Connection) -> int:
@@ -2487,6 +4648,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -2515,6 +4703,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2542,6 +4757,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2568,6 +4810,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2593,6 +4862,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2617,6 +4913,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2640,6 +4963,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2662,6 +5012,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2683,6 +5060,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2703,6 +5107,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2722,6 +5153,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2740,6 +5198,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2757,6 +5242,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2773,6 +5285,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2788,6 +5327,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2802,6 +5368,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2815,6 +5408,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2827,6 +5447,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2838,6 +5485,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
     elif current == 19:
@@ -2847,6 +5521,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2856,6 +5557,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2864,6 +5592,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v22_analytics_retention(conn)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2871,12 +5626,579 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 22 to %d", SCHEMA_VERSION)
         _apply_v23_publication_ownership(conn)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 23:
         logger.info("Migrating schema from version 23 to %d", SCHEMA_VERSION)
         _apply_v24_analytics_observation(conn)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 24:
+        logger.info("Migrating schema from version 24 to %d", SCHEMA_VERSION)
+        _apply_v25_generator_skipped_status(conn)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 25:
+        logger.info("Migrating schema from version 25 to %d", SCHEMA_VERSION)
+        _apply_v26_recommendation_applications(conn)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 26:
+        logger.info("Migrating schema from version 26 to %d", SCHEMA_VERSION)
+        _apply_v27_content_features(conn)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 27:
+        logger.info("Migrating schema from version 27 to %d", SCHEMA_VERSION)
+        _apply_v28_cross_pub_learning(conn)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 28:
+        logger.info("Migrating schema from version 28 to %d", SCHEMA_VERSION)
+        _apply_v29_market_intelligence(conn)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 29:
+        logger.info("Migrating schema from version 29 to %d", SCHEMA_VERSION)
+        _apply_v30_velocity(conn)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 30:
+        logger.info("Migrating schema from version 30 to %d", SCHEMA_VERSION)
+        _apply_v31_exploration(conn)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 31:
+        logger.info("Migrating schema from version 31 to %d", SCHEMA_VERSION)
+        _apply_v32_interpretation(conn)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 32:
+        logger.info("Migrating schema from version 32 to %d", SCHEMA_VERSION)
+        _apply_v33_canonical_clusters(conn)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 33:
+        logger.info("Migrating schema from version 33 to %d", SCHEMA_VERSION)
+        _apply_v34_market_bridge(conn)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 34:
+        logger.info("Migrating schema from version 34 to %d", SCHEMA_VERSION)
+        _apply_v35_active_opportunity_identity(conn)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 35:
+        logger.info("Migrating schema from version 35 to %d", SCHEMA_VERSION)
+        _apply_v36_opportunities_topic_dedup_partial(conn)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 36:
+        logger.info("Migrating schema from version 36 to %d", SCHEMA_VERSION)
+        _apply_v37_experiment_ledger(conn)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 37:
+        logger.info("Migrating schema from version 37 to %d", SCHEMA_VERSION)
+        _apply_v38_experiment_planning(conn)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 38:
+        logger.info("Migrating schema from version 38 to %d", SCHEMA_VERSION)
+        _apply_v39_strategy_brief(conn)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 39:
+        logger.info("Migrating schema from version 39 to %d", SCHEMA_VERSION)
+        _apply_v40_execution_contract(conn)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 40:
+        logger.info("Migrating schema from version 40 to %d", SCHEMA_VERSION)
+        _apply_v41_experiment_outcomes(conn)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 41:
+        logger.info("Migrating schema from version 41 to %d", SCHEMA_VERSION)
+        _apply_v42_cp_channel_bridge(conn)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 42:
+        logger.info("Migrating schema from version 42 to %d", SCHEMA_VERSION)
+        _apply_v43_eligibility_provenance(conn)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 43:
+        logger.info("Migrating schema from version 43 to %d", SCHEMA_VERSION)
+        _apply_v44_visual_intelligence(conn)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 44:
+        logger.info("Migrating schema from version 44 to %d", SCHEMA_VERSION)
+        _apply_v45_analytics_observation_state(conn)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 45:
+        logger.info("Migrating schema from version 45 to %d", SCHEMA_VERSION)
+        _apply_v46_semantic_fit_cache(conn)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 46:
+        logger.info("Migrating schema from version 46 to %d", SCHEMA_VERSION)
+        _apply_v47_autonomy_orchestrator(conn)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 47:
+        logger.info("Migrating schema from version 47 to %d", SCHEMA_VERSION)
+        _apply_v48_autonomous_production(conn)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 48:
+        logger.info("Migrating schema from version 48 to %d", SCHEMA_VERSION)
+        _apply_v49_scheduled_publishing(conn)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 49:
+        logger.info("Migrating schema from version 49 to %d", SCHEMA_VERSION)
+        _apply_v50_visual_quality(conn)
+        _apply_v51_slot_retirement(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 50:
+        logger.info("Migrating schema from version 50 to %d", SCHEMA_VERSION)
+        _apply_v51_slot_retirement(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -2889,14 +6211,49 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 def open_db(path: Path) -> sqlite3.Connection:
     """Open (or create) the SQLite database, enforce FK constraints, and run migrations."""
+    # Phase 18E — the lowest layer at which the live database can be reached.
+    #
+    # Every caller funnels through here, including CLI commands under
+    # CliRunner and any test that reads get_config().db_path. Putting the
+    # check at startup only was not enough: a pytest run with ACE_DB_PATH set
+    # but EMPTY resolved to the operational database and MIGRATED it, because
+    # nothing between the environment variable and sqlite3.connect looked.
+    #
+    # open_db also runs _migrate(), so this is specifically the call that can
+    # rewrite live schema. Guarding it makes "a test cannot mutate the
+    # operational database" true by construction rather than by convention.
+    from app.core.runtime_mode import assert_runtime_isolation
+
+    assert_runtime_isolation(path)
+
     path.parent.mkdir(parents=True, exist_ok=True)
     # check_same_thread=False: FastAPI runs sync handlers in a threadpool via anyio;
     # the generator dependency teardown (conn.close) can execute in a different thread
     # than where the connection was opened.  The connection is never shared across
     # concurrent requests — it is per-request — so disabling the check is safe.
-    conn = sqlite3.connect(str(path), check_same_thread=False)
+    # timeout: how long SQLite waits for a contended lock before raising
+    # "database is locked". The default is 5s; a slow migration or checkpoint on
+    # a busy database can legitimately exceed that, and an exception is far
+    # better than the caller assuming the write landed.
+    conn = sqlite3.connect(str(path), check_same_thread=False, timeout=30.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+
+    # Only switch journal mode when it is not already WAL.
+    #
+    # `PRAGMA journal_mode=WAL` acquires an EXCLUSIVE database lock even when it
+    # is a no-op transition. open_db runs once per HTTP request, so issuing it
+    # unconditionally made every request contend for an exclusive lock. Under
+    # concurrency that serialized the whole API, and it could deadlock outright:
+    # a connection being closed on an anyio teardown thread would sit in
+    # sqlite3WalClose -> unixLock holding SQLite's global mutex, while every
+    # other request blocked in sqlite3BtreeOpen behind it. Reading the mode
+    # first takes only a shared lock.
+    if str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+        conn.execute("PRAGMA journal_mode=WAL")
+
+    # Belt and braces alongside the connect timeout: applies to lock waits that
+    # occur after the connection is established.
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA foreign_keys=ON")
     _migrate(conn)
     conn.commit()

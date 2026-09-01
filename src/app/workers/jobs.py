@@ -191,17 +191,80 @@ def enqueue_scheduled_operations(
 def execute_scheduled_operation_job(payload: JobPayload) -> dict:
     """Worker entry point for scheduled operation execution.
 
-    Receives only JSON-safe primitive identifiers. Reloads schedule definition
-    from DB and dispatches via ApplicationService.
+    Receives only JSON-safe primitive identifiers.  Reloads the schedule
+    definition from DB and dispatches based on operation_type.
+
+    Currently supported operation_types:
+        analytics_observation — automatic post-publication analytics + learning
     """
+    import json
+
     schedule_id: str = payload["schedule_id"]
     workspace_id: str = payload["workspace_id"]
     actor: str = payload.get("actor", "system:scheduler")
 
-    return {
-        "status": "dispatched",
-        "schedule_id": schedule_id,
-        "workspace_id": workspace_id,
-        "actor": actor,
-        "note": "Scheduled job received; operation dispatch via ApplicationService in M15.7.",
-    }
+    from app.core.config import get_config
+    from app.core.database import get_db_connection
+
+    cfg = get_config()
+    conn = get_db_connection(db_path=cfg.db_path)
+    try:
+        row = conn.execute(
+            "SELECT operation_type, schedule_config_json "
+            "FROM app_schedule_definitions WHERE id = ?",
+            (schedule_id,),
+        ).fetchone()
+
+        if row is None:
+            return {
+                "status": "error",
+                "reason": f"Schedule {schedule_id!r} not found",
+                "schedule_id": schedule_id,
+            }
+
+        operation_type: str = row["operation_type"]
+        schedule_config: dict = json.loads(row["schedule_config_json"] or "{}")
+
+        if operation_type == "analytics_observation":
+            publication_id = int(schedule_config.get("publication_id", 0))
+            if publication_id == 0:
+                return {
+                    "status": "error",
+                    "reason": "schedule_config missing publication_id",
+                    "schedule_id": schedule_id,
+                }
+
+            from app.analytics.auto_observer import run_observation
+
+            result = run_observation(
+                conn,
+                publication_id=publication_id,
+                schedule_id=schedule_id,
+                oauth_client=None,  # resolved inside run_observation from DB credentials
+            )
+            return {
+                "status": "ok" if result.error is None else "error",
+                "operation_type": operation_type,
+                "schedule_id": schedule_id,
+                "publication_id": publication_id,
+                "is_new_snapshot": result.is_new_snapshot,
+                "observation_state": result.observation_state,
+                "snapshot_id": result.snapshot_id,
+                "aggregated": result.aggregated,
+                "retention_acquired": result.retention_acquired,
+                "learning_run_id": result.learning_run_id,
+                "error": result.error,
+            }
+
+        # Unrecognised operation type — return a structured response so the job
+        # doesn't silently disappear.
+        return {
+            "status": "unhandled",
+            "operation_type": operation_type,
+            "schedule_id": schedule_id,
+            "workspace_id": workspace_id,
+            "actor": actor,
+            "note": f"No handler registered for operation_type={operation_type!r}",
+        }
+    finally:
+        conn.close()

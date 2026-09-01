@@ -56,7 +56,7 @@ def _columns(conn: sqlite3.Connection, table: str) -> list[str]:
 
 class TestSchemaVersion:
     def test_constant_is_19(self):
-        assert SCHEMA_VERSION == 24
+        assert SCHEMA_VERSION == 51
 
     def test_db_reports_19(self, db_conn):
         ver = db_conn.execute("SELECT version FROM schema_version").fetchone()[0]

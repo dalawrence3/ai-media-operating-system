@@ -55,11 +55,13 @@ def _now() -> str:
 
 
 def _row_to_channel(row: sqlite3.Row) -> Channel:
+    keys = row.keys()
     return Channel(
         id=row["id"],
         platform=Platform(row["platform"]),
         channel_name=row["channel_name"],
         platform_channel_id=row["platform_channel_id"],
+        cp_channel_id=row["cp_channel_id"] if "cp_channel_id" in keys else None,
         operating_mode=OperatingMode(row["operating_mode"]),
         current_profile_version_id=row["current_profile_version_id"],
         current_strategy_id=row["current_strategy_id"],
@@ -172,14 +174,15 @@ def create_channel(conn: sqlite3.Connection, channel: Channel) -> Channel:
     cur = conn.execute(
         """
         INSERT INTO channels
-            (platform, channel_name, platform_channel_id, operating_mode,
+            (platform, channel_name, platform_channel_id, cp_channel_id, operating_mode,
              current_maturity_stage, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             channel.platform.value,
             channel.channel_name,
             channel.platform_channel_id,
+            channel.cp_channel_id,
             channel.operating_mode.value,
             channel.current_maturity_stage.value,
             now,
@@ -1077,6 +1080,7 @@ def list_discovery_runs(conn: sqlite3.Connection, channel_id: int) -> list[Disco
 
 
 def _row_to_opportunity(row: sqlite3.Row) -> Opportunity:
+    keys = row.keys()
     return Opportunity(
         id=row["id"],
         channel_id=row["channel_id"],
@@ -1090,6 +1094,12 @@ def _row_to_opportunity(row: sqlite3.Row) -> Opportunity:
         current_lifecycle_state=LifecycleState(row["current_lifecycle_state"]),
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
+        canonical_cluster_id=row["canonical_cluster_id"]
+        if "canonical_cluster_id" in keys
+        else None,
+        market_signal_snapshot_id=row["market_signal_snapshot_id"]
+        if "market_signal_snapshot_id" in keys
+        else None,
     )
 
 
@@ -1100,8 +1110,9 @@ def create_opportunity(conn: sqlite3.Connection, opp: Opportunity) -> Opportunit
         """INSERT INTO opportunities
            (channel_id, discovery_run_id, normalized_topic, raw_topic,
             title, topic_summary, format_recommendation, strategic_role,
-            current_lifecycle_state, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            current_lifecycle_state, created_at, updated_at,
+            canonical_cluster_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             opp.channel_id,
             opp.discovery_run_id,
@@ -1114,6 +1125,7 @@ def create_opportunity(conn: sqlite3.Connection, opp: Opportunity) -> Opportunit
             opp.current_lifecycle_state.value,
             now,
             now,
+            opp.canonical_cluster_id,
         ),
     )
     opp_id = cursor.lastrowid
@@ -1126,6 +1138,35 @@ def create_opportunity(conn: sqlite3.Connection, opp: Opportunity) -> Opportunit
     result = get_opportunity(conn, opp_id)
     assert result is not None
     return result
+
+
+def find_opportunity_by_canonical_cluster(
+    conn: sqlite3.Connection,
+    channel_id: int,
+    canonical_cluster_id: int,
+) -> Opportunity | None:
+    """Return the active opportunity for this channel + canonical cluster, or None."""
+    row = conn.execute(
+        """SELECT * FROM opportunities
+           WHERE channel_id = ? AND canonical_cluster_id = ?
+             AND current_lifecycle_state NOT IN ('rejected', 'archived')
+           ORDER BY created_at DESC LIMIT 1""",
+        (channel_id, canonical_cluster_id),
+    ).fetchone()
+    return _row_to_opportunity(row) if row else None
+
+
+def update_opportunity_signal_snapshot(
+    conn: sqlite3.Connection,
+    opportunity_id: int,
+    signal_snapshot_id: int,
+) -> None:
+    """Update market_signal_snapshot_id to point to the latest signal used."""
+    now = _now()
+    conn.execute(
+        "UPDATE opportunities SET market_signal_snapshot_id = ?, updated_at = ? WHERE id = ?",
+        (signal_snapshot_id, now, opportunity_id),
+    )
 
 
 def get_opportunity(conn: sqlite3.Connection, opportunity_id: int) -> Opportunity | None:
@@ -1179,6 +1220,11 @@ def find_existing_opportunity(
     return best
 
 
+_TERMINAL_STATES: frozenset[LifecycleState] = frozenset(
+    {LifecycleState.rejected, LifecycleState.archived}
+)
+
+
 def transition_opportunity_state(
     conn: sqlite3.Connection,
     opportunity_id: int,
@@ -1190,6 +1236,27 @@ def transition_opportunity_state(
     opp = get_opportunity(conn, opportunity_id)
     if opp is None:
         raise ValueError(f"Opportunity {opportunity_id} not found")
+
+    # Guard: reactivating from a terminal state must not produce two active
+    # Opportunities for the same canonical cluster in the same channel.
+    # Catch this at the application layer before SQLite raises IntegrityError.
+    if (
+        opp.current_lifecycle_state in _TERMINAL_STATES
+        and to_state not in _TERMINAL_STATES
+        and opp.canonical_cluster_id is not None
+    ):
+        collision = find_opportunity_by_canonical_cluster(
+            conn, opp.channel_id, opp.canonical_cluster_id
+        )
+        if collision is not None and collision.id != opp.id:
+            raise ValueError(
+                f"Cannot reactivate opportunity {opportunity_id} "
+                f"(canonical_cluster_id={opp.canonical_cluster_id}): "
+                f"active opportunity {collision.id} already owns that canonical "
+                f"identity in channel {opp.channel_id}. "
+                "Resolve the existing active opportunity before reactivating."
+            )
+
     now = _now()
     cursor = conn.execute(
         """INSERT INTO opportunity_state_events
@@ -1861,6 +1928,7 @@ def promote_opportunity(
     opportunity_id: int,
     *,
     angle_override: str | None = None,
+    title_override: str | None = None,
     operator: str = "operator",
     allow_unscored: bool = False,
 ) -> tuple:
@@ -1870,6 +1938,20 @@ def promote_opportunity(
     Returns (Topic, OpportunityStateEvent). Idempotent: if a topic linked to
     this opportunity already exists it is returned immediately. Uses a SAVEPOINT
     to make the topics INSERT and the lifecycle transition atomic.
+
+    `title_override` (Phase 18E.1) sets the production-facing topic text when
+    the caller has a better framing than the opportunity's own title — see
+    app.intelligence.experiments.eligibility_service.select_production_topic.
+
+    It overrides only the TOPIC row. The opportunity is never rewritten: it
+    remains the source-of-record for market attribution, and
+    topics.promoted_opportunity_id keeps the two joined. That separation is the
+    point — "what market opportunity produced this video?" and "what topic did
+    the video actually use?" must stay independently answerable.
+
+    Because of the idempotency guard above, an override can only ever affect a
+    topic being created now. An already-materialized topic is returned as-is
+    and is never retroactively retitled.
     """
     from app.core.repository import get_topic_by_promoted_opportunity
 
@@ -1905,7 +1987,7 @@ def promote_opportunity(
             "or pass --allow-unscored to promote anyway."
         )
 
-    title = opp.title if opp.title else opp.raw_topic
+    title = title_override if title_override else (opp.title if opp.title else opp.raw_topic)
     angle = angle_override if angle_override is not None else (opp.topic_summary or "")
     now = _now()
 

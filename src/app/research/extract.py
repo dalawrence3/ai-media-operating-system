@@ -60,11 +60,7 @@ def extract_html(html_bytes: bytes, url: str | None = None) -> ExtractResult:
 
     soup = BeautifulSoup(html_bytes, "html.parser")
 
-    # Remove non-content tags
-    for tag in soup(["script", "style", "nav", "header", "footer", "aside", "noscript"]):
-        tag.decompose()
-
-    # Title: <title> > og:title > twitter:title
+    # Title extracted before cleanup (lives in <head>)
     title: str | None = None
     if soup.title and soup.title.string:
         title = soup.title.string.strip() or None
@@ -112,8 +108,50 @@ def extract_html(html_bytes: bytes, url: str | None = None) -> ExtractResult:
             if v:
                 published_at = v[:10]
 
-    # Body text
-    body = soup.get_text(separator="\n", strip=True)
+    # Remove infrastructure: scripts, styles, navigation, analytics, UI chrome.
+    # 'template' and 'iframe' carry JS payloads that html.parser may not fully
+    # isolate on pages with minified/complex inline JS.
+    _REMOVE_TAGS = [
+        "script",
+        "style",
+        "noscript",
+        "template",
+        "iframe",
+        "nav",
+        "header",
+        "footer",
+        "aside",
+        "form",
+        "button",
+        "input",
+        "select",
+        "textarea",
+        "svg",
+        "canvas",
+        "picture",
+    ]
+    for tag in soup(_REMOVE_TAGS):
+        tag.decompose()
+
+    # Remove aria-hidden elements (tooltips, overlays, analytics widgets)
+    for tag in soup.find_all(attrs={"aria-hidden": "true"}):
+        tag.decompose()
+
+    # Prefer a semantic content root before falling back to the full document.
+    # Priority: <main> → role="main" → <article> → <body> → full soup
+    content_root = (
+        soup.find("main")
+        or soup.find(attrs={"role": "main"})
+        or soup.find("article")
+        or soup.find("body")
+        or soup
+    )
+
+    body = content_root.get_text(separator="\n", strip=True)
+
+    # Collapse runs of blank lines produced by removed tags
+    body = re.sub(r"\n{3,}", "\n\n", body)
+
     word_count = _count_words(body) if body.strip() else 0
 
     domain_type = _infer_domain_type(url)

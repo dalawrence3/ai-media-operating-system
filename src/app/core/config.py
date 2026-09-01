@@ -106,6 +106,11 @@ class Config:
             "ACE_RELEASE_PUBLIC_ENABLED", ""
         ).lower() in {"1", "true", "yes"}
 
+        # YouTube Data API v3 key — used for public market intelligence collection.
+        # NOT the same as OAuth credentials used for private channel analytics.
+        # Phase 13B reads from this field; the CLI also accepts --api-key / ACE_YOUTUBE_API_KEY.
+        self.youtube_data_api_key: str = os.environ.get("ACE_YOUTUBE_API_KEY", "")
+
         # YouTube OAuth 2.0 configuration (YouTube account connection milestone).
         # YOUTUBE_CLIENT_SECRETS_PATH: path to client_secret.json from Google Cloud Console.
         #   Never commit this file. Never store its contents in the DB.

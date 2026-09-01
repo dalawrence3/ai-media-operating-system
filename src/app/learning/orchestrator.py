@@ -180,15 +180,34 @@ def analyze_publication(
     Returns the learning_run_id.
 
     Steps:
-    1. Build AnalyticsHandoff from persisted data.
-    2. Compute a deterministic input_hash.
-    3. Create learning_run row (status=running).
-    4. Generate all recommendation drafts.
-    5. Persist each draft.
-    6. Complete the learning_run.
+    1. Derive authoritative topic_id from publication lineage; validate against caller.
+    2. Build AnalyticsHandoff from persisted data.
+    3. Compute a deterministic input_hash.
+    4. Create learning_run row (status=running).
+    5. Generate all recommendation drafts.
+    6. Persist each draft.
+    7. Complete the learning_run.
 
     On any failure the learning_run is marked failed and the error re-raised.
     """
+    # Derive topic_id from publication → publishing_plan lineage and cross-validate.
+    derived_topic_row = conn.execute(
+        """
+        SELECT pp.topic_id
+        FROM publications pub
+        JOIN publishing_plans pp ON pp.id = pub.publishing_plan_id
+        WHERE pub.id = ?
+        """,
+        (publication_id,),
+    ).fetchone()
+    if derived_topic_row is not None:
+        derived_topic_id: int = derived_topic_row["topic_id"]
+        if derived_topic_id != topic_id:
+            raise ValueError(
+                f"topic_id mismatch: caller supplied {topic_id} but publication "
+                f"{publication_id} belongs to topic {derived_topic_id} via publishing_plan"
+            )
+
     handoff = _build_handoff_from_db(conn, publication_id, topic_id)
 
     all_snapshot_ids = sorted({s.id for s in handoff.snapshots})
@@ -243,11 +262,14 @@ def analyze_publication(
         persisted_count += 1
 
     # Determine final run status from generator outcomes.
+    # Skipped generators (insufficient evidence) count neither as succeeded nor
+    # failed, so a run where all generators are skipped is still COMPLETED.
     succeeded = sum(
         1 for gr in results.generator_results if gr.status == GENERATOR_STATUS_SUCCEEDED
     )
     failed = sum(1 for gr in results.generator_results if gr.status == GENERATOR_STATUS_FAILED)
     if failed == 0:
+        # All generators succeeded or were skipped due to insufficient evidence.
         final_status = RUN_STATUS_COMPLETED
     elif succeeded == 0:
         final_status = RUN_STATUS_FAILED

@@ -136,6 +136,7 @@ def analytics_ingest(
                 caption_run_id,
             ),
             _pub_published_at,
+            _derived_experiment_id,
         ) = _build_youtube_provider_and_lineage(
             conn,
             publication_id=publication_id,
@@ -143,6 +144,17 @@ def analytics_ingest(
             workspace_id=workspace_id,
             channel_id=channel_id,
         )
+        if experiment_id is not None and _derived_experiment_id is not None:
+            if experiment_id != _derived_experiment_id:
+                typer.echo(
+                    f"Error: --experiment {experiment_id!r} does not match the experiment "
+                    f"derived from publication {publication_id} ({_derived_experiment_id!r}). "
+                    "Omit --experiment to use the derived value.",
+                    err=True,
+                )
+                raise typer.Exit(1)
+        if experiment_id is None:
+            experiment_id = _derived_experiment_id
         if period_start is None:
             if _pub_published_at is None:
                 typer.echo(
@@ -200,11 +212,12 @@ def _build_youtube_provider_and_lineage(
     account_id: str | None,
     workspace_id: str | None,
     channel_id: str | None,
-) -> tuple[object, tuple, str | None]:
+) -> tuple[object, tuple, str | None, str | None]:
     """Build authenticated YouTube Analytics provider and derive lineage from publication.
 
-    Returns (provider, lineage_tuple, published_at_date) where published_at_date is
-    the publication's published_at truncated to YYYY-MM-DD, or None if not yet set.
+    Returns (provider, lineage_tuple, published_at_date, derived_experiment_id) where:
+    - published_at_date is the publication's published_at truncated to YYYY-MM-DD, or None
+    - derived_experiment_id is publishing_plan.experiment_id, or None if not an experiment
     """
     import typer
 
@@ -271,7 +284,10 @@ def _build_youtube_provider_and_lineage(
         plan.caption_run_id,
     )
     published_at_date = pub.published_at[:10] if pub.published_at else None
-    return provider, lineage, published_at_date
+    derived_experiment_id: str | None = (
+        plan.experiment_id if hasattr(plan, "experiment_id") else None
+    )
+    return provider, lineage, published_at_date, derived_experiment_id
 
 
 def _require_explicit_lineage(
@@ -578,6 +594,7 @@ def analytics_retention_ingest(
         provider,
         _lineage,
         _pub_date,
+        _,
     ) = _build_youtube_provider_and_lineage(
         conn,
         publication_id=publication_id,
@@ -681,3 +698,31 @@ def analytics_doctor(
     typer.echo(f"Message  : {report.message}")
     if not report.ok:
         raise typer.Exit(1)
+
+
+# ── observe-daemon ────────────────────────────────────────────────────────────
+
+
+@analytics_app.command("observe-daemon")
+def analytics_observe_daemon(
+    poll_interval: Annotated[
+        int,
+        typer.Option(
+            "--poll-interval",
+            "-i",
+            help="Scheduler poll interval in seconds (default: 60).",
+        ),
+    ] = 60,
+) -> None:
+    """Run the analytics observation scheduler daemon.
+
+    On startup, reconciles all public publications that have no active
+    observation schedule, then loops every POLL_INTERVAL seconds to dispatch
+    due analytics_observation ticks inline (no Redis required).
+
+    This is the recommended way to run ACE's autonomous analytics lifecycle.
+    Exit with Ctrl-C.
+    """
+    from app.workers.scheduler import run_scheduler_daemon
+
+    run_scheduler_daemon(poll_interval_seconds=poll_interval)

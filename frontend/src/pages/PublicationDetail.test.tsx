@@ -11,6 +11,7 @@ import {
   PUB_ID,
   publicationDetail,
   publicationAnalytics,
+  publicationVisualQuality,
 } from '@/test/fixtures'
 
 const B = 'http://localhost:5173/api/v1'
@@ -23,6 +24,9 @@ const defaultHandlers = [
   ),
   http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/analytics`, () =>
     HttpResponse.json(publicationAnalytics),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/visual-quality`, () =>
+    HttpResponse.json(publicationVisualQuality),
   ),
   http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/stream`, () =>
     new HttpResponse(new Uint8Array([0, 1, 2]).buffer, {
@@ -41,14 +45,14 @@ function renderDetail(workspaceId = WS_ID, pubId = String(PUB_ID)) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter initialEntries={[`/workspaces/${workspaceId}/publishing/${pubId}`]}>
+      <MemoryRouter initialEntries={[`/workspaces/${workspaceId}/content/${pubId}`]}>
         <Routes>
           <Route
-            path="/workspaces/:workspaceId/publishing/:publicationId"
+            path="/workspaces/:workspaceId/content/:publicationId"
             element={<PublicationDetail />}
           />
           <Route
-            path="/workspaces/:workspaceId/publishing"
+            path="/workspaces/:workspaceId/content"
             element={<div data-testid="back-page" />}
           />
         </Routes>
@@ -67,11 +71,11 @@ describe('PublicationDetail rendering', () => {
     )
   })
 
-  it('shows visibility and status', async () => {
+  it('shows visibility and status as badges', async () => {
     renderDetail()
     await waitFor(() => {
-      expect(screen.getByText('private')).toBeInTheDocument()
-      expect(screen.getByText('published')).toBeInTheDocument()
+      expect(screen.getByText('Private')).toBeInTheDocument()
+      expect(screen.getByText('On YouTube')).toBeInTheDocument()
     })
   })
 
@@ -82,6 +86,43 @@ describe('PublicationDetail rendering', () => {
       expect(screen.getByText('#tech')).toBeInTheDocument()
       expect(screen.getByText('#sustainability')).toBeInTheDocument()
     })
+  })
+
+  it('shows the topic as the page subtitle', async () => {
+    renderDetail()
+    await waitFor(() => screen.getByText(publicationDetail.topic_title!))
+  })
+
+  it('formats the publish date via local time, not a raw ISO string', async () => {
+    renderDetail()
+    await waitFor(() => screen.getByText('Publish date'))
+    const row = screen.getByText('Publish date').closest('.detail-meta-row') as HTMLElement
+    const time = row.querySelector('time')!
+    expect(time.getAttribute('dateTime')).toBe(publicationDetail.published_at)
+    expect(time.textContent).not.toContain('T')
+  })
+
+  it('keeps render and lineage metadata collapsed behind a technical-details disclosure', async () => {
+    renderDetail()
+    await waitFor(() => screen.getByText('Render & lineage details'))
+    const details = screen.getByText('Render & lineage details').closest('details')!
+    expect(details).not.toHaveAttribute('open')
+    // The resolution field lives inside the disclosure, not the always-visible sidebar.
+    expect(details.querySelector('.detail-meta-list')).not.toBeNull()
+  })
+
+  it('reveals render metadata once the technical-details disclosure is opened', async () => {
+    const user = userEvent.setup()
+    renderDetail()
+    await waitFor(() => screen.getByText('Render & lineage details'))
+    await user.click(screen.getByText('Render & lineage details'))
+    expect(screen.getByText('1080×1920')).toBeInTheDocument()
+  })
+
+  it('links to the dedicated analytics view for this video', async () => {
+    renderDetail()
+    await waitFor(() => screen.getByRole('button', { name: /view analytics/i }))
+    expect(screen.getByRole('button', { name: /view analytics/i })).toBeInTheDocument()
   })
 })
 
@@ -369,5 +410,65 @@ describe('Confirmation modal', () => {
       expect(confirmBtn).toBeDisabled()
     })
     ;(resolveRelease as (() => void) | null)?.()
+  })
+})
+
+// ── Phase 18E — visual quality ────────────────────────────────────────────────
+
+describe('PublicationDetail — visual quality', () => {
+  it('shows the verdict and the numbers behind it', async () => {
+    renderDetail()
+
+    const panel = await screen.findByTestId('visual-quality-panel')
+    expect(within(panel).getByTestId('visual-quality-status')).toHaveTextContent('Blocked')
+
+    // The operator must be able to read WHY, not just THAT.
+    expect(
+      within(panel).getByText(/Only 16% of runtime carries a meaningful visual/),
+    ).toBeInTheDocument()
+    expect(within(panel).getByText('16%')).toBeInTheDocument()
+    expect(within(panel).getByText('84%')).toBeInTheDocument()
+    expect(within(panel).getByText('50.3s')).toBeInTheDocument()
+  })
+
+  it('separates retrieval failures from deliberate fallbacks', async () => {
+    renderDetail()
+    const panel = await screen.findByTestId('visual-quality-panel')
+
+    expect(within(panel).getByText('Retrieval fallbacks')).toBeInTheDocument()
+    expect(within(panel).getByText('15')).toBeInTheDocument()
+    expect(within(panel).getByText('3 by design')).toBeInTheDocument()
+  })
+
+  it('keeps the per-scene planned-vs-realized breakdown one click away', async () => {
+    const user = userEvent.setup()
+    renderDetail()
+
+    const toggle = await screen.findByTestId('toggle-visual-scenes')
+    expect(screen.queryAllByTestId('visual-scene-row')).toHaveLength(0)
+
+    await user.click(toggle)
+
+    const rows = await screen.findAllByTestId('visual-scene-row')
+    expect(rows).toHaveLength(2)
+    // Beat 1 wanted footage and got a text card because retrieval failed.
+    expect(within(rows[1]).getByText('Motion footage')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('Text card')).toBeInTheDocument()
+    expect(within(rows[1]).getByText('all_candidates_rejected')).toBeInTheDocument()
+    // Beat 0 fell back on purpose and is not presented as a fault.
+    expect(within(rows[0]).getByText('by design')).toBeInTheDocument()
+  })
+
+  it('says so plainly when a video predates visual assessment', async () => {
+    server.use(
+      http.get(`${B}/workspaces/${WS_ID}/publications/${PUB_ID}/visual-quality`, () =>
+        HttpResponse.json({ assessed: false }),
+      ),
+    )
+    renderDetail()
+
+    expect(
+      await screen.findByText(/produced before visual quality assessment existed/),
+    ).toBeInTheDocument()
   })
 })

@@ -11,7 +11,11 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        // Phase 18E: the backend origin is configurable so the E2E frontend can
+        // be pointed at the isolated test backend. Hardcoding :8000 meant an
+        // E2E frontend proxied straight into the live Media OS regardless of
+        // which backend Playwright had started.
+        target: process.env.ACE_BACKEND_URL || 'http://localhost:8000',
         changeOrigin: true,
       },
     },
