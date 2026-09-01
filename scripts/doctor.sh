@@ -135,12 +135,146 @@ else
   warn "ACE_ENV not set to 'development' — dev auth will not be available"
 fi
 
-# ── Safety gate: ACE_PUBLISHING_LIVE_ENABLED must be false in dev ─────────────
+# ── Autonomous publishing posture (Phase 18C/18D) ─────────────────────────────
+#
+# The global gates are NOT "must always be false". Since Phase 18C they are two
+# of FOUR independent authorization layers, and a channel running normal
+# autonomous operation has them deliberately enabled:
+#
+#   1. ACE_PUBLISHING_LIVE_ENABLED   global kill switch (env)
+#   2. ACE_RELEASE_PUBLIC_ENABLED    global kill switch (env)
+#   3. per-channel authorization     persisted, revocable, re-checked between
+#                                    upload and release
+#   4. runtime safety checks         rate ceiling, account health, scopes
+#
+# Treating an enabled gate as inherently invalid — as this check used to — is a
+# false alarm on a correctly authorized system, and worse, it trains an
+# operator to ignore the one check that would catch a genuinely unsafe
+# configuration. So: report the posture, and fail only on combinations that are
+# actually incoherent or unbounded.
+#
+# Strictly read-only. doctor never grants, revokes, or changes anything.
+
 LIVE_ENABLED="${ACE_PUBLISHING_LIVE_ENABLED:-false}"
-if [ "$LIVE_ENABLED" = "true" ]; then
-  fail "ACE_PUBLISHING_LIVE_ENABLED=true — THIS MUST NOT BE SET IN LOCAL DEV. Unset it or set to 'false'."
+REL_ENABLED="${ACE_RELEASE_PUBLIC_ENABLED:-false}"
+
+DB_PATH="${ACE_DB_PATH:-$HOME/.local/share/ai-content-engine/content.db}"
+
+# Read-only helper. Prints nothing and returns non-zero when the DB or the
+# sqlite3 client is unavailable, so every caller must handle "unknown".
+db_query() {
+  if ! command -v sqlite3 &>/dev/null || [ ! -f "$DB_PATH" ]; then
+    return 1
+  fi
+  sqlite3 "file:$DB_PATH?mode=ro" "$1" 2>/dev/null
+}
+
+if [ "$LIVE_ENABLED" != "true" ] && [ "$REL_ENABLED" != "true" ]; then
+  pass "Publishing gates both off — no process can upload or release (stood down)"
+elif [ "$LIVE_ENABLED" = "true" ] && [ "$REL_ENABLED" != "true" ]; then
+  warn "ACE_PUBLISHING_LIVE_ENABLED=true but ACE_RELEASE_PUBLIC_ENABLED=false — uploads may occur; nothing can be made public"
+elif [ "$LIVE_ENABLED" != "true" ] && [ "$REL_ENABLED" = "true" ]; then
+  warn "ACE_RELEASE_PUBLIC_ENABLED=true but ACE_PUBLISHING_LIVE_ENABLED=false — release gate has no effect while uploads are disabled"
 else
-  pass "ACE_PUBLISHING_LIVE_ENABLED=false (safety gate OK)"
+  pass "Publishing gates both on — autonomous publishing is globally permitted"
+
+  # With the global gates open, the remaining layers are what actually bound
+  # the system. Rather than reimplement those checks in shell — where they
+  # would drift from the real ones — ask the canonical evaluator. It is
+  # read-only, and it is the exact function the publishing cycle consults
+  # before every external side effect, so what doctor reports is what the
+  # system will actually do.
+  if [ ! -x ".venv/bin/python" ] || [ ! -f "$DB_PATH" ]; then
+    warn "Cannot evaluate publishing posture (no .venv/bin/python or no database at $DB_PATH)"
+  else
+    POSTURE=$(ACE_DB_PATH="$DB_PATH" .venv/bin/python - <<'PYEOF' 2>/dev/null
+from pathlib import Path
+import os
+
+from app.core.database import open_db
+from app.publishing.authorization import (
+    BLOCKING_ACCOUNT_STATUSES,
+    _has_release_scope,
+    evaluate_publishing_authorization,
+    get_publishing_account,
+)
+
+conn = open_db(Path(os.environ["ACE_DB_PATH"]))
+rows = conn.execute(
+    "SELECT channel_id, max_publications_per_24h FROM channel_publishing_authorizations "
+    "WHERE authorized = 1"
+).fetchall()
+
+if not rows:
+    print("PASS|No channel is authorized for autonomous publishing — layer 3 holds despite open gates")
+else:
+    print(f"PASS|{len(rows)} channel(s) authorized for autonomous publishing")
+
+for row in rows:
+    ch = row["channel_id"]
+    short = ch[:8]
+    ceiling = row["max_publications_per_24h"]
+
+    if ceiling is None or ceiling <= 0:
+        print(f"FAIL|Channel {short} is authorized but has no positive publication "
+              "ceiling — autonomous publishing would be unbounded")
+    else:
+        print(f"PASS|Channel {short} publication ceiling: {ceiling} per trailing 24h")
+
+    account_id, status = get_publishing_account(conn, ch)
+    if account_id is None:
+        print(f"FAIL|Channel {short} is authorized but has no connected YouTube account")
+    elif status in BLOCKING_ACCOUNT_STATUSES:
+        print(f"FAIL|Channel {short} is authorized but account status '{status}' blocks publishing")
+    else:
+        print(f"PASS|Channel {short} account status: {status}")
+
+        # Upload and public release are separate OAuth grants. Authorized,
+        # gates open, no release scope means uploads strand private.
+        if _has_release_scope(conn, account_id=account_id, channel_id=ch):
+            print(f"PASS|Channel {short} holds the public-release scope (youtube.force-ssl)")
+        else:
+            print(f"FAIL|Channel {short} is authorized to publish but lacks youtube.force-ssl "
+                  "— uploads would be stranded private")
+
+    decision = evaluate_publishing_authorization(conn, channel_id=ch)
+    if decision.allowed:
+        print(f"PASS|Channel {short} may publish now "
+              f"({decision.publications_last_24h}/{decision.max_publications_per_24h} used in 24h)")
+    else:
+        reasons = ", ".join(r.value for r in decision.blocked_by)
+        if reasons == "rate_limit_reached":
+            print(f"PASS|Channel {short} is at its 24h ceiling — the limit is working, not a fault")
+        else:
+            print(f"WARN|Channel {short} cannot publish right now: {reasons}")
+
+    sched = conn.execute(
+        "SELECT is_active FROM app_schedule_definitions "
+        "WHERE operation_type = 'autonomous_publishing_cycle' AND channel_id = ? LIMIT 1",
+        (ch,),
+    ).fetchone()
+    if sched is None:
+        print(f"WARN|Channel {short} has no publishing-cycle schedule defined")
+    elif sched["is_active"]:
+        print(f"PASS|Channel {short} publishing scheduler is active")
+    else:
+        print(f"WARN|Channel {short} is authorized but its publishing scheduler is inactive")
+PYEOF
+    )
+
+    if [ -z "$POSTURE" ]; then
+      warn "Publishing posture could not be evaluated — verify channel authorization manually"
+    else
+      while IFS='|' read -r level message; do
+        [ -z "$level" ] && continue
+        case "$level" in
+          PASS) pass "$message" ;;
+          WARN) warn "$message" ;;
+          FAIL) fail "$message" ;;
+        esac
+      done <<< "$POSTURE"
+    fi
+  fi
 fi
 
 # ── Optional OAuth config (presence only, never expose values) ────────────────

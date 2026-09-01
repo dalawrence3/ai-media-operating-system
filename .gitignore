@@ -22,6 +22,7 @@ dist/
 # Playwright artifacts
 frontend/playwright-report/
 frontend/test-results/
+frontend/e2e-artifacts/
 frontend/playwright/.cache/
 
 # Top-level pytest / Playwright output dir
@@ -53,3 +54,6 @@ oauth_tokens/
 
 # Editor
 .vscode/
+.e2e-data/
+
+*.bak

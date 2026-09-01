@@ -3,15 +3,33 @@ import { defineConfig, devices } from '@playwright/test'
 /**
  * Playwright E2E configuration.
  *
- * E2E tests use dev auth (X-Dev-Actor: dev:studio-user) and the fake AI/TTS
- * providers. No real OAuth flows, no live YouTube calls, no real publishing.
+ * Phase 18E — the E2E runtime is structurally separated from the live Media OS.
  *
- * webServer spins up both servers automatically — no 'make dev' needed.
- * Run: make e2e
+ * This file previously started the backend via scripts/start-backend.sh on the
+ * SAME port the live system uses, with `reuseExistingServer` on and no
+ * ACE_DB_PATH — so on a machine running the live stack, the suite adopted the
+ * live backend and drove the live database. A Playwright test revoked the real
+ * channel's publishing authorization that way.
+ *
+ * Four independent separations now apply, none of which relies on any
+ * individual test behaving carefully:
+ *
+ *   database  a dedicated e2e-test.db; app.core.runtime_mode makes a backend
+ *             that resolves ACE_DB_PATH to the operational database refuse to
+ *             start at all
+ *   ports     backend :8100, frontend :5273 — the live :8000/:5173 pair is
+ *             never touched, and reuseExistingServer is off so a stray server
+ *             is never adopted
+ *   mode      ACE_TEST_MODE=e2e refuses operations with effects outside the DB
+ *   providers fake AI/TTS, publishing and release gates hard off, provider API
+ *             keys unset in the backend process
  */
 
-const PORT_BACKEND  = 8000
-const PORT_FRONTEND = 5173
+const PORT_BACKEND = Number(process.env.ACE_E2E_BACKEND_PORT ?? 8100)
+const PORT_FRONTEND = Number(process.env.ACE_E2E_FRONTEND_PORT ?? 5273)
+
+export const E2E_BACKEND_URL = `http://127.0.0.1:${PORT_BACKEND}`
+export const E2E_FRONTEND_URL = `http://localhost:${PORT_FRONTEND}`
 
 export default defineConfig({
   testDir: './e2e',
@@ -25,7 +43,7 @@ export default defineConfig({
     ['list'],
   ],
   use: {
-    baseURL: `http://localhost:${PORT_FRONTEND}`,
+    baseURL: E2E_FRONTEND_URL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     // Dev auth header — accepted by backend when ACE_ENV=development.
@@ -34,7 +52,6 @@ export default defineConfig({
     },
   },
 
-  // Shared browser config.
   projects: [
     {
       name: 'chromium',
@@ -42,31 +59,30 @@ export default defineConfig({
     },
   ],
 
-  // Start backend then frontend before running tests.
   webServer: [
     {
-      command: 'bash scripts/start-backend.sh',
-      url: `http://127.0.0.1:${PORT_BACKEND}/api/health`,
-      timeout: 30_000,
-      reuseExistingServer: !process.env.CI,
-      env: {
-        ACE_ENV: 'development',
-        ACE_DEV_AUTH: 'enabled',
-        ACE_AI_PROVIDER: 'fake',
-        ACE_TTS_PROVIDER: 'fake',
-        ACE_TTS_LIVE_ENABLED: 'false',
-        ACE_PUBLISHING_LIVE_ENABLED: 'false',
-        ACE_DRY_RUN: '1',
-        ACE_LOG_FORMAT: 'console',
-        ACE_FRONTEND_URL: `http://localhost:${PORT_FRONTEND}`,
-      },
+      // Never scripts/start-backend.sh: that one sources .env.local, which
+      // carries live API keys and live publishing gates.
+      command: 'bash scripts/start-e2e-backend.sh',
+      url: `${E2E_BACKEND_URL}/api/health`,
+      timeout: 60_000,
+      // Deliberately false even locally. Reusing whatever happens to be
+      // listening is exactly how the suite reached the live backend.
+      reuseExistingServer: false,
       cwd: '..',
+      stdout: 'pipe',
+      stderr: 'pipe',
     },
     {
-      command: 'npm run dev -- --port 5173',
-      url: `http://localhost:${PORT_FRONTEND}`,
-      timeout: 30_000,
-      reuseExistingServer: !process.env.CI,
+      command: `npm run dev -- --port ${PORT_FRONTEND} --strictPort`,
+      url: E2E_FRONTEND_URL,
+      timeout: 60_000,
+      reuseExistingServer: false,
+      env: {
+        // Vite proxies /api to whatever this names; without it the E2E
+        // frontend would proxy to the LIVE backend on :8000.
+        ACE_BACKEND_URL: E2E_BACKEND_URL,
+      },
     },
   ],
 })

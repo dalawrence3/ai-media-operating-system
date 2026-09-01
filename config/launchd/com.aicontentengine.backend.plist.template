@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  AI Content Engine — Backend LaunchAgent template.
+  Generated/installed by: make service-install (scripts/service.sh install)
+  DO NOT edit the installed copy in ~/Library/LaunchAgents — edit this template.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aicontentengine.backend</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{{REPO_PATH}}/scripts/start-backend-service.sh</string>
+    </array>
+
+    <!-- WorkingDirectory so relative .env.local resolves correctly. -->
+    <key>WorkingDirectory</key>
+    <string>{{REPO_PATH}}</string>
+
+    <!--
+      launchd does not source shell profiles; provide PATH so scripts can
+      find Homebrew binaries (node, npm) and repo-local .venv Python.
+    -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+    </dict>
+
+    <!-- Start at login and keep running; launchd restarts after crashes. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <!-- 10 s back-off prevents rapid crash loops. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/backend.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/backend.err.log</string>
+</dict>
+</plist>

@@ -24,14 +24,26 @@ help:
 	@echo ""
 	@echo "  AI Content Engine — development commands"
 	@echo ""
-	@echo "  make dev        Start backend (:8000) + frontend (:5173) in background"
-	@echo "  make stop       Stop background servers"
-	@echo "  make restart    stop + dev"
-	@echo "  make check      Fast pre-commit suite (ruff + typecheck + frontend tests)"
-	@echo "  make verify     Full quality suite (matches CI)"
-	@echo "  make e2e        Playwright end-to-end tests (starts servers automatically)"
-	@echo "  make seed-dev   Populate local DB with deterministic dev data"
-	@echo "  make doctor     Check environment prerequisites"
+	@echo "  make dev              Start backend (:8000) + frontend (:5173) + observer in background"
+	@echo "  make stop             Stop background servers"
+	@echo "  make restart          stop + dev"
+	@echo "  make check            Fast pre-commit suite (ruff + typecheck + frontend tests)"
+	@echo "  make verify           Full quality suite (matches CI)"
+	@echo "  make e2e              Playwright E2E tests (isolated backend + test DB)"
+	@echo "  make seed-e2e         Seed the isolated E2E database"
+	@echo "  make e2e-reset        Delete the disposable E2E data directory"
+	@echo "  make seed-dev         Populate local DB with deterministic dev data"
+	@echo "  make doctor           Check environment prerequisites"
+	@echo ""
+	@echo "  Persistent macOS services (launchd — start at login, auto-restart):"
+	@echo "  make service-install  Install + start backend/observer/frontend as LaunchAgents"
+	@echo "  make service-status   Show launchd state + HTTP health"
+	@echo "  make service-restart  Restart all LaunchAgents"
+	@echo "  make service-stop     Stop all LaunchAgents (keep plists)"
+	@echo "  make service-uninstall Remove all LaunchAgent plists"
+	@echo ""
+	@echo "  NOTE: Do NOT run 'make dev' and 'make service-install' simultaneously —"
+	@echo "        both bind to ports 8000 and 5173."
 	@echo ""
 
 # ── Local development servers ─────────────────────────────────────────────────
@@ -51,6 +63,12 @@ dev:
 	else \
 	  echo "[dev] Starting frontend on http://localhost:5173 …"; \
 	  bash scripts/start-frontend.sh & echo $$! > $(PID_DIR)/frontend.pid; \
+	fi
+	@if [ -f $(PID_DIR)/observer.pid ] && kill -0 "$$(cat $(PID_DIR)/observer.pid)" 2>/dev/null; then \
+	  echo "[dev] Observer already running (pid $$(cat $(PID_DIR)/observer.pid))"; \
+	else \
+	  echo "[dev] Starting analytics observer (reconcile + 60s tick) …"; \
+	  bash scripts/start-observer.sh & echo $$! > $(PID_DIR)/observer.pid; \
 	fi
 	@echo ""
 	@echo "  Backend:  http://127.0.0.1:8000"
@@ -75,6 +93,13 @@ stop:
 	    kill "$$PID" && echo "[stop] Frontend stopped (pid $$PID)"; \
 	  fi; \
 	  rm -f $(PID_DIR)/frontend.pid; \
+	fi
+	@if [ -f $(PID_DIR)/observer.pid ]; then \
+	  PID=$$(cat $(PID_DIR)/observer.pid); \
+	  if kill -0 "$$PID" 2>/dev/null; then \
+	    kill "$$PID" && echo "[stop] Observer stopped (pid $$PID)"; \
+	  fi; \
+	  rm -f $(PID_DIR)/observer.pid; \
 	fi
 	@# Also clean up any stray uvicorn/vite processes on our ports
 	@lsof -ti :8000 | xargs -r kill 2>/dev/null || true
@@ -126,11 +151,14 @@ verify:
 	@echo "[verify] ✓ Full suite passed."
 
 # ── Playwright end-to-end tests ────────────────────────────────────────────────
-# Playwright starts its own dev server via webServer config — no 'make dev' needed.
+# Playwright starts its OWN isolated backend (:8100, e2e-test.db) and frontend
+# (:5273) via webServer config. It never touches the live :8000/:5173 stack or
+# the operational database — see scripts/start-e2e-backend.sh and
+# src/app/core/runtime_mode.py.
 
 .PHONY: e2e
 e2e:
-	@echo "[e2e] Running Playwright tests…"
+	@echo "[e2e] Running Playwright tests (isolated backend :8100 / e2e-test.db)…"
 	@cd frontend && npx playwright test
 
 .PHONY: e2e-ui
@@ -140,6 +168,20 @@ e2e-ui:
 .PHONY: e2e-report
 e2e-report:
 	@cd frontend && npx playwright show-report
+
+.PHONY: seed-e2e
+seed-e2e:
+	@echo "[e2e] Seeding the isolated E2E database…"
+	@ACE_TEST_MODE=e2e ACE_ENV=development \
+	 ACE_DB_PATH=$(CURDIR)/.e2e-data/e2e-test.db \
+	 ACE_ARTIFACTS_PATH=$(CURDIR)/.e2e-data/artifacts \
+	 .venv/bin/python scripts/seed-dev.py
+
+.PHONY: e2e-reset
+e2e-reset:
+	@echo "[e2e] Removing the disposable E2E data directory…"
+	@rm -rf $(CURDIR)/.e2e-data
+	@echo "[e2e] Done. The next 'make e2e' will recreate and reseed it."
 
 # ── Development data seeding ──────────────────────────────────────────────────
 
@@ -174,3 +216,42 @@ clean:
 	@find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	@find . -name "*.pyc" -delete 2>/dev/null || true
 	@echo "[clean] Done."
+
+# ── Persistent macOS LaunchAgent services ─────────────────────────────────────
+# Uses launchd (no Docker, Homebrew services, PM2, or supervisord required).
+# Services start at login, restart after crashes, and log to:
+#   ~/.local/share/ai-content-engine/logs/
+#
+# IMPORTANT: Do NOT run 'make dev' while launchd services are active.
+# Both bind to ports 8000 and 5173. 'make service-install' calls 'make stop'
+# automatically to prevent conflicts.
+#
+# Services are:
+#   com.aicontentengine.backend   — FastAPI :8000 (no --reload)
+#   com.aicontentengine.observer  — analytics scheduler daemon
+#   com.aicontentengine.frontend  — Vite dev server :5173
+#
+# Sleep / power semantics:
+#   Services are active while the macOS user session is open. launchd restarts
+#   them after login or crash. They pause during system sleep and are not
+#   available while the Mac is powered off.
+
+.PHONY: service-install
+service-install:
+	@bash scripts/service.sh install
+
+.PHONY: service-status
+service-status:
+	@bash scripts/service.sh status
+
+.PHONY: service-restart
+service-restart:
+	@bash scripts/service.sh restart
+
+.PHONY: service-stop
+service-stop:
+	@bash scripts/service.sh stop
+
+.PHONY: service-uninstall
+service-uninstall:
+	@bash scripts/service.sh uninstall

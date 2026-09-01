@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  AI Content Engine — Frontend LaunchAgent template.
+  Generated/installed by: make service-install (scripts/service.sh install)
+  DO NOT edit the installed copy in ~/Library/LaunchAgents — edit this template.
+
+  Runs the Vite development server (npm run dev) on port 5173.
+  The dev server is preferred over 'vite preview' for a locally-developed app:
+    - No rebuild required when frontend code changes.
+    - The /api proxy to localhost:8000 is pre-configured in vite.config.ts.
+    - Hot-module replacement works for rapid iteration.
+  When the frontend reaches a stable, infrequently-changed state, replace with
+  'npm run build && npm run preview' for a production-like local experience.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.aicontentengine.frontend</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{{REPO_PATH}}/scripts/start-frontend.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>{{REPO_PATH}}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>HOME</key>
+        <string>{{HOME}}</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>{{LOG_DIR}}/frontend.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{LOG_DIR}}/frontend.err.log</string>
+</dict>
+</plist>
