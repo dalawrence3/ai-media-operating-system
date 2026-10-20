@@ -13,7 +13,21 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 
 COLD_START_PROMPT_NAME: str = "market-exploration-cold-start"
-COLD_START_PROMPT_VERSION: str = "1"
+# Phase 18H.B.1: v3 removes the "Channel content universe" anchoring framing,
+# separates format identity from subject territory, and replaces the
+# subject-proximity-flavored semantic_fit_score_estimate with format_fit_score
+# + distance_from_current_subjects + domain_family.
+# Phase 7C.3, §1-§3: v4 adds a TARGET EXPLORATION DOMAIN override section
+# (rendered only when a caller supplies target_domain to plan_cold_start —
+# see cold_start.py's `target_domain_section` construction). v3's "Secondary
+# niches" framing told the model to diversify AWAY from anything listed
+# there; recovery discovery's own target domain must never be interpreted
+# that way, so it is now conveyed through this separate, explicitly-opposite
+# section instead of being folded into secondary_niches. When no
+# target_domain is supplied, target_domain_section renders empty and the
+# prompt is semantically identical to v3. v1/v2/v3 are kept on disk
+# unmodified as prompt-version history, never mutated in place.
+COLD_START_PROMPT_VERSION: str = "4"
 
 # ---------------------------------------------------------------------------
 # LLM expansion bounds
@@ -27,18 +41,62 @@ COLD_START_MAX_LLM_CANDIDATES: int = 10
 COLD_START_LLM_CANDIDATE_HARD_CAP: int = 12
 
 # ---------------------------------------------------------------------------
-# V1 cold-start priority weights
-# (must match PriorityComponents field names; weights sum to 1.0)
+# Phase 18H.B.1 — market_region priority weights
+#
+# Replaces the old niche_fit-weighted formula (0.40 niche_fit + 0.35 novelty +
+# 0.25 depth_factor), which — because depth_factor and novelty are both
+# constants within a single cold-start run — collapsed candidate ranking to a
+# pure sort by the model's own self-reported subject/niche closeness: exactly
+# the wrong incentive for broad-domain discovery. depth_factor is dropped
+# entirely (cold-start only ever runs at depth 0, so it was never a real
+# differentiator, only dead weight). format_fit and distance are weighted
+# highest (0.80 combined) because they are literally what this call exists to
+# optimize; novelty (0.20) is kept because it still varies meaningfully
+# *across* separate cold-start invocations over a channel's lifetime, even
+# though it was constant within any single run.
+# Weights sum to 1.0. This dict is intentionally independent of
+# PriorityComponents/ADJACENT_PRIORITY_WEIGHTS — adjacent-topic expansion's own
+# scoring is untouched by this change.
 # ---------------------------------------------------------------------------
 
-COLD_START_PRIORITY_WEIGHTS: dict[str, float] = {
-    "niche_fit": 0.40,
-    "novelty": 0.35,
-    "evidence_strength": 0.00,  # no external evidence at cold start
-    "velocity_trigger": 0.00,  # no velocity at cold start
-    "corroboration": 0.00,  # no corroboration at cold start
-    "depth_factor": 0.25,  # always 1.0 at depth 0 → full weight
+COLD_START_MARKET_REGION_WEIGHTS: dict[str, float] = {
+    "format_fit": 0.45,
+    "distance_from_current_subjects": 0.35,
+    "novelty": 0.20,
 }
+
+# Phase 7C.2, §5 — used ONLY when a caller supplies a target_domain (the
+# exploration-recovery case: this cold-start call exists specifically to
+# replenish ONE chosen cell). Domain alignment is weighted highest (0.40)
+# per the explicit requirement that it "should matter strongly for a
+# recovery invocation whose purpose is specifically to replenish the
+# selected cell" — the other three components are rescaled down but keep
+# their existing relative proportions, so quality/novelty/diversity are
+# preserved, just no longer able to outrank domain fit for this one
+# call shape. Every ordinary (non-recovery) cold-start caller never sets
+# target_domain and is completely unaffected by this dict's existence.
+COLD_START_MARKET_REGION_WEIGHTS_WITH_DOMAIN_TARGET: dict[str, float] = {
+    "format_fit": 0.27,
+    "distance_from_current_subjects": 0.21,
+    "novelty": 0.12,
+    "domain_alignment": 0.40,
+}
+
+# ---------------------------------------------------------------------------
+# Phase 18H.B.1 — domain-family concentration cap
+#
+# Reuses the exact ratio and rounding convention already established by
+# PlanningPolicy.max_cluster_share (Phase 14D, src/app/intelligence/experiments
+# /planning.py) and its consumer planning_service.py's
+# `max(1, int(policy.max_cluster_share * total_slots))` — floor via int()
+# truncation, floor-guarded at 1. The minimum-distinct-families figure is not
+# a second arbitrary constant: for K accepted slots with no family exceeding
+# this share, at least ceil(1 / MARKET_REGION_MAX_DOMAIN_FAMILY_SHARE) = 3
+# distinct families are required by pigeonhole — a direct mathematical
+# consequence of the same 0.40 cap, not an independent policy choice.
+# ---------------------------------------------------------------------------
+
+MARKET_REGION_MAX_DOMAIN_FAMILY_SHARE: float = 0.40
 
 # ---------------------------------------------------------------------------
 # V1 cold-start eligibility thresholds

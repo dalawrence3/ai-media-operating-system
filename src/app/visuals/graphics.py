@@ -506,7 +506,12 @@ def _render_diagram(image: Image.Image, beat: VisualBeat, palette: Palette) -> N
     margin = int(width * 0.1)
 
     terms = _headline_terms(beat, 4)
-    subject = terms[0] if terms else _label(beat.narration_text, 24)
+    # Phase 5: when no entity/keyword term exists, the literal visual
+    # subject (grounded against the topic) is a better diagram subject than
+    # the raw, possibly figurative, narration sentence — a diagram drawn
+    # from "fire drill for your immune system" should say "immune cells",
+    # not repeat the metaphor's own surface words.
+    subject = terms[0] if terms else _label(beat.literal_visual_subject or beat.narration_text, 24)
     parts = terms[1:] or _steps(beat.narration_text or "", 3)
 
     subject_font = _font(_BOLD_FONTS, int(width * 0.075))
@@ -637,15 +642,25 @@ _RENDERERS = {
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
-def graphic_cache_key(beat: VisualBeat, width: int, height: int) -> str:
-    """Deterministic identity for a beat's generated graphic."""
+def graphic_cache_key(
+    beat: VisualBeat, width: int, height: int, *, render_intent: str | None = None
+) -> str:
+    """Deterministic identity for a beat's generated graphic.
+
+    ``render_intent``, when given, overrides which renderer/palette is used
+    (Phase 18G diagram-continuation routing) and is folded into the cache key
+    so a diagram-rendered and a text-card-rendered PNG for the same beat text
+    never collide on one filename.
+    """
+    effective_intent = render_intent or beat.visual_intent
     payload = "|".join(
         [
             GRAPHICS_VERSION,
-            beat.visual_intent,
+            effective_intent,
             beat.narration_text,
             ",".join(beat.keywords),
             ",".join(beat.entities),
+            beat.literal_visual_subject,
             str(width),
             str(height),
         ]
@@ -659,21 +674,27 @@ def render_beat_graphic(
     *,
     width: int = 1080,
     height: int = 1920,
+    render_intent: str | None = None,
 ) -> Path:
     """Render an explanatory graphic for *beat*.  Always succeeds.
 
     This is the guaranteed terminal step of the visual fallback chain: it
     requires no network, no key, and no external service, so a beat can never
     end up unresolved because a provider was down.
+
+    ``render_intent`` overrides ``beat.visual_intent`` for palette/renderer
+    selection only — the beat's own intent still drives every other decision
+    (media preferences, query construction, scoring floors) unaffected.
     """
-    palette = _palette(beat.visual_intent)
+    effective_intent = render_intent or beat.visual_intent
+    palette = _palette(effective_intent)
     image = _background(width, height, palette)
 
-    renderer = _RENDERERS.get(beat.visual_intent)
+    renderer = _RENDERERS.get(effective_intent)
     if renderer is not None:
         renderer(image, beat, palette)
     else:
-        _render_statement(image, beat, palette, quoted=beat.visual_intent == INTENT_QUOTE)
+        _render_statement(image, beat, palette, quoted=effective_intent == INTENT_QUOTE)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(str(output_path), format="PNG")

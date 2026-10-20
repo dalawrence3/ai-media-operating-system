@@ -482,7 +482,7 @@ class TestSameTopicLabelIsolation:
             ).fetchone()
             assert row["channel_id"] == ch
 
-        assert SCHEMA_VERSION == 51
+        assert SCHEMA_VERSION == 60
 
 
 # ── Tests S–T: experiment authority interaction ────────────────────────────────

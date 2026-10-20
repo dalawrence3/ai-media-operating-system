@@ -80,6 +80,45 @@ def validate_wav_bytes(data: bytes) -> AudioMetadata:
     )
 
 
+def append_silence(data: bytes, *, duration_ms: int) -> bytes:
+    """Phase 7B, §9 — append `duration_ms` of true silence (all-zero PCM
+    frames, matching the SAME channel count / sample width / frame rate as
+    `data`) to the end of a WAV clip.
+
+    This is how an interactive_recall_quiz "prompt" segment's intentional
+    think-pause is represented: NOT as empty narration text (the LLM schema
+    forbids that, and the caption pipeline's `_validate_handoff` rejects it
+    — see content/schemas.py's think_duration_ms docstring) but as extra
+    silent duration appended to the segment's own real, spoken audio. Every
+    downstream consumer (caption timing, beat planning, audio/video
+    assembly) already works entirely off MEASURED audio duration, so this
+    is the only place new logic is needed — nothing downstream needs to
+    know a pause happened at all.
+
+    `duration_ms <= 0` returns `data` unchanged (no-op) — the ordinary path
+    for every non-quiz, non-"prompt" segment.
+    """
+    if duration_ms <= 0:
+        return data
+    buf_in = io.BytesIO(data)
+    with wave.open(buf_in, "rb") as wf:
+        num_channels = wf.getnchannels()
+        sample_width = wf.getsampwidth()
+        frame_rate = wf.getframerate()
+        frames = wf.readframes(wf.getnframes())
+
+    silence_frame_count = int(frame_rate * (duration_ms / 1000.0))
+    silence = b"\x00" * (silence_frame_count * num_channels * sample_width)
+
+    buf_out = io.BytesIO()
+    with wave.open(buf_out, "wb") as wf_out:
+        wf_out.setnchannels(num_channels)
+        wf_out.setsampwidth(sample_width)
+        wf_out.setframerate(frame_rate)
+        wf_out.writeframes(frames + silence)
+    return buf_out.getvalue()
+
+
 def write_audio_atomic(dest: Path, data: bytes) -> None:
     """Write audio bytes to dest atomically via a .tmp file on the same filesystem."""
     tmp = dest.with_suffix(".tmp")

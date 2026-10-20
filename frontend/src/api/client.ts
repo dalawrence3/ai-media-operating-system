@@ -33,6 +33,7 @@ import type {
   CPWorkspace,
   ControlEvent,
   CrossPublicationLearning,
+  TopicAttributeLearning,
   DiagnosticReport,
   Experiment,
   ExperimentStrategyBrief,
@@ -49,7 +50,9 @@ import type {
   PublicationAnalyticsHistoryEntry,
   PublicationDetail,
   PublicationListItem,
+  PublishingSlot,
   RecommendationReviewEvent,
+  RescheduleSlotRequest,
   ReviewItemView,
   ScheduleView,
   StageArtifact,
@@ -320,6 +323,26 @@ class ApiClient {
     return this.request<AutonomyPolicy>(
       'PUT',
       `/workspaces/${workspaceId}/channels/${channelId}/automation-policy`,
+      body,
+    )
+  }
+
+  listChannelPublishingSlots(workspaceId: string, channelId: string) {
+    return this.request<PublishingSlot[]>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/publishing-slots`,
+    )
+  }
+
+  rescheduleChannelPublishingSlot(
+    workspaceId: string,
+    channelId: string,
+    slotId: number,
+    body: RescheduleSlotRequest,
+  ) {
+    return this.request<PublishingSlot>(
+      'POST',
+      `/workspaces/${workspaceId}/channels/${channelId}/publishing-slots/${slotId}/reschedule`,
       body,
     )
   }
@@ -724,6 +747,13 @@ class ApiClient {
     return this.request<CrossPublicationLearning>(
       'GET',
       `/workspaces/${workspaceId}/channels/${channelId}/cross-publication`,
+    )
+  }
+
+  getTopicAttributeLearning(workspaceId: string, channelId: string) {
+    return this.request<TopicAttributeLearning>(
+      'GET',
+      `/workspaces/${workspaceId}/channels/${channelId}/topic-attributes`,
     )
   }
 

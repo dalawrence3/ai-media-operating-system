@@ -1160,14 +1160,14 @@ def test_BI_fresh_db_has_schema_version_38(tmp_path):
     from app.core.database import SCHEMA_VERSION, _get_version, open_db
 
     conn = open_db(tmp_path / "test.db")
-    assert SCHEMA_VERSION == 51
-    assert _get_version(conn) == 51
+    assert SCHEMA_VERSION == 60
+    assert _get_version(conn) == SCHEMA_VERSION
     conn.close()
 
 
 def test_BJ_v37_db_migrates_to_v38(tmp_path):
     """BJ: A DB stuck at version 37 migrates to 40 on next open_db."""
-    from app.core.database import _get_version, _set_version, open_db
+    from app.core.database import SCHEMA_VERSION, _get_version, _set_version, open_db
 
     # Create a v40 DB then roll back to v37 to simulate an old schema
     conn = open_db(tmp_path / "test.db")
@@ -1181,7 +1181,7 @@ def test_BJ_v37_db_migrates_to_v38(tmp_path):
 
     # Re-open: should migrate to 40
     conn2 = open_db(tmp_path / "test.db")
-    assert _get_version(conn2) == 51
+    assert _get_version(conn2) == SCHEMA_VERSION
     # Tables should exist
     tables = {
         row[0]
@@ -1239,7 +1239,7 @@ def test_BP_schema_version_constant_is_38():
     """BP: SCHEMA_VERSION constant equals 38."""
     from app.core.database import SCHEMA_VERSION
 
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 def test_BQ_run_id_is_uuid_string(db):

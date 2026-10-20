@@ -223,6 +223,81 @@ def test_create_narration_run_duplicate_hash_raises(conn: sqlite3.Connection) ->
         create_narration_run(conn, _run_draft(vp.id))
 
 
+# ── Phase 7C.4 — a FAILED run must not permanently block a legitimate retry ──
+
+
+def test_running_duplicate_still_blocked_after_v60(conn: sqlite3.Connection) -> None:
+    """§7.B — in-progress + identical request is still blocked. The v60
+    partial unique index excludes ONLY 'failed' rows; 'running' collisions
+    behave exactly as before."""
+    vp = create_voice_profile(conn, _vpc())
+    create_narration_run(conn, _run_draft(vp.id))
+    with pytest.raises(DuplicateNarrationInputHashError):
+        create_narration_run(conn, _run_draft(vp.id))
+
+
+def test_failed_duplicate_no_longer_blocks_retry(conn: sqlite3.Connection) -> None:
+    """§7.C — the actual Phase 7C.4 root-cause fix: once the first attempt
+    is FAILED (not merely running), a fresh create_narration_run() call for
+    the identical logical input must succeed, not raise
+    DuplicateNarrationInputHashError."""
+    vp = create_voice_profile(conn, _vpc())
+    first = create_narration_run(conn, _run_draft(vp.id))
+    fail_narration_run(conn, first.id, error_message="quota_exceeded")
+
+    retry = create_narration_run(conn, _run_draft(vp.id))
+
+    assert retry.id != first.id
+    assert retry.status == "running"
+
+
+def test_failed_retry_preserves_original_failure_history(conn: sqlite3.Connection) -> None:
+    """§7.E — the failed row is never mutated or deleted by a retry; its
+    error_message and status remain exactly as recorded."""
+    vp = create_voice_profile(conn, _vpc())
+    first = create_narration_run(conn, _run_draft(vp.id))
+    fail_narration_run(conn, first.id, error_message="ElevenLabs quota_exceeded")
+
+    create_narration_run(conn, _run_draft(vp.id))
+
+    preserved = require_narration_run(conn, first.id)
+    assert preserved.status == "failed"
+    assert preserved.error_message == "ElevenLabs quota_exceeded"
+
+    all_runs = list_narration_runs(conn, first.plan_id)
+    assert len(all_runs) == 2
+    assert {r.status for r in all_runs} == {"failed", "running"}
+
+
+def test_two_failed_attempts_can_coexist(conn: sqlite3.Connection) -> None:
+    """Multiple failed attempts for the same logical input are all
+    legitimate history -- they must never collide with each other either."""
+    vp = create_voice_profile(conn, _vpc())
+    first = create_narration_run(conn, _run_draft(vp.id))
+    fail_narration_run(conn, first.id, error_message="attempt 1 failed")
+
+    second = create_narration_run(conn, _run_draft(vp.id))
+    fail_narration_run(conn, second.id, error_message="attempt 2 failed")
+
+    third = create_narration_run(conn, _run_draft(vp.id))
+    assert third.status == "running"
+    assert len({first.id, second.id, third.id}) == 3
+
+
+def test_completed_run_still_idempotently_reused(conn: sqlite3.Connection) -> None:
+    """§7.A / §7.G — ordinary successful-run idempotency is unchanged: a
+    completed run still blocks a plain duplicate create_narration_run()
+    call (find_narration_run_by_input_hash is the caller-side idempotent
+    reuse path exercised at the orchestrator level; at the repository level
+    a second raw create still collides, exactly as before v60)."""
+    vp = create_voice_profile(conn, _vpc())
+    first = create_narration_run(conn, _run_draft(vp.id))
+    complete_narration_run(conn, first.id)
+
+    with pytest.raises(DuplicateNarrationInputHashError):
+        create_narration_run(conn, _run_draft(vp.id))
+
+
 def test_get_narration_run_missing(conn: sqlite3.Connection) -> None:
     assert get_narration_run(conn, 9999) is None
 

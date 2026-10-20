@@ -74,6 +74,14 @@ export function useCrossPublicationLearning(workspaceId: string, channelId: stri
   })
 }
 
+export function useTopicAttributeLearning(workspaceId: string, channelId: string | null) {
+  return useQuery({
+    queryKey: ['topic-attributes', workspaceId, channelId],
+    queryFn: () => api.getTopicAttributeLearning(workspaceId, channelId!),
+    enabled: !!workspaceId && !!channelId,
+  })
+}
+
 // ── Market intelligence (Phase 17D) ─────────────────────────────────────────
 
 export function useMarketOpportunities(workspaceId: string, cpChannelId: string | null) {

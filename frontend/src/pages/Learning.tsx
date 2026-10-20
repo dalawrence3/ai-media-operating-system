@@ -40,6 +40,7 @@ import {
   useAcceptRecommendation,
   useRejectRecommendation,
   useCrossPublicationLearning,
+  useTopicAttributeLearning,
   useMarketOpportunities,
   useMarketExperiments,
   useStrategyBriefs,
@@ -53,9 +54,13 @@ import {
   CREATIVE_FACTORS,
   type FeatureGroup,
 } from '@/lib/marketIntelligence'
-import type { OptimizationRecommendation, FeaturePerformanceObservation } from '@/api/types'
+import type {
+  OptimizationRecommendation,
+  FeaturePerformanceObservation,
+  TopicAttributePerformanceObservation,
+} from '@/api/types'
 
-const STATUS_FILTERS = ['all', 'pending', 'accepted', 'rejected'] as const
+const STATUS_FILTERS = ['current', 'pending', 'accepted', 'rejected', 'history'] as const
 type StatusFilter = (typeof STATUS_FILTERS)[number]
 
 const FEATURE_GROUPS: FeatureGroup[] = ['Script', 'Narration', 'Production', 'Publishing']
@@ -156,6 +161,15 @@ function RecommendationCard({
             {isAccepted   && <span className="tag" style={{ background: 'var(--status-ok-bg)', color: 'var(--status-ok)' }}>accepted</span>}
             {isRejected   && <span className="tag" style={{ background: 'var(--status-error-bg)', color: 'var(--status-error)' }}>rejected</span>}
             {isSuperseded && <span className="tag" style={{ background: 'var(--surface-secondary)', color: 'var(--text-secondary)' }}>superseded</span>}
+            {isAccepted && rec.evidence_valid === false && (
+              <span
+                className="tag"
+                style={{ background: 'var(--status-warn-bg)', color: 'var(--status-warn)' }}
+                title={rec.validity_reason ?? undefined}
+              >
+                stale evidence
+              </span>
+            )}
           </div>
           <h3 className="text-sm font-medium">{rec.title}</h3>
         </div>
@@ -243,6 +257,70 @@ function RecommendationCard({
   )
 }
 
+/* Phase 18F.1 — display-only filter for the Creative Factors panel.
+
+   Mirrors get_decision_useful_coverage()'s two rules, applied client-side to
+   the raw feature_observations list (which the backend deliberately leaves
+   unfiltered, one row per feature × bucket × metric):
+     1. a feature with only one distinct observed bucket across the channel's
+        evidence has no comparison to show yet — not permanently useless, just
+        not enough variation SO FAR.
+     2. a bucket whose sample_maturity is 'insufficient' (n < 2 publications)
+        doesn't have enough support to compare either.
+   Raw rows are never deleted or reordered here — this only decides what the
+   default view surfaces; "Show all raw patterns" always renders the
+   untouched full list. */
+function distinctBucketsPerFeature(
+  observations: FeaturePerformanceObservation[],
+): Map<string, Set<string>> {
+  const buckets = new Map<string, Set<string>>()
+  for (const ob of observations) {
+    if (!buckets.has(ob.feature_name)) buckets.set(ob.feature_name, new Set())
+    buckets.get(ob.feature_name)!.add(ob.feature_bucket)
+  }
+  return buckets
+}
+
+function isUsefulFactorObservation(
+  ob: FeaturePerformanceObservation,
+  bucketsByFeature: Map<string, Set<string>>,
+): boolean {
+  const hasVariation = (bucketsByFeature.get(ob.feature_name)?.size ?? 0) >= 2
+  // Missing/empty maturity fails safe toward "insufficient" — the same
+  // fallback MaturityBadge already uses (maturity ?? 'insufficient') — so a
+  // legacy row with no maturity recorded is hidden by default rather than
+  // silently presented as comparative evidence it never earned.
+  const maturity = ob.sample_maturity || 'insufficient'
+  const hasSupport = maturity !== 'insufficient'
+  return hasVariation && hasSupport
+}
+
+const MATURITY_RANK: Record<string, number> = {
+  actionable: 3,
+  directional: 2,
+  exploratory: 1,
+  insufficient: 0,
+}
+
+/** Strongest evidence first: maturity, then sample size, then effect size,
+    then a deterministic alphabetical fallback so ties never reorder on
+    every render. */
+function sortUsefulObservations(
+  observations: FeaturePerformanceObservation[],
+): FeaturePerformanceObservation[] {
+  return [...observations].sort((a, b) => {
+    const maturityDiff = (MATURITY_RANK[b.sample_maturity] ?? 0) - (MATURITY_RANK[a.sample_maturity] ?? 0)
+    if (maturityDiff !== 0) return maturityDiff
+    const sampleDiff = b.publication_count - a.publication_count
+    if (sampleDiff !== 0) return sampleDiff
+    const effectDiff = Math.abs(b.abs_diff_from_baseline ?? 0) - Math.abs(a.abs_diff_from_baseline ?? 0)
+    if (effectDiff !== 0) return effectDiff
+    const aKey = `${a.feature_name}::${a.feature_bucket}::${a.metric_name}`
+    const bKey = `${b.feature_name}::${b.feature_bucket}::${b.metric_name}`
+    return aKey.localeCompare(bKey)
+  })
+}
+
 function FactorObservationRow({ ob }: { ob: FeaturePerformanceObservation }) {
   const diff = ob.rel_diff_from_baseline
   const diffLabel =
@@ -266,6 +344,79 @@ function FactorObservationRow({ ob }: { ob: FeaturePerformanceObservation }) {
   )
 }
 
+/* Phase 18H.C — Topic Attribute Insights.
+
+   A deliberately SEPARATE panel from Creative Factors above: topic
+   attributes describe a topic's SUBJECT MATTER (practical_utility,
+   curiosity, ...) and survive different scripts/hooks/renders of the same
+   topic, while Creative Factors describe one specific render's structural
+   choices. Never intermixed — separate backend tables, separate endpoint,
+   separate panel.
+
+   Unlike feature_observations, the backend already returns both `raw` and
+   `decision_useful` lists pre-filtered (get_decision_useful_attribute_
+   coverage applies the maturity + domain-crossing rules server-side), so
+   no client-side isUseful filter is needed here — only sorting. */
+
+const TOPIC_ATTRIBUTE_LABELS: Record<string, string> = {
+  practical_utility: 'Practical utility',
+  immediate_payoff: 'Immediate payoff',
+  curiosity: 'Curiosity',
+  personal_relevance: 'Personal relevance',
+  surprise: 'Surprise',
+  broad_accessibility: 'Broad accessibility',
+  niche_technicality: 'Niche technicality',
+}
+
+function attributeLabel(name: string): string {
+  return TOPIC_ATTRIBUTE_LABELS[name] ?? name
+}
+
+function sortAttributeObservations(
+  observations: TopicAttributePerformanceObservation[],
+): TopicAttributePerformanceObservation[] {
+  return [...observations].sort((a, b) => {
+    const maturityDiff = (MATURITY_RANK[b.sample_maturity] ?? 0) - (MATURITY_RANK[a.sample_maturity] ?? 0)
+    if (maturityDiff !== 0) return maturityDiff
+    const sampleDiff = b.publication_count - a.publication_count
+    if (sampleDiff !== 0) return sampleDiff
+    const domainDiff = b.distinct_domain_family_count - a.distinct_domain_family_count
+    if (domainDiff !== 0) return domainDiff
+    const effectDiff = Math.abs(b.abs_diff_from_baseline ?? 0) - Math.abs(a.abs_diff_from_baseline ?? 0)
+    if (effectDiff !== 0) return effectDiff
+    const aKey = `${a.attribute_name}::${a.attribute_bucket}::${a.metric_name}`
+    const bKey = `${b.attribute_name}::${b.attribute_bucket}::${b.metric_name}`
+    return aKey.localeCompare(bKey)
+  })
+}
+
+function AttributeObservationRow({ ob }: { ob: TopicAttributePerformanceObservation }) {
+  const diff = ob.rel_diff_from_baseline
+  const diffLabel =
+    diff === null
+      ? null
+      : `${diff >= 0 ? '+' : ''}${(diff * 100).toFixed(0)}% associated with baseline`
+  const diffClass = diff === null ? '' : diff >= 0 ? 'factor-observation-diff-up' : 'factor-observation-diff-down'
+
+  return (
+    <div className="factor-observation-row">
+      <div className="factor-observation-main">
+        <span className="factor-observation-feature">{attributeLabel(ob.attribute_name)}</span>
+        <span className="factor-observation-bucket">{ob.attribute_bucket}</span>
+      </div>
+      <span className="factor-observation-stat">
+        {outcomeMetricLabel(ob.metric_name)}: {ob.mean !== null ? formatCompact(ob.mean) : '—'}
+      </span>
+      {diffLabel && <span className={`factor-observation-stat ${diffClass}`}>{diffLabel}</span>}
+      <span className="factor-observation-stat">
+        {ob.publication_count} publication{ob.publication_count === 1 ? '' : 's'} ·{' '}
+        {ob.distinct_domain_family_count} domain{ob.distinct_domain_family_count === 1 ? '' : 's'}
+      </span>
+      <MaturityBadge maturity={ob.sample_maturity} sampleSize={ob.publication_count} />
+    </div>
+  )
+}
+
 export function Learning() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
 
@@ -281,7 +432,9 @@ export function Learning() {
 }
 
 function LearningContent({ workspaceId }: { workspaceId: string }) {
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('current')
+  const [showAllRawFactors, setShowAllRawFactors] = useState(false)
+  const [showAllRawAttributes, setShowAllRawAttributes] = useState(false)
 
   const { channel } = useCurrentChannel(workspaceId)
   const cpChannelId = channel?.id ?? null
@@ -291,18 +444,24 @@ function LearningContent({ workspaceId }: { workspaceId: string }) {
   const recs = useChannelRecommendations(workspaceId, publicationIds)
 
   const crossPub = useCrossPublicationLearning(workspaceId, cpChannelId)
+  const topicAttr = useTopicAttributeLearning(workspaceId, cpChannelId)
   const opportunities = useMarketOpportunities(workspaceId, cpChannelId)
   const experiments = useMarketExperiments(workspaceId, cpChannelId)
   const briefs = useStrategyBriefs(workspaceId, cpChannelId)
   const refreshSchedule = useMarketRefreshSchedule(workspaceId, cpChannelId)
 
-  const filteredRecs = useMemo(
-    () =>
-      statusFilter === 'all'
-        ? recs.recommendations
-        : recs.recommendations.filter(r => r.status === statusFilter),
-    [recs.recommendations, statusFilter],
-  )
+  const filteredRecs = useMemo(() => {
+    switch (statusFilter) {
+      case 'history':
+        return recs.recommendations
+      case 'current':
+        return recs.recommendations.filter(
+          r => (r.status === 'pending' || r.status === 'accepted') && r.evidence_valid !== false,
+        )
+      default:
+        return recs.recommendations.filter(r => r.status === statusFilter)
+    }
+  }, [recs.recommendations, statusFilter])
 
   const activeExperimentCount = (experiments.data ?? []).filter(
     e => !['cancelled', 'completed'].includes(e.status),
@@ -320,13 +479,26 @@ function LearningContent({ workspaceId }: { workspaceId: string }) {
     .filter(v => v.avgViewPercentage !== null)
     .sort((a, b) => (b.avgViewPercentage ?? 0) - (a.avgViewPercentage ?? 0))
 
+  const rawFactorObservations = crossPub.data?.feature_observations ?? []
+  const bucketsByFeature = distinctBucketsPerFeature(rawFactorObservations)
+  const usefulFactorObservations = sortUsefulObservations(
+    rawFactorObservations.filter(ob => isUsefulFactorObservation(ob, bucketsByFeature)),
+  )
+  const displayedFactorObservations = showAllRawFactors ? rawFactorObservations : usefulFactorObservations
+
   const factorGroups: Record<FeatureGroup, FeaturePerformanceObservation[]> = {
     Script: [], Narration: [], Production: [], Publishing: [],
   }
-  for (const ob of crossPub.data?.feature_observations ?? []) {
+  for (const ob of displayedFactorObservations) {
     const group = CREATIVE_FACTORS.find(f => f.key === ob.feature_name)?.group ?? 'Production'
     factorGroups[group].push(ob)
   }
+
+  const rawAttributeObservations = topicAttr.data?.raw ?? []
+  const usefulAttributeObservations = sortAttributeObservations(topicAttr.data?.decision_useful ?? [])
+  const displayedAttributeObservations = showAllRawAttributes
+    ? sortAttributeObservations(rawAttributeObservations)
+    : usefulAttributeObservations
 
   const sortedOpportunities = [...(opportunities.data ?? [])].sort(
     (a, b) => (b.composite_score ?? -1) - (a.composite_score ?? -1),
@@ -427,7 +599,7 @@ function LearningContent({ workspaceId }: { workspaceId: string }) {
             title="Recommendations"
             description="Suggestions generated from this channel's own analytics history. Accepting a recommendation does not auto-apply it."
             actions={
-              (recs.recommendations.length > 0 || statusFilter !== 'all') && (
+              (recs.recommendations.length > 0 || statusFilter !== 'current') && (
                 <div className="flex gap-2">
                   {STATUS_FILTERS.map(f => (
                     <button
@@ -464,9 +636,51 @@ function LearningContent({ workspaceId }: { workspaceId: string }) {
         <section className="section">
           <SectionHeader
             title="Creative factors"
-            description="How structural choices — script length, pacing, scene count, publish timing — have been associated with performance across this channel's videos. Always observational, never causal."
+            description={
+              showAllRawFactors
+                ? `Showing all ${rawFactorObservations.length} raw observations, including patterns with not ` +
+                  `enough variation or support yet. How structural choices — script length, pacing, scene ` +
+                  `count, publish timing — have been associated with performance across this channel's videos. ` +
+                  `Always observational, never causal.`
+                : `${usefulFactorObservations.length} useful pattern${usefulFactorObservations.length === 1 ? '' : 's'} ` +
+                  `· ${rawFactorObservations.length} raw observation${rawFactorObservations.length === 1 ? '' : 's'}. ` +
+                  `How structural choices — script length, pacing, scene count, publish timing — have been ` +
+                  `associated with performance across this channel's videos. Always observational, never causal.`
+            }
+            actions={
+              rawFactorObservations.length > 0 && (
+                <button
+                  className={`button button-sm ${showAllRawFactors ? 'button-primary' : 'button-secondary'}`}
+                  onClick={() => setShowAllRawFactors(v => !v)}
+                  data-testid="toggle-show-all-raw-factors"
+                >
+                  Show all raw patterns
+                </button>
+              )
+            }
           />
-          {(crossPub.data?.feature_observations.length ?? 0) > 0 ? (
+          {rawFactorObservations.length === 0 ? (
+            <EmptyState
+              icon="🧩"
+              title="Cross-publication learning hasn't run yet"
+              description={
+                `This channel tracks ${CREATIVE_FACTORS.length} creative factors across script, narration, ` +
+                `production, and publishing — but comparing them needs several videos with both a content ` +
+                `feature snapshot and observed analytics. Run 'ace learn cross-pub --channel ` +
+                `${cpChannelId ?? '<channel-id>'}' once enough videos have been observed.`
+              }
+            />
+          ) : displayedFactorObservations.length === 0 ? (
+            <EmptyState
+              icon="🧩"
+              title="Not enough variation yet"
+              description={
+                `${rawFactorObservations.length} raw observation${rawFactorObservations.length === 1 ? '' : 's'} ` +
+                `exist for this channel, but none have enough variation or support to compare yet. Use ` +
+                `"Show all raw patterns" above to see the raw observations.`
+              }
+            />
+          ) : (
             <div className="card">
               {FEATURE_GROUPS.map(group =>
                 factorGroups[group].length > 0 ? (
@@ -479,17 +693,72 @@ function LearningContent({ workspaceId }: { workspaceId: string }) {
                 ) : null,
               )}
             </div>
-          ) : (
+          )}
+        </section>
+
+        {/* D2. Topic Attribute Insights (Phase 18H.C) — a separate semantic
+            layer from Creative Factors above: describes a topic's SUBJECT
+            MATTER (practical utility, curiosity, ...), not a specific
+            render's structural choices. Observation only — never feeds
+            planning. */}
+        <section className="section">
+          <SectionHeader
+            title="Topic Attribute Insights"
+            description={
+              showAllRawAttributes
+                ? `Showing all ${rawAttributeObservations.length} raw observations, including patterns with ` +
+                  `not enough evidence or domain diversity yet. Early evidence for how descriptive topic ` +
+                  `characteristics — practical utility, curiosity, accessibility, and others — are associated ` +
+                  `with performance across this channel's videos, independent of subject domain. Always ` +
+                  `observational, never causal.`
+                : `${usefulAttributeObservations.length} useful pattern${usefulAttributeObservations.length === 1 ? '' : 's'} ` +
+                  `· ${rawAttributeObservations.length} raw observation${rawAttributeObservations.length === 1 ? '' : 's'}. ` +
+                  `Early evidence for how descriptive topic characteristics are associated with performance, ` +
+                  `independent of subject domain. Always observational, never causal.`
+            }
+            actions={
+              rawAttributeObservations.length > 0 && (
+                <button
+                  className={`button button-sm ${showAllRawAttributes ? 'button-primary' : 'button-secondary'}`}
+                  onClick={() => setShowAllRawAttributes(v => !v)}
+                  data-testid="toggle-show-all-raw-attributes"
+                >
+                  Show all raw observations
+                </button>
+              )
+            }
+          />
+          {rawAttributeObservations.length === 0 ? (
             <EmptyState
-              icon="🧩"
-              title="Cross-publication learning hasn't run yet"
+              icon="🧭"
+              title="No topic-attribute evidence yet"
               description={
-                `This channel tracks ${CREATIVE_FACTORS.length} creative factors across script, narration, ` +
-                `production, and publishing — but comparing them needs several videos with both a content ` +
-                `feature snapshot and observed analytics. Run 'ace learn cross-pub --channel ` +
-                `${cpChannelId ?? '<channel-id>'}' once enough videos have been observed.`
+                `Topic attributes are characterized from each topic's subject matter, then compared against ` +
+                `this channel's own analytics. Run 'ace learn topic-attributes backfill --channel ` +
+                `${cpChannelId ?? '<channel-id>'}' to characterize published topics, then 'ace learn ` +
+                `topic-attributes recompute --channel ${cpChannelId ?? '<channel-id>'}' once enough videos ` +
+                `have been observed.`
               }
             />
+          ) : displayedAttributeObservations.length === 0 ? (
+            <EmptyState
+              icon="🧭"
+              title="Not enough evidence yet"
+              description={
+                `${rawAttributeObservations.length} raw observation${rawAttributeObservations.length === 1 ? '' : 's'} ` +
+                `exist for this channel, but none have enough publications or domain diversity to compare yet. ` +
+                `Use "Show all raw observations" above to see them.`
+              }
+            />
+          ) : (
+            <div className="card">
+              {displayedAttributeObservations.map(ob => (
+                <AttributeObservationRow
+                  key={`${ob.attribute_name}-${ob.attribute_bucket}-${ob.metric_name}`}
+                  ob={ob}
+                />
+              ))}
+            </div>
           )}
         </section>
 

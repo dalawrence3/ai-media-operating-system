@@ -108,10 +108,21 @@ def audit_visual_plan(
     # Only retrieved assets can be low-confidence. A programmatic graphic
     # carries the score of the candidates it beat, which says nothing about
     # the graphic's own fitness — counting it would penalise the correct call.
+    #
+    # Phase 6, §1/§3 — this is the same lexical-score-only check
+    # `composition.SceneDiagnostic.low_confidence` had, and produced the same
+    # misleading signal: a beat actual-content verification explicitly
+    # confirmed (`verification_status == "verified"`) does not stay
+    # "low confidence" merely because the pre-retrieval lexical score that
+    # picked it was weak. See composition.py's `low_confidence` docstring for
+    # the full semantic source-of-truth hierarchy this mirrors.
     report.low_confidence_count = sum(
         1
         for r in resolutions
-        if r.provider != "programmatic" and r.score and r.score < LOW_CONFIDENCE_SCORE
+        if r.provider != "programmatic"
+        and r.verification_status != "verified"
+        and r.score
+        and r.score < LOW_CONFIDENCE_SCORE
     )
 
     dominant_key, dominant_ms = _dominant(resolutions)

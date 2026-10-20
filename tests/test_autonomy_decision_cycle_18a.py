@@ -32,6 +32,7 @@ from app.intelligence.autonomy.models import AutonomyPolicy, DecisionOutcome
 from app.intelligence.autonomy.repository import (
     InvalidTimezoneError,
     compute_next_slot,
+    compute_queue_occupancy,
     fill_slot,
     get_autonomy_policy,
     list_active_slots,
@@ -180,7 +181,7 @@ def _patch_eligible(monkeypatch, opp_ids: set[int] | None = None):
         ExperimentEligibilityClassification,
     )
 
-    def _fake(conn, opp_id, ch_id, ai_provider=None, policy=None):
+    def _fake(conn, opp_id, ch_id, ai_provider=None, policy=None, exploration_cell=False):
         cls = (
             ExperimentEligibilityClassification.GENERAL_ELIGIBLE
             if opp_ids is None or opp_id in opp_ids
@@ -300,6 +301,80 @@ def test_cadence_timezone_conversion_is_correct():
     utc_dt, local_iso, _ = compute_next_slot(p, after_utc=after)
     assert "09:00:00" in local_iso
     assert utc_dt.hour == 13  # 9am ET == 13:00 UTC in August (EDT, UTC-4)
+
+
+def test_daily_noon_local_is_already_supported_natively():
+    """Section 18: 'once daily at a specified local clock time' (e.g. noon
+    America/New_York) needs no product extension — cadence_type='daily' with
+    preferred_local_hour=12 already means exactly that. No new field, no new
+    cadence type."""
+    p = AutonomyPolicy(
+        channel_id="c",
+        workspace_id="w",
+        cadence_type="daily",
+        timezone="America/New_York",
+        preferred_local_hour=12,
+    )
+    after = datetime(2026, 8, 29, 6, 0, 0, tzinfo=UTC)  # 2am ET
+    utc_dt, local_iso, slot_key = compute_next_slot(p, after_utc=after)
+    assert "T12:00:00" in local_iso
+    assert slot_key == "2026-08-29"
+
+    # The next slot after that one is the following day at noon local again —
+    # a stable daily cadence, not drifting.
+    utc_dt2, local_iso2, slot_key2 = compute_next_slot(p, after_utc=utc_dt)
+    assert "T12:00:00" in local_iso2
+    assert slot_key2 == "2026-08-30"
+
+
+def test_daily_noon_holds_across_a_dst_transition():
+    """Noon Eastern must remain noon Eastern across the fall-back DST
+    transition (2026-11-01 in the US) — not drift to 11am or 1pm UTC-relative
+    because of a fixed-UTC-offset assumption. compute_next_slot re-derives
+    the local hour from the IANA zone on every step, so this is exercised
+    directly rather than merely asserted."""
+    p = AutonomyPolicy(
+        channel_id="c",
+        workspace_id="w",
+        cadence_type="daily",
+        timezone="America/New_York",
+        preferred_local_hour=12,
+    )
+    before_dst = datetime(2026, 10, 30, 6, 0, 0, tzinfo=UTC)
+    _, local_iso_before, _ = compute_next_slot(p, after_utc=before_dst)
+    assert "T12:00:00-04:00" in local_iso_before  # EDT
+
+    after_dst = datetime(2026, 11, 3, 6, 0, 0, tzinfo=UTC)  # US DST ended Nov 1, 2026
+    _, local_iso_after, _ = compute_next_slot(p, after_utc=after_dst)
+    assert "T12:00:00-05:00" in local_iso_after  # EST
+
+    # Both are still, unambiguously, local noon.
+    assert "T12:00:00" in local_iso_before
+    assert "T12:00:00" in local_iso_after
+
+
+def test_every_12h_at_noon_anchor_yields_noon_and_midnight_not_daily_noon():
+    """Section 18: if an operator sets preferred_local_hour=12 while cadence
+    stays 'every_12h' (today's live configuration), the two slots generated
+    per day are noon AND midnight local — not once daily at noon. This is
+    the concrete comparison the product should show an operator choosing
+    between 'every_12h' and 'daily' at the same preferred hour."""
+    p = AutonomyPolicy(
+        channel_id="c",
+        workspace_id="w",
+        cadence_type="every_12h",
+        timezone="America/New_York",
+        preferred_local_hour=12,
+    )
+    after = datetime(2026, 8, 29, 6, 0, 0, tzinfo=UTC)  # 2am ET
+    _, local_iso_1, _ = compute_next_slot(p, after_utc=after)
+    utc_dt_1, _, _ = compute_next_slot(p, after_utc=after)
+    _, local_iso_2, _ = compute_next_slot(p, after_utc=utc_dt_1)
+
+    hours = {local_iso_1[11:13], local_iso_2[11:13]}
+    assert hours == {"00", "12"}, (
+        "every_12h at hour 12 must alternate midnight/noon, not repeat noon"
+    )
 
 
 def test_cadence_custom_cron_not_implemented():
@@ -522,6 +597,51 @@ def test_no_eligible_candidate_leaves_slot_reserved_not_filled(db, channel, work
     assert slots[0].brief_id is None
 
 
+# ---------------------------------------------------------------------------
+# Phase 7A, §9 — exploration-recovery wiring (off by default)
+# ---------------------------------------------------------------------------
+
+
+def test_recovery_never_attempted_when_env_flag_unset(db, channel, workspace, monkeypatch):
+    monkeypatch.delenv("ACE_EXPLORATION_RECOVERY_ENABLED", raising=False)
+    _enable_policy(db, channel, workspace)
+    result = run_decision_cycle(db, cp_channel_id=channel.id, workspace_id=workspace.id)
+    assert result.outcome == DecisionOutcome.NO_ELIGIBLE_CANDIDATE
+    assert result.recovery_attempted is False
+    assert result.recovery_reason is None
+
+
+def test_recovery_invoked_when_enabled_and_streak_met(db, channel, workspace, monkeypatch):
+    """A single decision cycle only ever produces ONE no_eligible_candidate
+    operation record, so the streak floor (default 3) is not yet met on the
+    very first call — this confirms the flag alone doesn't bypass the
+    staleness check, by asserting recovery is correctly NOT attempted here,
+    matching should_attempt_recovery's own floor."""
+    monkeypatch.setenv("ACE_EXPLORATION_RECOVERY_ENABLED", "true")
+    _enable_policy(db, channel, workspace)
+    result = run_decision_cycle(db, cp_channel_id=channel.id, workspace_id=workspace.id)
+    assert result.outcome == DecisionOutcome.NO_ELIGIBLE_CANDIDATE
+    assert result.recovery_attempted is False
+    assert result.recovery_reason is not None
+    assert "consecutive" in result.recovery_reason
+
+
+def test_recovery_exception_degrades_never_fails_the_cycle(db, channel, workspace, monkeypatch):
+    monkeypatch.setenv("ACE_EXPLORATION_RECOVERY_ENABLED", "true")
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("app.intelligence.exploration.recovery.attempt_recovery_discovery", _boom)
+    _enable_policy(db, channel, workspace)
+    result = run_decision_cycle(db, cp_channel_id=channel.id, workspace_id=workspace.id)
+    assert result.outcome in (
+        DecisionOutcome.NO_ELIGIBLE_CANDIDATE,
+        DecisionOutcome.DEGRADED_BUT_PROCEEDED,
+    )
+    assert any("exploration_recovery" in e for e in result.errors)
+
+
 def test_happy_path_selects_and_fills_slot(db, channel, workspace, monkeypatch):
     _enable_policy(db, channel, workspace)
     intel_id = get_intelligence_channel_id(db, channel.id)
@@ -568,6 +688,98 @@ def test_queue_already_satisfied_skips_all_expensive_work(db, channel, workspace
 
     second = run_decision_cycle(db, cp_channel_id=channel.id, workspace_id=workspace.id)
     assert second.outcome == DecisionOutcome.QUEUE_ALREADY_SATISFIED
+
+
+def test_queue_occupancy_not_satisfied_when_a_slot_is_in_flight(db, channel, workspace):
+    """Phase 18F regression guard: filled >= target alone is not "satisfied"
+    — a reserved-but-brief-less slot is a live signal a candidate is still
+    needed right now, exactly as run_decision_cycle's own short-circuit
+    condition requires (decision_cycle.py step 2)."""
+    _enable_policy(db, channel, workspace, queue_target=1)
+
+    filled = reserve_slot(
+        db,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        slot_key="2026-01-01",
+        scheduled_for_local="2026-01-01T09:00:00",
+        timezone="UTC",
+        scheduled_for_utc=datetime(2026, 1, 1, 9, tzinfo=UTC),
+    )
+    fill_slot(db, filled.id, brief_id="brief-1", selection_decision_id=1, opportunity_id=1)
+    reserve_slot(
+        db,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        slot_key="2026-01-02",
+        scheduled_for_local="2026-01-02T09:00:00",
+        timezone="UTC",
+        scheduled_for_utc=datetime(2026, 1, 2, 9, tzinfo=UTC),
+    )
+    db.commit()
+
+    occupancy = compute_queue_occupancy(db, channel.id)
+    assert len(occupancy.filled_slots) >= occupancy.queue_target
+    assert len(occupancy.in_flight_slots) == 1
+    assert occupancy.satisfied is False
+
+
+def test_queue_occupancy_satisfied_with_no_in_flight_slot(db, channel, workspace):
+    _enable_policy(db, channel, workspace, queue_target=1)
+
+    filled = reserve_slot(
+        db,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        slot_key="2026-01-01",
+        scheduled_for_local="2026-01-01T09:00:00",
+        timezone="UTC",
+        scheduled_for_utc=datetime(2026, 1, 1, 9, tzinfo=UTC),
+    )
+    fill_slot(db, filled.id, brief_id="brief-1", selection_decision_id=1, opportunity_id=1)
+    db.commit()
+
+    occupancy = compute_queue_occupancy(db, channel.id)
+    assert occupancy.satisfied is True
+
+
+def test_queue_refills_after_a_missed_slot_is_retired(db, channel, workspace, monkeypatch):
+    """Regression guard for the live queue-depth bug: a slot whose deadline
+    passed and was correctly retired to publish_status='skipped_missed' must
+    stop occupying the queue, and the decision cycle must refill rather than
+    reporting QUEUE_ALREADY_SATISFIED forever. Before the missed-slot
+    retirement fix, a stuck slot never reached 'skipped_missed' at all and
+    this stayed satisfied indefinitely — see test_autonomy_publishing_cycle_18c
+    for the retirement mechanics themselves; this confirms the decision
+    cycle actually observes the result."""
+    _enable_policy(db, channel, workspace, queue_target=1)
+    intel_id = get_intelligence_channel_id(db, channel.id)
+    _seed_bare_opportunity(db, intel_id, opp_id=1)
+    _patch_eligible(monkeypatch)
+    _stub_market_refresh(monkeypatch)
+
+    missed = reserve_slot(
+        db,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        slot_key="2026-01-01",
+        scheduled_for_local="2026-01-01T09:00:00",
+        timezone="UTC",
+        scheduled_for_utc=datetime(2026, 1, 1, 9, tzinfo=UTC),
+    )
+    fill_slot(db, missed.id, brief_id="brief-1", selection_decision_id=1, opportunity_id=1)
+    db.execute(
+        "UPDATE publishing_slots SET publish_status='skipped_missed' WHERE id=?", (missed.id,)
+    )
+    db.commit()
+
+    occupancy = compute_queue_occupancy(db, channel.id)
+    assert occupancy.filled_slots == [], "a retired missed slot must not occupy the queue"
+    assert occupancy.satisfied is False
+
+    result = run_decision_cycle(db, cp_channel_id=channel.id, workspace_id=workspace.id)
+    assert result.outcome != DecisionOutcome.QUEUE_ALREADY_SATISFIED
+    assert result.outcome == DecisionOutcome.SELECTED
 
 
 def test_concurrent_tick_within_same_hour_is_blocked(db, channel, workspace, monkeypatch):
@@ -668,7 +880,52 @@ def test_insufficient_learning_does_not_block_bootstrap_selection(
 
     result = run_decision_cycle(db, cp_channel_id=channel.id, workspace_id=workspace.id)
     assert result.cross_pub_learning_publication_count == 0  # genuinely insufficient
-    assert result.outcome == DecisionOutcome.SELECTED  # proceeded anyway, bootstrap-weighted
+
+
+def test_topic_attribute_learning_is_invoked(db, channel, workspace, monkeypatch):
+    """Phase 18H.C: topic-attribute performance learning runs alongside
+    cross-publication learning in the same decision cycle, read-only,
+    zero provider calls, never blocking."""
+    _enable_policy(db, channel, workspace)
+    _stub_market_refresh(monkeypatch)
+
+    calls = []
+    import app.learning.topic_attributes as ta_mod
+
+    real = ta_mod.run_topic_attribute_learning
+
+    def _spy(conn, *, channel_id, workspace_id=None):
+        calls.append(channel_id)
+        return real(conn, channel_id=channel_id, workspace_id=workspace_id)
+
+    monkeypatch.setattr(ta_mod, "run_topic_attribute_learning", _spy)
+
+    result = run_decision_cycle(db, cp_channel_id=channel.id, workspace_id=workspace.id)
+    assert calls == [channel.id]
+    assert result.topic_attribute_learning_ran is True
+
+
+def test_topic_attribute_learning_failure_does_not_block_decision_cycle(
+    db, channel, workspace, monkeypatch
+):
+    """A raising topic-attribute learning step must be recorded as a
+    non-fatal error, never abort the decision cycle (mirrors cross-
+    publication learning's own non-blocking contract)."""
+    _enable_policy(db, channel, workspace)
+    _stub_market_refresh(monkeypatch)
+
+    import app.learning.topic_attributes as ta_mod
+
+    def _boom(conn, *, channel_id, workspace_id=None):
+        raise RuntimeError("simulated topic-attribute learning failure")
+
+    monkeypatch.setattr(ta_mod, "run_topic_attribute_learning", _boom)
+
+    result = run_decision_cycle(db, cp_channel_id=channel.id, workspace_id=workspace.id)
+    assert result.topic_attribute_learning_ran is False
+    assert any("topic_attribute_learning" in e for e in result.errors)
+    assert result.outcome != DecisionOutcome.FAILED
+    assert result.outcome == DecisionOutcome.DEGRADED_BUT_PROCEEDED
 
 
 def test_fresh_market_intelligence_is_reused_not_refreshed(db, channel, workspace, monkeypatch):

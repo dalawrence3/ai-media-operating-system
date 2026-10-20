@@ -221,3 +221,104 @@ class TestHealthManagement:
             )
         degraded = list_degraded_entities(db)
         assert len(degraded) >= 3
+
+
+class TestListDegradedEntitiesLatestOnly:
+    """Read-model fix: list_degraded_entities() must reflect only each
+    entity's CURRENT (latest) health record, mirroring the latest-per-entity
+    semantics Exception Center already uses (Phase 18E.2). cp_health_records
+    remains append-only history throughout every test here — no row is ever
+    updated or deleted."""
+
+    def _record(self, db, entity_id, status, entity_type="platform_account", detail=None):
+        record_health(
+            db,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            status=status,
+            recorded_by="monitor",
+            detail=detail,
+        )
+
+    def _ids_and_status(self, db):
+        return {h.entity_id: h.status for h in list_degraded_entities(db)}
+
+    def test_a_first_degraded_record_is_one_issue(self, db):
+        self._record(db, "acc-a", "degraded")
+        result = self._ids_and_status(db)
+        assert result == {"acc-a": "degraded"}
+
+    def test_b_repeated_history_yields_one_result_latest_state(self, db):
+        for status in ("degraded", "unavailable", "unavailable", "degraded", "unavailable"):
+            self._record(db, "acc-b", status)
+        result = self._ids_and_status(db)
+        assert result == {"acc-b": "unavailable"}
+        assert len([h for h in list_degraded_entities(db) if h.entity_id == "acc-b"]) == 1
+
+    def test_c_degraded_then_unavailable_shows_unavailable(self, db):
+        self._record(db, "acc-c", "degraded")
+        self._record(db, "acc-c", "unavailable")
+        result = self._ids_and_status(db)
+        assert result == {"acc-c": "unavailable"}
+
+    def test_d_recovery_to_healthy_yields_zero_results(self, db):
+        self._record(db, "acc-d", "degraded")
+        self._record(db, "acc-d", "unavailable")
+        self._record(db, "acc-d", "healthy")
+        result = self._ids_and_status(db)
+        assert "acc-d" not in result
+
+    def test_e_degraded_healthy_degraded_shows_latest_degraded(self, db):
+        self._record(db, "acc-e", "degraded")
+        self._record(db, "acc-e", "healthy")
+        self._record(db, "acc-e", "degraded")
+        result = self._ids_and_status(db)
+        assert result == {"acc-e": "degraded"}
+
+    def test_f_two_entities_only_degraded_one_returned(self, db):
+        self._record(db, "acc-f-healthy", "healthy")
+        self._record(db, "acc-f-degraded", "degraded")
+        result = self._ids_and_status(db)
+        assert "acc-f-healthy" not in result
+        assert result.get("acc-f-degraded") == "degraded"
+
+    def test_g_identical_timestamps_deterministic_tiebreak(self, db, monkeypatch):
+        """Force two records for the same entity to share recorded_at exactly
+        — the newest INSERT (highest rowid) must win, not insertion order
+        reversed or an arbitrary row."""
+        import app.control_plane.repository as repo_mod
+
+        frozen = "2026-01-01T00:00:00+00:00"
+        monkeypatch.setattr(
+            repo_mod, "_now", lambda: type("_D", (), {"isoformat": lambda self: frozen})()
+        )
+        self._record(db, "acc-g", "degraded")
+        self._record(db, "acc-g", "unavailable")  # same recorded_at, later rowid
+        result = self._ids_and_status(db)
+        assert result == {"acc-g": "unavailable"}
+
+    def test_h_review_center_pending_count_uses_corrected_result(self, db):
+        from app.control_plane.identity import create_workspace
+        from app.control_plane.reviews import build_review_queue
+
+        ws = create_workspace(db, name="Acme", slug="acme-h", actor="cli")
+        self._record(db, ws.id, "degraded", entity_type="workspace")
+        self._record(db, ws.id, "healthy", entity_type="workspace")
+        items = build_review_queue(db, ws.id)
+        assert not any(i.item_type == "health_issue" and i.entity_id == ws.id for i in items)
+
+    def test_i_exception_center_and_review_center_agree_on_recovered_entity(self, db):
+        from app.application.exception_queue import get_exception_queue
+        from app.control_plane.identity import create_workspace
+
+        ws = create_workspace(db, name="Acme", slug="acme-i", actor="cli")
+        self._record(db, ws.id, "unavailable", entity_type="workspace")
+        self._record(db, ws.id, "healthy", entity_type="workspace")
+
+        degraded_ids = {h.entity_id for h in list_degraded_entities(db)}
+        exceptions = get_exception_queue(db, ws.id)
+        exception_health_ids = {
+            e.entity_id for e in exceptions if e.exception_type == "health_degraded"
+        }
+        assert ws.id not in degraded_ids
+        assert ws.id not in exception_health_ids

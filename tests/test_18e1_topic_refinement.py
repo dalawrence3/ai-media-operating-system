@@ -400,6 +400,40 @@ class TestContextForwarding:
         for subject in LIVE_SUBJECTS:
             assert subject in angle
 
+    def test_the_angle_never_exceeds_topics_schema_limit(self, tdb):
+        """Phase 7C.1 regression — reproduces a REAL production failure: a
+        practical_micro_lesson evaluation's viewer_promise + concrete
+        subjects composed to over 500 chars and crashed topic
+        materialization with a pydantic string_too_long error
+        (Topic.angle has max_length=500). A longer/richer format
+        legitimately produces more text here than the explainer path this
+        was originally tuned against — the composed angle must be
+        truncated, never allowed to overflow the schema."""
+        from app.core.models import Topic
+        from app.intelligence.autonomy.production_cycle import _build_topic_angle
+
+        long_promise = (
+            "Discover the chemical and physical transformations that happen when "
+            "heat is applied to food, from the Maillard reaction that browns a "
+            "seared steak to the protein denaturation that firms an egg white, "
+            "and why understanding these reactions turns ordinary home cooking "
+            "into something you can predict and control at any temperature."
+        )
+        many_subjects = [f"subject about cooking chemistry topic number {i}" for i in range(10)]
+        _evaluation(tdb, 1, promise=long_promise, subjects=many_subjects)
+        d = _decide(tdb)
+
+        class _Brief:
+            canonical_topic = LIVE_SOURCE
+            market_theme = "food science"
+
+        angle = _build_topic_angle(brief=_Brief(), decision=d)
+
+        assert len(angle) <= 500
+        # A real Topic must actually accept it — the exact failure mode
+        # this regression reproduces.
+        Topic(title="science of cooking food", angle=angle)
+
     def test_the_angle_falls_back_to_the_brief_when_context_is_absent(self, tdb):
         """Pre-18E.1 behaviour is preserved when the evaluation offers nothing."""
         from app.intelligence.autonomy.production_cycle import _build_topic_angle

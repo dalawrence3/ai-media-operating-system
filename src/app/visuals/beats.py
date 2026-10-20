@@ -190,6 +190,7 @@ def plan_beats(
     target_beat_ms: int = DEFAULT_TARGET_BEAT_MS,
     min_beat_ms: int = MIN_BEAT_MS,
     max_beat_ms: int = MAX_BEAT_MS,
+    concrete_subjects: list[str] | None = None,
 ) -> list[VisualBeat]:
     """Segment every scene into semantic visual beats.
 
@@ -202,7 +203,14 @@ def plan_beats(
     max_beat_ms = max(target_beat_ms, max_beat_ms)
 
     # Video-level terms anchor thin beats to the subject of the whole video.
-    topic_terms = semantics.extract_terms(" ".join(s.narration_text for s in scenes), limit=4)
+    # concrete_subjects (from the topic-level semantic-fit evaluation, when
+    # one exists) are placed first; narration-derived terms fill the rest —
+    # identical to today's behaviour when no evaluation is available.
+    topic_terms = semantics.merge_topic_terms(
+        concrete_subjects,
+        semantics.extract_terms(" ".join(s.narration_text for s in scenes), limit=8),
+        limit=4,
+    )
 
     # First pass: timing + text only, so avoid-terms can see every sibling.
     raw: list[tuple[BeatPlannerInput, int, int, str]] = []

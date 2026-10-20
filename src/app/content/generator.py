@@ -109,6 +109,7 @@ def generate_script(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     prompt_name: str = SCRIPT_GENERATION_PROMPT_NAME,
     prompt_version: str = SCRIPT_GENERATION_PROMPT_VERSION,
+    extra_context: dict[str, str] | None = None,
 ) -> GenerationResult:
     """Generate a new script for *topic* from *evidence*.
 
@@ -119,6 +120,14 @@ def generate_script(
         evidence:          Active evidence claims from list_active_evidence_for_topic().
         allow_no_evidence: If False, raises NoActiveEvidenceError when evidence is empty.
         replace_run_id:    If set, supersede this prior generation run on success.
+        extra_context:     Phase 7B — additional named values (e.g. domain,
+                            audience_value) merged into both the system and
+                            user template substitutions, for format-specific
+                            prompts (interactive_recall_quiz, practical_micro_
+                            lesson) that reference placeholders the default
+                            explainer prompt does not use. Safe no-op for any
+                            prompt whose template doesn't reference these
+                            names — `str.format` ignores unused kwargs.
         target_duration_s: Target script duration (seconds); deviation >10s is a warning.
         tone:              Script tone descriptor for the prompt.
         audience:          Audience description for the prompt.
@@ -218,6 +227,7 @@ def generate_script(
             audience_desc=audience or "general audience",
             min_words=str(eff_min_words),
             max_words=str(eff_max_words),
+            **(extra_context or {}),
         )
 
         request = AIRequest(
@@ -228,6 +238,7 @@ def generate_script(
                 audience_desc=audience or "general audience",
                 min_words=eff_min_words,
                 max_words=eff_max_words,
+                **(extra_context or {}),
             ),
             user=user_text,
             model=None,

@@ -52,6 +52,13 @@ class VisualPolicy:
     candidates_per_beat: int = 12
     # Queries attempted per beat.  Each query is one provider call.
     queries_per_beat: int = 2
+    # Actual-content verification (Phase 2, §7-9). Off by default: the only
+    # shipped `ContentVerifier` is `NullVerifier` (see verification.py for
+    # why a real vision-backed one is a deliberate follow-up decision, not a
+    # default), so turning this on today costs nothing and changes nothing —
+    # it exists so a channel can opt in the moment a real verifier exists
+    # without a second policy-schema change.
+    enable_content_verification: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -123,5 +130,6 @@ def policy_from_config(config: dict[str, Any] | None) -> VisualPolicy:
         "candidates_per_beat": config.get("visual_candidates_per_beat"),
         "allow_still_motion": config.get("visual_allow_still_motion"),
         "max_provider_cost_units": config.get("visual_max_provider_cost_units"),
+        "enable_content_verification": config.get("visual_enable_content_verification"),
     }
     return resolve_policy(config.get("visual_style"), overrides=overrides)

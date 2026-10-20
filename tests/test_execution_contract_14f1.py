@@ -1919,7 +1919,7 @@ def test_AU_execution_service_imports_constants_from_learning_constants():
 
 def test_AV_schema_version_is_40():
     """SCHEMA_VERSION must remain 40 (no new persisted field in Phase 14F.1)."""
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 def test_AW_experiment_execution_contracts_table_exists(db):

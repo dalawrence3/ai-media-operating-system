@@ -24,6 +24,14 @@ class ProductionSegmentDraft:
     estimated_duration_s: int
     estimated_word_count: int
     citation_claim_ids: list[int] = field(default_factory=list)
+    # Phase 7B, §7/§9 — propagated from ScriptSection.think_duration_ms.
+    # 0 for every segment of every format except interactive_recall_quiz's
+    # "prompt" sections.
+    think_duration_ms: int = 0
+    # Phase 7B.1, §1/§2 — propagated from ScriptSection.language_code. None
+    # for every segment of every format that never sets it (identical to
+    # today's behavior: the voice profile's own language applies).
+    language_code: str | None = None
 
 
 @dataclass
@@ -126,9 +134,12 @@ class ProductionSegment(BaseModel):
     estimated_duration_s: int
     estimated_word_count: int
     created_at: str
+    think_duration_ms: int = 0
+    language_code: str | None = None
 
     @classmethod
     def from_row(cls, row: Any) -> ProductionSegment:
+        keys = row.keys() if hasattr(row, "keys") else []
         return cls(
             id=row["id"],
             plan_id=row["plan_id"],
@@ -139,6 +150,8 @@ class ProductionSegment(BaseModel):
             estimated_duration_s=row["estimated_duration_s"],
             estimated_word_count=row["estimated_word_count"],
             created_at=row["created_at"],
+            think_duration_ms=row["think_duration_ms"] if "think_duration_ms" in keys else 0,
+            language_code=row["language_code"] if "language_code" in keys else None,
         )
 
 

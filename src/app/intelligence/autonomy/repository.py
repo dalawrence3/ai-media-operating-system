@@ -595,6 +595,41 @@ def list_active_slots(conn: sqlite3.Connection, channel_id: str) -> list[Publish
     return [_row_to_slot(r) for r in rows]
 
 
+@dataclass(frozen=True)
+class QueueOccupancy:
+    """Canonical queue-occupancy snapshot — the single source both the
+    decision cycle and autonomy readiness read, so they can never diverge
+    (Phase 18F).
+
+    `satisfied` reproduces run_decision_cycle's short-circuit condition
+    exactly: enough slots filled AND no reserved-but-brief-less slot still
+    in flight. A filled count alone is not sufficient — an in-flight slot is
+    a live signal a candidate is still needed right now regardless of
+    queue_target.
+    """
+
+    active_slots: list[PublishingSlot]
+    filled_slots: list[PublishingSlot]
+    in_flight_slots: list[PublishingSlot]
+    queue_target: int
+
+    @property
+    def satisfied(self) -> bool:
+        return len(self.filled_slots) >= self.queue_target and not self.in_flight_slots
+
+
+def compute_queue_occupancy(conn: sqlite3.Connection, channel_id: str) -> QueueOccupancy:
+    """Canonical queue-occupancy computation, shared by decision_cycle.py and
+    autonomy_readiness.py so both answer "is the queue satisfied?" identically.
+    """
+    policy = get_autonomy_policy(conn, channel_id)
+    target = policy.queue_target if policy else 1
+    slots = list_active_slots(conn, channel_id)
+    filled = [s for s in slots if s.state == "filled"]
+    in_flight = [s for s in slots if s.state == "reserved" and s.brief_id is None]
+    return QueueOccupancy(slots, filled, in_flight, target)
+
+
 def list_slots_for_channel(
     conn: sqlite3.Connection, channel_id: str, *, limit: int = 50
 ) -> list[PublishingSlot]:
@@ -816,8 +851,21 @@ def reset_slot_production_for_retry(conn: sqlite3.Connection, slot_id: int) -> P
 
 
 # ── Phase 18C: publishing state ───────────────────────────────────────────────
+#
+# A configured publication time is a PREFERRED time, not an expiration: once a
+# slot is due it stays eligible for publication indefinitely — 5 minutes late,
+# 3 hours late, several days late makes no difference — until it succeeds, an
+# operator explicitly cancels/reschedules it, or its failure history proves
+# permanent (see PERMANENT_PUBLISH_FAILURES). The two constants below bound
+# retry *rate*, never retry *duration*.
 
 MAX_PUBLISH_RETRIES = 3
+
+# Once the short/tight retry budget above is spent on a RETRYABLE_PUBLISH_FAILURES
+# category, the slot keeps being eligible forever — just throttled to at most
+# one attempt per cooldown window, so a persistent outage produces one attempt
+# every half hour rather than hammering the provider every scheduler tick.
+PUBLISH_RETRY_COOLDOWN_MINUTES = 30
 
 
 def find_slot_ready_to_publish(
@@ -825,23 +873,33 @@ def find_slot_ready_to_publish(
     channel_id: str,
     *,
     max_retries: int = MAX_PUBLISH_RETRIES,
+    cooldown_minutes: int = PUBLISH_RETRY_COOLDOWN_MINUTES,
+    now: datetime | None = None,
 ) -> PublishingSlot | None:
     """Return the next slot that publishing should consider for this channel.
 
     Deliberately returns slots that are not yet due as well as due ones: the
-    caller decides due-ness, because it is the caller that also owns the
-    grace-window policy. Returning only due slots here would scatter that
-    policy across two layers.
+    caller decides due-ness. Also deliberately returns slots regardless of how
+    overdue they are — lateness is never a reason to stop considering a slot;
+    see the module comment above.
 
-    Excludes terminal publish states (released / skipped_missed), RETIRED
-    slots, and slots that have exhausted their retry budget, so a permanently
-    broken slot cannot pin the cycle forever.
-
-    The retirement exclusion comes from the shared _NOT_TERMINAL_SQL fragment
-    rather than from this function's own status list. That list is an
-    allow-list of in-flight states, so a new terminal condition would be
-    silently admitted by it unless the shared fragment also applies.
+    Excludes terminal publish states (released / skipped_missed) and RETIRED
+    slots via the shared _NOT_TERMINAL_SQL fragment. A 'failed' slot is
+    eligible again either while it is still within its short retry budget
+    (any category — this is the "try a couple more times quickly" phase), or
+    — once that budget is spent — only if BOTH its failure category is one
+    that might genuinely resolve on its own (RETRYABLE_PUBLISH_FAILURES) AND
+    its cooldown window has elapsed since the last attempt. A category that is
+    not retryable (PERMANENT_PUBLISH_FAILURES) never re-qualifies this way —
+    see find_slot_with_permanent_failure, which is what notices those.
     """
+    from app.intelligence.autonomy.models import RETRYABLE_PUBLISH_FAILURES
+
+    current = now or datetime.now(UTC)
+    cooldown_cutoff = (current - timedelta(minutes=cooldown_minutes)).strftime("%Y-%m-%dT%H:%M:%S")
+    retryable_categories = sorted(c.value for c in RETRYABLE_PUBLISH_FAILURES)
+    retryable_placeholders = ",".join("?" * len(retryable_categories))
+
     row = conn.execute(
         f"""SELECT * FROM publishing_slots
            WHERE channel_id = ?
@@ -852,10 +910,61 @@ def find_slot_ready_to_publish(
                publish_status IS NULL
                OR publish_status IN ('pending', 'publishing', 'uploaded', 'blocked')
                OR (publish_status = 'failed' AND publish_retry_count < ?)
+               OR (
+                 publish_status = 'failed'
+                 AND publish_retry_count >= ?
+                 AND publish_failure_category IN ({retryable_placeholders})
+                 AND (publish_failed_at IS NULL OR publish_failed_at <= ?)
+               )
              )
            ORDER BY scheduled_for_utc ASC
            LIMIT 1""",
-        (channel_id, *_TERMINAL_PUBLISH_LIST, max_retries),
+        (
+            channel_id,
+            *_TERMINAL_PUBLISH_LIST,
+            max_retries,
+            max_retries,
+            *retryable_categories,
+            cooldown_cutoff,
+        ),
+    ).fetchone()
+    return _row_to_slot(row) if row else None
+
+
+def find_slot_with_permanent_failure(
+    conn: sqlite3.Connection,
+    channel_id: str,
+    *,
+    max_retries: int = MAX_PUBLISH_RETRIES,
+) -> PublishingSlot | None:
+    """A filled slot whose retry budget is spent on a genuinely PERMANENT
+    failure category (PERMANENT_PUBLISH_FAILURES) — one that demonstrably
+    requires a human to fix something and will not resolve merely by trying
+    again. find_slot_ready_to_publish() correctly never returns such a slot
+    once its budget is spent, since retrying it is pointless; this is the
+    matching path that notices it and lets run_publishing_cycle retire it
+    (mark it terminal, free the queue, preserve the artifact and its history)
+    rather than leaving it silently stuck forever. A RETRYABLE_PUBLISH_FAILURES
+    category never matches here — that one stays eligible on a cooldown
+    instead, indefinitely, exactly what find_slot_ready_to_publish provides.
+    """
+    from app.intelligence.autonomy.models import PERMANENT_PUBLISH_FAILURES
+
+    permanent_categories = sorted(c.value for c in PERMANENT_PUBLISH_FAILURES)
+    if not permanent_categories:
+        return None
+    placeholders = ",".join("?" * len(permanent_categories))
+    row = conn.execute(
+        f"""SELECT * FROM publishing_slots
+           WHERE channel_id = ?
+             AND state = 'filled'
+             AND publish_status = 'failed'
+             AND publish_retry_count >= ?
+             AND publish_failure_category IN ({placeholders})
+             AND {_NOT_TERMINAL_SQL}
+           ORDER BY scheduled_for_utc ASC
+           LIMIT 1""",
+        (channel_id, max_retries, *permanent_categories, *_TERMINAL_PUBLISH_LIST),
     ).fetchone()
     return _row_to_slot(row) if row else None
 
@@ -1179,3 +1288,91 @@ def reschedule_slot_to_new_time(
     new_slot = get_slot(conn, new_slot_id)
     assert new_slot is not None
     return new_slot
+
+
+class SlotNotRescheduleEligibleError(ValueError):
+    """Raised when a slot is not a missed, ready artifact eligible for reschedule."""
+
+
+def reschedule_missed_slot(
+    conn: sqlite3.Connection,
+    slot_id: int,
+    *,
+    new_local_datetime: datetime,
+    timezone: str,
+    actor: str,
+) -> PublishingSlot:
+    """Operator-facing INTENTIONAL override (sections 8, 12-14): move a
+    ready, not-yet-published artifact onto a different future slot because
+    the operator chose to, not because it was late.
+
+    Automatic catch-up (find_slot_ready_to_publish's cooldown clause) already
+    keeps an overdue-but-still-retryable artifact eligible indefinitely, so
+    lateness alone is never a prerequisite for calling this — an operator
+    reaches for it to say "publish this whenever possible" is not what they
+    want and "move it to a specific time instead" is. It works whether the
+    slot is untouched, mid-retry, or cooling down; it does not work once the
+    artifact is already public or has been retired as permanently
+    unpublishable — nothing to move to a new time in either case.
+
+    `reschedule_slot_to_new_time` is the raw mechanics (history preservation,
+    lineage transfer); this adds the validation and idempotency an operator
+    action needs and a repository primitive should not have to enforce on
+    every caller:
+
+    - only a still-filled slot with a production_status='ready' artifact
+      that has not already been released and is not retired is eligible —
+      this is deliberately not a general "move any slot" tool;
+    - the new time must be strictly in the future;
+    - calling this twice on the same old slot is a no-op the second time —
+      it returns the existing successor rather than creating a second one,
+      found via rescheduled_from_slot_id rather than a new tracking column.
+    """
+    old = get_slot(conn, slot_id)
+    if old is None:
+        raise ValueError(f"Slot {slot_id} not found.")
+
+    existing_successor_row = conn.execute(
+        "SELECT id FROM publishing_slots WHERE rescheduled_from_slot_id = ? "
+        "ORDER BY id DESC LIMIT 1",
+        (slot_id,),
+    ).fetchone()
+    if existing_successor_row is not None:
+        successor = get_slot(conn, existing_successor_row["id"])
+        assert successor is not None
+        return successor
+
+    if old.state != "filled":
+        raise SlotNotRescheduleEligibleError(
+            f"Slot {slot_id} has no artifact to reschedule (state={old.state!r})."
+        )
+    if old.publish_status == PublishStatus.released.value:
+        raise SlotNotRescheduleEligibleError(
+            f"Slot {slot_id} has already been released and cannot be rescheduled."
+        )
+    if old.retired_at is not None:
+        raise SlotNotRescheduleEligibleError(
+            f"Slot {slot_id} is retired and cannot be rescheduled."
+        )
+    if old.production_status != "ready":
+        raise SlotNotRescheduleEligibleError(
+            f"Slot {slot_id} has no validated, ready artifact to reschedule "
+            f"(production_status={old.production_status!r})."
+        )
+
+    if new_local_datetime.tzinfo is None:
+        raise ValueError("new_local_datetime must be timezone-aware.")
+    new_utc = new_local_datetime.astimezone(UTC)
+    if new_utc <= datetime.now(UTC):
+        raise ValueError("The new scheduled time must be in the future.")
+
+    new_slot_key = f"reschedule-{new_local_datetime.strftime('%Y-%m-%dT%H%M')}"
+    return reschedule_slot_to_new_time(
+        conn,
+        slot_id,
+        new_scheduled_for_utc=new_utc.strftime("%Y-%m-%dT%H:%M:%S"),
+        new_scheduled_for_local=new_local_datetime.isoformat(),
+        new_slot_key=new_slot_key,
+        timezone=timezone,
+        actor=actor,
+    )

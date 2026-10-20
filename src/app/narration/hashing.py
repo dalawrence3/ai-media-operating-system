@@ -46,16 +46,26 @@ def compute_narration_segment_input_hash(
     sample_rate_hz: int,
     narration_schema_version: str,
     narration_algorithm_version: str,
+    think_duration_ms: int = 0,
 ) -> str:
     """SHA-256 of compact sorted JSON of all output-affecting segment fields.
 
     Changing any field produces a new hash, triggering a new synthesis attempt.
+
+    think_duration_ms (Phase 7B, §9) is a new payload field — adding it
+    changes every hash's value versus the pre-Phase-7B formula (a one-time
+    cache-miss for any already-synthesized segment on next lookup, safe and
+    harmless: synthesis is idempotent and re-running it just re-produces
+    the same audio). Its purpose going forward: two segments with identical
+    narration text but different pause durations must never collide and
+    silently reuse each other's cached asset.
     """
     payload: dict = {
         "plan_id": plan_id,
         "plan_input_hash": plan_input_hash,
         "segment_id": segment_id,
         "narration_text_hash": narration_text_hash,
+        "think_duration_ms": think_duration_ms,
         "provider": provider,
         "model": model,
         "voice_id": voice_id,

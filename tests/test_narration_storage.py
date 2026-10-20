@@ -12,6 +12,7 @@ import pytest
 from app.narration.errors import AudioValidationError
 from app.narration.models import AudioMetadata
 from app.narration.storage import (
+    append_silence,
     check_duration_deviation,
     cleanup_stale_temp_files,
     compute_audio_sha256,
@@ -212,3 +213,59 @@ def test_threshold_boundary() -> None:
 
 def test_zero_expected_is_false() -> None:
     assert check_duration_deviation(0.0, 5.0, threshold=0.5) is False
+
+
+# ── append_silence ───────────────────────────────────────────────────────────
+
+
+def test_append_silence_extends_duration_by_the_requested_amount() -> None:
+    original = _wav_bytes(duration=1.0, sample_rate=22050)
+    padded = append_silence(original, duration_ms=2000)
+    original_meta = validate_wav_bytes(original)
+    padded_meta = validate_wav_bytes(padded)
+    assert padded_meta.duration_seconds == pytest.approx(
+        original_meta.duration_seconds + 2.0, abs=0.01
+    )
+
+
+def test_append_silence_zero_duration_is_a_no_op() -> None:
+    original = _wav_bytes(duration=1.0)
+    assert append_silence(original, duration_ms=0) is original
+
+
+def test_append_silence_negative_duration_is_a_no_op() -> None:
+    original = _wav_bytes(duration=1.0)
+    assert append_silence(original, duration_ms=-5) is original
+
+
+def test_append_silence_preserves_format_parameters() -> None:
+    original = _wav_bytes(duration=1.0, sample_rate=22050)
+    padded = append_silence(original, duration_ms=1000)
+    with wave.open(io.BytesIO(original), "rb") as wf:
+        orig_channels, orig_width, orig_rate = (
+            wf.getnchannels(),
+            wf.getsampwidth(),
+            wf.getframerate(),
+        )
+    with wave.open(io.BytesIO(padded), "rb") as wf:
+        assert wf.getnchannels() == orig_channels
+        assert wf.getsampwidth() == orig_width
+        assert wf.getframerate() == orig_rate
+
+
+def test_append_silence_appended_region_is_actually_silent() -> None:
+    original = _wav_bytes(duration=0.5, sample_rate=22050)
+    padded = append_silence(original, duration_ms=1000)
+    with wave.open(io.BytesIO(padded), "rb") as wf:
+        frames = wf.readframes(wf.getnframes())
+    # The original clip is already all-zero PCM (see _wav_bytes), so the
+    # WHOLE padded clip must still be all-zero — proving the appended tail
+    # is genuine silence, not noise/garbage bytes.
+    assert frames == b"\x00" * len(frames)
+
+
+def test_append_silence_result_is_still_valid_wav() -> None:
+    original = _wav_bytes(duration=1.0)
+    padded = append_silence(original, duration_ms=1500)
+    # Must not raise — a malformed WAV would fail here.
+    validate_wav_bytes(padded)

@@ -30,12 +30,23 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.visuals.constants import (
+    LOW_CONFIDENCE_SCORE,
     MEDIA_GRAPHIC,
     MEDIA_ILLUSTRATION,
     MEDIA_PHOTO,
     MEDIA_VIDEO,
 )
 from app.visuals.graphics import _RENDERERS as _STRUCTURAL_GRAPHIC_RENDERERS
+
+# scoring.REASON_* values that mean a candidate was rejected specifically for
+# lacking relevance evidence, not for a technical/license/repetition reason.
+# Duplicated as literals (not imported) to keep composition.py's dependency
+# direction one-way — scoring.py has no reason to know this module exists.
+RELEVANCE_REJECTION_REASONS: frozenset[str] = frozenset(
+    {"no_relevance_evidence", "weak_relevance_evidence", "matches_avoid_concept"}
+)
+
+VERIFICATION_REJECTED = "rejected"
 
 COMPOSITION_VERSION: str = "visual-composition-v1"
 
@@ -102,6 +113,12 @@ _FALLBACK_CLASS: dict[str, str] = {
     "all_candidates_rejected": FALLBACK_PROVIDER,
     "no_candidates_returned": FALLBACK_PROVIDER,
     "download_failed": FALLBACK_PROVIDER,
+    # Fallback hierarchy tier 5 (Phase 2): a real, relevance-corroborated
+    # still that only relaxed the technical-fit floor. It IS meaningful
+    # runtime (a genuine photograph/illustration was realized), but it is
+    # attributed as a provider-side compromise, not a clean first-pass hit —
+    # `deficient_beat_indexes()` still excludes it via `not b.meaningful`.
+    "relevant_still_relaxed_floor": FALLBACK_PROVIDER,
 }
 
 # A meaningful visual must be on screen within this window for the opening to
@@ -168,10 +185,19 @@ class BeatComposition:
     provider: str | None
     fallback_reason: str | None
     fallback_class: str
+    # Relevance-scoring signals (Phase 2). All optional/nullable: a NULL here
+    # means "not measured", never "measured as zero/fine".
+    resolved_score: float | None = None
+    had_relevance_rejection: bool = False
+    verification_status: str | None = None
 
     @property
     def meaningful(self) -> bool:
         return self.realized_family in MEANINGFUL_FAMILIES
+
+    @property
+    def moving(self) -> bool:
+        return self.realized_family == FAMILY_MOTION_FOOTAGE
 
     @property
     def fallback_used(self) -> bool:
@@ -180,6 +206,45 @@ class BeatComposition:
     @property
     def planned_meaningful(self) -> bool:
         return self.planned_family in MEANINGFUL_FAMILIES
+
+    @property
+    def low_confidence(self) -> bool:
+        """Resolved as a real visual, but either the retrieval score itself
+        was weak, or a verification pass judged it "questionable" (Phase 3,
+        §9 — questionable "contributes to low-confidence/relevance metrics"
+        rather than hard-blocking like a confirmed "rejected" does).
+
+        Never true for a generated graphic (`resolved_score` is only ever set
+        for a retrieved candidate — see `composition_from_plan`) and never
+        true when neither signal was actually measured.
+
+        Phase 6, §2-3 — semantic source-of-truth hierarchy: an explicit
+        `verified` verdict from actual-content (vision) verification is
+        stronger evidence than the pre-retrieval lexical score and wins over
+        it. The lexical score is a *prediction* of relevance made before the
+        asset was ever looked at; verification is a *measurement* of the
+        asset actually resolved. A beat that scored weakly on lexical terms
+        (translation-grounded queries against sparse Wikimedia-style
+        metadata routinely do) but was then confirmed correct by a real
+        vision call must not still be discounted as low-confidence — that
+        would let a conservative prediction override a completed
+        measurement. `questionable` and an unmeasured beat (`None`) are
+        unchanged: only `verified` short-circuits the lexical check.
+        """
+        if not self.meaningful:
+            return False
+        if self.verification_status == "verified":
+            return False
+        if self.resolved_score is not None and self.resolved_score < LOW_CONFIDENCE_SCORE:
+            return True
+        return self.verification_status == "questionable"
+
+    @property
+    def severe_mismatch(self) -> bool:
+        """True only when the actual-content verification pass rejected this
+        asset outright. Never inferred from the lexical score alone — that
+        would fabricate a verdict verification never reached."""
+        return self.verification_status == VERIFICATION_REJECTED
 
     def as_diagnostic(self) -> dict[str, Any]:
         """The operator-facing per-scene row: planned, realized, and why."""
@@ -217,6 +282,15 @@ class VisualComposition:
     text_card_beat_count: int = 0
     text_card_runtime_ms: int = 0
     unresolved_beat_count: int = 0
+    moving_visual_runtime_ms: int = 0
+
+    # Relevance-scoring aggregates (Phase 2, §11). low_confidence/severe are
+    # counted from optional per-beat signals, so both start at 0 rather than
+    # NULL — "not measured" is honestly represented by the signal being
+    # absent, not by a special sentinel on the *count*.
+    low_confidence_scene_count: int = 0
+    rejected_scene_count: int = 0
+    severe_mismatch_count: int = 0
 
     family_runtime_ms: dict[str, int] = field(default_factory=dict)
     family_beat_count: dict[str, int] = field(default_factory=dict)
@@ -256,6 +330,34 @@ class VisualComposition:
         return self.text_card_runtime_ms / self.total_duration_ms if self.total_duration_ms else 0.0
 
     @property
+    def moving_visual_runtime_pct(self) -> float:
+        return (
+            self.moving_visual_runtime_ms / self.total_duration_ms
+            if self.total_duration_ms
+            else 0.0
+        )
+
+    @property
+    def relevant_visual_runtime_ms(self) -> int:
+        """Meaningful runtime, minus any beat flagged low-confidence or a
+        confirmed severe mismatch. A stricter bar than `meaningful_runtime_ms`
+        on purpose: "a real photo/video/diagram is on screen" is a weaker
+        claim than "and it is actually a good match for the narration"."""
+        return sum(
+            b.duration_ms
+            for b in self.beats
+            if b.meaningful and not b.low_confidence and not b.severe_mismatch
+        )
+
+    @property
+    def relevant_visual_runtime_pct(self) -> float:
+        return (
+            self.relevant_visual_runtime_ms / self.total_duration_ms
+            if self.total_duration_ms
+            else 0.0
+        )
+
+    @property
     def fallback_runtime_pct(self) -> float:
         return self.fallback_runtime_ms / self.total_duration_ms if self.total_duration_ms else 0.0
 
@@ -272,6 +374,39 @@ class VisualComposition:
     def generated_diagram_runtime_pct(self) -> float:
         return self.family_runtime_pct(FAMILY_GENERATED_DIAGRAM)
 
+    @property
+    def visualizability_score(self) -> float:
+        """0..1: how visualizable THIS render's subject turned out to be.
+
+        Observational only (§17) — a production-side measurement, not a
+        planner input. Nothing in this pipeline reads this value to make a
+        decision; it exists so it can be persisted alongside the render and,
+        later, correlated against topic-level attributes (curiosity,
+        practical_utility, etc. — Phase 18H.C) and outcomes, once enough
+        renders exist to say anything about that correlation. Deliberately
+        NOT wired into `assess_composition`'s pass/warn/block verdict for the
+        same reason `min_meaningful_runtime_pct`'s docstring gives for its
+        own conservative floor: an unvalidated signal must never gate
+        publishing.
+
+        Built entirely from what this module already measures — relevant
+        coverage, motion, and diversity — so it stays domain-general: nothing
+        here inspects a topic's subject, only how well retrieval and
+        composition actually went.
+        """
+        if self.total_duration_ms == 0:
+            return 0.0
+        return round(
+            min(
+                1.0,
+                0.45 * self.relevant_visual_runtime_pct
+                + 0.20 * self.moving_visual_runtime_pct
+                + 0.20 * self.family_diversity
+                + 0.15 * (1.0 - self.text_card_runtime_pct),
+            ),
+            4,
+        )
+
     def deficient_beat_indexes(self) -> list[int]:
         """Beats that wanted a real visual and did not get one.
 
@@ -286,6 +421,23 @@ class VisualComposition:
             if b.fallback_class == FALLBACK_PROVIDER and not b.meaningful
         ]
 
+    def severe_mismatch_beat_indexes(self) -> list[int]:
+        """Beats a verification pass confirmed do not depict what the
+        narration describes — a second, separate remediation target set from
+        `deficient_beat_indexes()`. A severe mismatch IS a resolved, real
+        asset (`meaningful` is true), so it would never appear in the
+        provider-fallback set above; it needs its own repair trigger.
+        """
+        return [b.beat_index for b in self.beats if b.severe_mismatch]
+
+    def questionable_beat_indexes(self) -> list[int]:
+        """Beats a verification pass flagged "questionable" — never enough
+        on its own to trigger a remediation pass (§9: only REJECTED hard-
+        blocks), but included opportunistically once a pass is running for
+        another reason, since `engine.remediate()` never makes a beat worse.
+        """
+        return [b.beat_index for b in self.beats if b.verification_status == "questionable"]
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "composition_version": self.composition_version,
@@ -295,6 +447,13 @@ class VisualComposition:
             "meaningful_beat_count": self.meaningful_beat_count,
             "meaningful_runtime_ms": self.meaningful_runtime_ms,
             "meaningful_runtime_pct": round(self.meaningful_runtime_pct, 4),
+            "moving_visual_runtime_ms": self.moving_visual_runtime_ms,
+            "moving_visual_runtime_pct": round(self.moving_visual_runtime_pct, 4),
+            "relevant_visual_runtime_ms": self.relevant_visual_runtime_ms,
+            "relevant_visual_runtime_pct": round(self.relevant_visual_runtime_pct, 4),
+            "low_confidence_scene_count": self.low_confidence_scene_count,
+            "rejected_scene_count": self.rejected_scene_count,
+            "severe_mismatch_count": self.severe_mismatch_count,
             "text_card_beat_count": self.text_card_beat_count,
             "text_card_runtime_ms": self.text_card_runtime_ms,
             "text_card_runtime_pct": round(self.text_card_runtime_pct, 4),
@@ -379,6 +538,14 @@ def compose(beats: list[BeatComposition]) -> VisualComposition:
         if beat.meaningful:
             comp.meaningful_beat_count += 1
             comp.meaningful_runtime_ms += beat.duration_ms
+        if beat.moving:
+            comp.moving_visual_runtime_ms += beat.duration_ms
+        if beat.low_confidence:
+            comp.low_confidence_scene_count += 1
+        if beat.had_relevance_rejection:
+            comp.rejected_scene_count += 1
+        if beat.severe_mismatch:
+            comp.severe_mismatch_count += 1
         if beat.realized_family == FAMILY_TEXT_CARD:
             comp.text_card_beat_count += 1
             comp.text_card_runtime_ms += beat.duration_ms
@@ -462,6 +629,15 @@ def composition_from_plan(plan: Any) -> VisualComposition:
             provider=r.provider,
             fallback_reason=r.fallback_reason,
             fallback_class=classify_fallback(r.fallback_reason),
+            # A generated graphic's `.score` is the best-*considered*
+            # candidate's score, not the graphic's own — only meaningful for
+            # an actually-retrieved asset.
+            resolved_score=r.score if r.provider != "programmatic" and r.resolved else None,
+            had_relevance_rejection=any(
+                e.decision == "rejected" and e.rejection_reason in RELEVANCE_REJECTION_REASONS
+                for e in r.candidate_evidence
+            ),
+            verification_status=r.verification_status,
         )
         for r in sorted(plan.resolutions, key=lambda r: r.beat.beat_index)
     ]
@@ -478,13 +654,38 @@ def composition_from_scene_manifest(
     to `composition_from_plan` for the same beats — the persisted columns are
     written verbatim from the plan.
     """
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info('visual_beats')").fetchall()}
+    has_relevance_columns = {"resolved_score", "verification_status"} <= columns
+
+    select_cols = (
+        "id, beat_index, scene_index, start_ms, end_ms, duration_ms, visual_intent, "
+        "media_type_preferences_json, resolved_media_type, resolved_provider, "
+        "resolved_asset_key, resolved_local_path, fallback_reason"
+    )
+    if has_relevance_columns:
+        select_cols += ", resolved_score, verification_status"
     rows = conn.execute(
-        "SELECT beat_index, scene_index, start_ms, end_ms, duration_ms, visual_intent, "
-        "       media_type_preferences_json, resolved_media_type, resolved_provider, "
-        "       resolved_asset_key, resolved_local_path, fallback_reason "
-        "FROM visual_beats WHERE scene_manifest_id = ? ORDER BY beat_index",
+        f"SELECT {select_cols} FROM visual_beats WHERE scene_manifest_id = ? ORDER BY beat_index",
         (scene_manifest_id,),
     ).fetchall()
+
+    rejected_beat_ids: set[int] = set()
+    evidence_table_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='visual_candidate_evidence'"
+    ).fetchone()
+    if evidence_table_exists and rows:
+        beat_ids = [row["id"] for row in rows]
+        placeholders = ",".join("?" * len(beat_ids))
+        reason_placeholders = ",".join("?" * len(RELEVANCE_REJECTION_REASONS))
+        rejected_beat_ids = {
+            r["visual_beat_id"]
+            for r in conn.execute(
+                "SELECT DISTINCT visual_beat_id FROM visual_candidate_evidence "
+                f"WHERE visual_beat_id IN ({placeholders}) AND decision = 'rejected' "
+                f"AND rejection_reason IN ({reason_placeholders})",
+                (*beat_ids, *RELEVANCE_REJECTION_REASONS),
+            ).fetchall()
+        }
 
     records: list[BeatComposition] = []
     for row in rows:
@@ -511,6 +712,13 @@ def composition_from_scene_manifest(
                 provider=row["resolved_provider"],
                 fallback_reason=row["fallback_reason"],
                 fallback_class=classify_fallback(row["fallback_reason"]),
+                resolved_score=(
+                    row["resolved_score"]
+                    if has_relevance_columns and row["resolved_provider"] != "programmatic"
+                    else None
+                ),
+                had_relevance_rejection=row["id"] in rejected_beat_ids,
+                verification_status=(row["verification_status"] if has_relevance_columns else None),
             )
         )
     return compose(records)

@@ -41,6 +41,30 @@ from app.visuals.constants import (
 # Vocabulary — function words only.  No subject-matter vocabulary lives here.
 # ---------------------------------------------------------------------------
 
+GENERIC_AGENT_TERMS: frozenset[str] = frozenset(
+    {
+        "scientist",
+        "scientists",
+        "researcher",
+        "researchers",
+        "expert",
+        "experts",
+        "study",
+        "studies",
+        "person",
+        "people",
+        "someone",
+        "individual",
+        "individuals",
+    }
+)
+"""Closed grammatical class of generic human-agent / reporting nouns.
+
+Not topic vocabulary — "scientists explain the CMB" tells you nothing about
+whether the video is about cosmology, genetics, or history. Applies
+identically regardless of subject matter, the same way ``_STOPWORDS`` does.
+"""
+
 _STOPWORDS: frozenset[str] = frozenset(
     """
 a about above after again against all also am an and another any are aren as at
@@ -237,28 +261,39 @@ def extract_terms(text: str, *, limit: int = 8) -> list[str]:
     across subject matter: capitalisation, token length, morphology, digit
     content, and first-mention position.
     """
-    raw_tokens = _tokens(text)
-    if not raw_tokens:
+    body = text or ""
+    matches = list(_WORD_RE.finditer(body))
+    if not matches:
         return []
 
-    counts = Counter(_normalise(t) for t in raw_tokens)
+    counts = Counter(_normalise(m.group(0)) for m in matches)
     seen: dict[str, float] = {}
     first_position: dict[str, int] = {}
 
-    for position, token in enumerate(raw_tokens):
+    for position, match in enumerate(matches):
+        token = match.group(0)
         if not _is_content_word(token):
             continue
         key = _normalise(token)
         if not key:
             continue
         first_position.setdefault(key, position)
+        generic_agent = key in GENERIC_AGENT_TERMS
 
         score = 1.0
-        # Longer words carry more specific meaning than short ones.
-        score += min(len(key), 14) / 14.0
-        # Capitalised mid-sentence, or an acronym → likely a named entity.
-        if token[:1].isupper() and position > 0:
-            score += 0.8
+        # Longer words carry more specific meaning than short ones — except
+        # generic agent/reporting nouns, whose length says nothing about
+        # subject-matter specificity ("researchers" is 11 characters long
+        # and names no subject at all).
+        if not generic_agent:
+            score += min(len(key), 14) / 14.0
+        # Capitalised mid-sentence → likely a named entity. A sentence-initial
+        # capital ("Scientists think...") is not evidence of that; the same
+        # check extract_entities() already applies to proper-noun spans.
+        if not generic_agent and token[:1].isupper() and position > 0:
+            preceding = body[: match.start()].rstrip()
+            if preceding and preceding[-1] not in ".!?:;":
+                score += 0.8
         if token.isupper() and len(token) > 1:
             score += 1.0
         if any(ch.isdigit() for ch in token):
@@ -391,9 +426,132 @@ def media_preferences(intent: str) -> list[str]:
     return list(INTENT_MEDIA_PREFERENCES.get(intent, INTENT_MEDIA_PREFERENCES[INTENT_ENTITY]))
 
 
+def merge_topic_terms(
+    concrete_subjects: list[str] | None, narration_terms: list[str], *, limit: int = 6
+) -> list[str]:
+    """Video-level topic terms: validated subjects first, narration filling in.
+
+    ``concrete_subjects`` come from the topic-level semantic-fit evaluation
+    (Phase 18E.1) already run for this opportunity — a trusted, human-legible
+    signal of what the video is actually about, computed once and cached.
+    They are placed first so downstream anchoring/scoring prefers them, but
+    narration-derived terms are never discarded: they fill the remaining
+    slots exactly as they do today when no evaluation exists.
+    """
+    merged: list[str] = []
+    seen: set[str] = set()
+    for term in (*(concrete_subjects or []), *narration_terms):
+        cleaned = (term or "").strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(cleaned)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
 # ---------------------------------------------------------------------------
 # Query construction
 # ---------------------------------------------------------------------------
+
+
+def _cap_words(phrase: str, max_words: int) -> list[str]:
+    """First ``max_words`` distinct pieces of a (possibly multi-word) phrase."""
+    pieces: list[str] = []
+    seen: set[str] = set()
+    for piece in (phrase or "").split():
+        marker = _normalise(piece)
+        if not marker or marker in seen:
+            continue
+        seen.add(marker)
+        pieces.append(piece)
+        if len(pieces) >= max_words:
+            break
+    return pieces
+
+
+def _push_bounded_phrase(queries: list[str], words: list[str], max_words: int) -> None:
+    """Append a deduplicated, word-capped phrase built from ``words`` to
+    ``queries`` in place — shared by `build_queries` and
+    `build_queries_from_meaning` so both bound query length and avoid
+    near-duplicate phrasing the same way.
+    """
+    parts: list[str] = []
+    seen_parts: set[str] = set()
+    for word in words:
+        if not word:
+            continue
+        # Entities/phrases overlap with terms ("DNA" and "dna"); keep one.
+        for piece in word.split():
+            marker = _normalise(piece)
+            if not marker or marker in seen_parts:
+                continue
+            seen_parts.add(marker)
+            parts.append(piece)
+    parts = parts[:max_words]
+    if not parts:
+        return
+    phrase = " ".join(parts).strip()
+    if len(phrase) < 3:
+        return
+    signature = frozenset(_normalise(p) for p in phrase.split())
+    if signature not in {frozenset(_normalise(p) for p in q.split()) for q in queries}:
+        queries.append(phrase)
+
+
+def build_queries_from_meaning(
+    literal_visual_subject: str,
+    *,
+    topic_context: str = "",
+    concrete_entities: list[str] | None = None,
+    process_or_action: str = "",
+    limit: int = 3,
+    max_words: int = 6,
+) -> list[str]:
+    """Build retrieval queries from LLM-derived literal visual meaning
+    (Phase 5, §7), not raw narration words.
+
+    Where `build_queries` works purely from the beat's own narration text
+    (and can only ever be as literal as that text is), this builds from
+    ALREADY-DISAMBIGUATED meaning: `literal_visual_subject` is what a
+    figurative beat actually depicts once its metaphor has been resolved
+    against the video's real topic (e.g. "immune cells rehearsing an antigen
+    response", not "fire drill"). A beat with no translation available never
+    calls this — `apply_visual_intent_translation` leaves such beats on the
+    existing `build_queries` output untouched.
+
+    Three queries, same shape/reasoning as `build_queries`: the subject
+    alone (specific), subject + topic context (contextual), and
+    entities/process (an alternate phrasing) — bounded and deduplicated by
+    `_push_bounded_phrase`.
+    """
+    queries: list[str] = []
+    subject_words = _cap_words(literal_visual_subject, max_words)
+    topic_words = _cap_words(topic_context, 2)
+    entity_words = list(concrete_entities or [])[:3]
+
+    # A. The literal subject alone — already disambiguated, needs no anchor.
+    if subject_words:
+        _push_bounded_phrase(queries, subject_words, max_words)
+
+    # B. Topic context + subject, so a generic subject phrase ("immune
+    #    cells") still carries the video's identity in the same query.
+    if topic_words and subject_words:
+        _push_bounded_phrase(queries, [*topic_words, *subject_words], max_words)
+
+    # C. Concrete entities + the process/action — an alternate phrasing that
+    #    survives even when the subject phrase itself is too abstract.
+    if entity_words or process_or_action:
+        _push_bounded_phrase(queries, [*entity_words, process_or_action], max_words)
+
+    if not queries and topic_words:
+        _push_bounded_phrase(queries, topic_words, max_words)
+
+    return queries[:limit]
 
 
 def build_queries(
@@ -402,64 +560,66 @@ def build_queries(
     intent: str,
     topic_terms: list[str] | None = None,
     limit: int = 3,
-    max_words: int = 4,
+    max_words: int = 5,
 ) -> list[str]:
-    """Build short retrieval-shaped queries for one beat.
+    """Build a small, diverse set of retrieval-shaped queries for one beat.
 
-    Stock search engines match 2–4 word noun phrases; they match full narration
-    sentences against nothing useful at all.  ``topic_terms`` are video-level
-    terms used to keep a thin beat anchored to the video's subject.
+    Stock search engines match 2–5 word noun phrases; they match full
+    narration sentences against nothing useful at all, and a bare clause
+    fragment ("collisions everything elliptical") carries no signal that
+    connects it back to the video's actual subject.  ``topic_terms`` are
+    video-level terms used to keep a thin beat anchored to that subject.
+
+    Three queries, each grounded in the subject (when one is known) but
+    different in shape and word budget:
+
+      A. specific   — one anchor word (if any) leading the beat's own
+         strongest wording (named entity if any, else its top terms) — what
+         THIS beat is about, still tied to the video's subject.
+      B. contextual — the full (capped) anchor + the beat's own top terms, so
+         topic identity and beat specificity both survive in one query.
+      C. broader    — the subject anchor alone, so a beat whose own wording is
+         too abstract to search for still retrieves the video's real subject
+         instead of nothing.
+
+    Every query is anchored whenever an anchor exists — none is left as a
+    bare clause fragment with zero subject context — because a beat's own
+    wording alone retrieves the everyday sense of ordinary English words:
+    "break" finds surf, "elliptical" (of a galaxy) finds an "elliptical"
+    exercise bicycle. ``topic_terms`` can carry a multi-word
+    ``concrete_subjects`` phrase (e.g. "galaxy formation process and stages
+    cosmic dust and gas clouds") rather than a single keyword; the anchor's
+    own contribution is capped at two words so a long topic phrase can never
+    crowd out the beat-specific words in the same query, which is what
+    previously produced the identical, beat-agnostic query for every beat in
+    the video.
     """
     beat_terms = extract_terms(text, limit=6)
     entities = [e for e in extract_entities(text) if not _NUMBER_RE.fullmatch(e)]
     anchors = [t for t in (topic_terms or []) if t not in beat_terms]
     anchor = anchors[0] if anchors else None
+    anchor_words = _cap_words(anchor, 2) if anchor else []
 
     queries: list[str] = []
 
-    def _push(words: list[str]) -> None:
-        parts: list[str] = []
-        seen_parts: set[str] = set()
-        for word in words:
-            if not word:
-                continue
-            # Entities and terms overlap ("DNA" and "dna"); keep one.
-            for piece in word.split():
-                marker = _normalise(piece)
-                if not marker or marker in seen_parts:
-                    continue
-                seen_parts.add(marker)
-                parts.append(piece)
-        parts = parts[:max_words]
-        if not parts:
-            return
-        phrase = " ".join(parts).strip()
-        if len(phrase) < 3:
-            return
-        signature = frozenset(_normalise(p) for p in phrase.split())
-        if signature not in {frozenset(_normalise(p) for p in q.split()) for q in queries}:
-            queries.append(phrase)
-
-    # Beat terms alone retrieve the everyday sense of ordinary English words:
-    # "break" finds surf, "joining" finds clasped hands, "template" finds a
-    # tailor.  Anchoring to the video's own subject vocabulary disambiguates
-    # them without any domain knowledge being hardcoded.
-    #
-    # 1. Named entity + subject anchor — the most specific query available.
+    # A. Specific — one anchor word (grounding) + THIS beat's strongest
+    #    wording (named entity if any, else its top terms).
+    lead_anchor = anchor_words[:1]
     if entities:
-        _push([entities[0], anchor, beat_terms[0] if beat_terms else ""])
+        _push_bounded_phrase(queries, [*lead_anchor, entities[0], *beat_terms[:2]], max_words)
+    elif beat_terms:
+        _push_bounded_phrase(queries, [*lead_anchor, *beat_terms[:3]], max_words)
 
-    # 2. Subject anchor + the beat's own top terms.
-    if anchor and beat_terms:
-        _push([anchor, *beat_terms[:2]])
+    # B. Contextual — the full (capped) anchor + this beat's own top terms.
+    if anchor_words and beat_terms:
+        _push_bounded_phrase(queries, [*anchor_words, *beat_terms[:2]], max_words)
 
-    # 3. Unanchored beat terms, so a beat that is already specific can still
-    #    find its own subject rather than the video's general one.
-    if beat_terms:
-        _push(beat_terms[:3])
+    # C. Broader but still grounded — the subject anchor by itself.
+    if anchor_words:
+        _push_bounded_phrase(queries, anchor_words, max_words)
 
     if not queries and topic_terms:
-        _push(list(topic_terms[:3]))
+        _push_bounded_phrase(queries, _cap_words(" ".join(topic_terms[:3]), max_words), max_words)
 
     return queries[:limit]
 

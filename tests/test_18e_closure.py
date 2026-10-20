@@ -370,7 +370,7 @@ class TestTopicSpecificity:
         a topic at all?", which is why tightening the fit threshold would have
         been the wrong fix.
         """
-        score, _, findings, spec = _assess(
+        score, _, findings, spec, _attrs = _assess(
             _fit_payload(
                 score=0.8,
                 topic_specificity=0.15,
@@ -394,7 +394,7 @@ class TestTopicSpecificity:
         visual topic; "innovation in the modern era" names nothing and is
         unusable. What separates them is whether there is something to show.
         """
-        _, _, findings, spec = _assess(
+        _, _, findings, spec, _attrs = _assess(
             _fit_payload(
                 topic_specificity=0.95,
                 specificity_label="concrete_topic",
@@ -406,7 +406,7 @@ class TestTopicSpecificity:
         assert spec.specificity_label == "concrete_topic"
 
     def test_an_ungroundable_topic_is_blocked(self):
-        _, _, findings, _ = _assess(
+        _, _, findings, _, _attrs = _assess(
             _fit_payload(
                 topic_specificity=0.8,
                 visual_groundability=0.1,
@@ -419,7 +419,7 @@ class TestTopicSpecificity:
 
     def test_specificity_and_fit_are_independent_axes(self):
         # Perfect fit, zero specificity — the channel's own niche string.
-        _, _, findings, _ = _assess(
+        _, _, findings, _, _attrs = _assess(
             _fit_payload(
                 score=1.0,
                 fit_label="strong_fit",
@@ -440,7 +440,7 @@ class TestTopicSpecificity:
 
     def test_a_prompt_v1_response_does_not_block(self):
         """Old cached answers have no specificity field; that is not a failure."""
-        _, _, findings, spec = _assess(
+        _, _, findings, spec, _attrs = _assess(
             json.dumps(
                 {
                     "score": 0.9,
@@ -511,7 +511,10 @@ class TestTopicSpecificity:
         assert not {n for n in names if "WHITELIST" in n or "ALLOWED_TOPIC" in n}
 
     def test_the_policy_defaults_to_the_specificity_aware_prompt(self):
-        assert EligibilityPolicy().semantic_fit_prompt_version == "2"
+        # Phase 18H.C bumped the default to "3", which is still fully
+        # specificity-aware (v3 is a superset of v2's specificity questions,
+        # adding the seven descriptive topic-attribute fields on top).
+        assert EligibilityPolicy().semantic_fit_prompt_version == "3"
 
 
 class TestSpecificityCaching:
@@ -606,5 +609,5 @@ class TestMigrationV51:
         from app.core.database import SCHEMA_VERSION
 
         conn = open_db(tmp_path / "v51.db")
-        assert SCHEMA_VERSION == 51
-        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == 51
+        assert SCHEMA_VERSION == 60
+        assert conn.execute("SELECT version FROM schema_version").fetchone()[0] == SCHEMA_VERSION

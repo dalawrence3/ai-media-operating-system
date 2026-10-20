@@ -488,6 +488,14 @@ class ElevenLabsTTSProvider:
         }
         if seed is not None:
             kwargs["seed"] = int(seed)
+        # Phase 7B.1, §1/§3 — forward an explicit per-segment language
+        # override only; every call that never sets one (the entire
+        # pre-existing behavior) omits language_code exactly as before,
+        # letting the model use its own default/auto-detect behavior
+        # unchanged. The installed SDK's convert_with_timestamps accepts
+        # this as an optional kwarg (elevenlabs/text_to_speech/client.py).
+        if request.language_override:
+            kwargs["language_code"] = request.language_override
         if pronunciation_dict_ids:
             from elevenlabs.types import PronunciationDictionaryVersionLocator
 

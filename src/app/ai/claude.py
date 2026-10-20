@@ -31,7 +31,20 @@ from app.ai.provider import AIRequest, AIResponse
 from app.ai.retry import with_retry
 
 # Exceptions that warrant a retry attempt.
-_RETRYABLE = (RateLimitError, TransientProviderError)
+#
+# Phase 7C.6 — two independent live recovery canaries, hours apart, both
+# failed on a real anthropic.APITimeoutError. with_retry() and max_retries=3
+# already existed and were already wired into complete() below, but
+# RequestTimeoutError was never in this tuple, so a timeout propagated on
+# the FIRST attempt with zero retries regardless of max_retries — the
+# retry infrastructure was real but silently inert for the exact failure
+# mode observed live. APIConnectionError (network-level, unambiguous) is
+# reclassified to TransientProviderError below for the same reason: a
+# genuine connection failure should retry, but ProviderUnavailableError
+# also carries _translate's ambiguous catch-all fallback (which can be an
+# unclassified 4xx, e.g. invalid_request) and must stay non-retryable —
+# so ProviderUnavailableError itself is deliberately NOT added here.
+_RETRYABLE = (RateLimitError, TransientProviderError, RequestTimeoutError)
 
 
 def _translate(exc: anthropic.APIError) -> AIError:  # type: ignore[name-defined]
@@ -43,7 +56,9 @@ def _translate(exc: anthropic.APIError) -> AIError:  # type: ignore[name-defined
     if isinstance(exc, anthropic.APITimeoutError):
         return RequestTimeoutError(f"Anthropic request timed out: {type(exc).__name__}")
     if isinstance(exc, anthropic.APIConnectionError):
-        return ProviderUnavailableError(f"Anthropic connection error: {type(exc).__name__}")
+        # Unambiguous network-level failure (never a 4xx) — retryable,
+        # unlike the generic ProviderUnavailableError fallback below.
+        return TransientProviderError(f"Anthropic connection error: {type(exc).__name__}")
     if isinstance(exc, anthropic.APIStatusError) and exc.status_code >= 500:
         return TransientProviderError(
             f"Anthropic server error {exc.status_code}: {type(exc).__name__}"
@@ -51,10 +66,36 @@ def _translate(exc: anthropic.APIError) -> AIError:  # type: ignore[name-defined
     return ProviderUnavailableError(f"Anthropic API error: {type(exc).__name__}")
 
 
+def _extract_text(content: list[Any]) -> str:
+    """Find the actual text block in an Anthropic response's content list.
+
+    Phase 7C.1 — content[0] is NOT always the text block: claude-sonnet-5
+    (confirmed via a real cold-start call) auto-enables extended thinking
+    for complex reasoning requests, putting a ThinkingBlock (no `.text`
+    attribute) at content[0] and the real text at a LATER index. Scanning
+    for `type == "text"` instead of assuming a fixed position is correct
+    regardless of how many non-text blocks (thinking, redacted_thinking,
+    ...) precede it, and for any provider response shape that never
+    included one at all.
+    """
+    for block in content:
+        if getattr(block, "type", None) == "text":
+            return block.text
+    raise InvalidStructuredResponseError(
+        "Claude response contains no text block "
+        f"(block types: {[getattr(b, 'type', type(b).__name__) for b in content]})"
+    )
+
+
 # Re-export so callers can catch AIError without importing errors directly.
 from app.ai.errors import AIError  # noqa: E402
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
+
+# Bounded excerpt length for InvalidStructuredResponseError.raw_text_excerpt —
+# long enough to see whether a failure was truncation, prose, or malformed
+# syntax; short enough to never become an unbounded log/DB dump.
+_DIAGNOSTIC_EXCERPT_CHARS = 2000
 
 
 def _strip_json_fences(text: str) -> str:
@@ -100,14 +141,22 @@ class ClaudeProvider:
 
     def _call_api(self, request: AIRequest) -> Any:
         """Issue one (non-retried) API call and translate SDK exceptions."""
+        kwargs: dict[str, Any] = {
+            "model": request.model or self._model,
+            "max_tokens": request.max_tokens,
+            "system": request.system,
+            "messages": [{"role": "user", "content": request.user}],
+        }
+        # Phase 7C.1 — only forward temperature when a caller explicitly
+        # asked for one. Some current models (confirmed: claude-sonnet-5)
+        # reject the parameter outright as deprecated; omitting it entirely
+        # when unset is always safe (it just means "use the model's own
+        # default"), and every caller that genuinely wants a specific value
+        # still gets it forwarded unchanged.
+        if request.temperature is not None:
+            kwargs["temperature"] = request.temperature
         try:
-            return self._client.messages.create(
-                model=request.model or self._model,
-                max_tokens=request.max_tokens,
-                system=request.system,
-                messages=[{"role": "user", "content": request.user}],
-                temperature=request.temperature,
-            )
+            return self._client.messages.create(**kwargs)
         except anthropic.APIError as exc:
             raise _translate(exc) from exc
 
@@ -126,7 +175,7 @@ class ClaudeProvider:
             raise
 
         duration_ms = max(1, int((time.monotonic() - t0) * 1000))
-        raw_text: str = raw_response.content[0].text
+        raw_text = _extract_text(raw_response.content)
 
         parsed = None
         if request.response_schema is not None:
@@ -134,13 +183,17 @@ class ClaudeProvider:
                 data = json.loads(_strip_json_fences(raw_text))
             except json.JSONDecodeError as exc:
                 raise InvalidStructuredResponseError(
-                    f"Claude response is not valid JSON: {type(exc).__name__}"
+                    f"Claude response is not valid JSON: {type(exc).__name__}",
+                    raw_text_excerpt=raw_text[:_DIAGNOSTIC_EXCERPT_CHARS],
+                    stop_reason=raw_response.stop_reason,
                 ) from exc
             try:
                 parsed = request.response_schema.model_validate(data)
             except Exception as exc:
                 raise InvalidStructuredResponseError(
-                    f"Claude response failed schema validation: {type(exc).__name__}"
+                    f"Claude response failed schema validation: {type(exc).__name__}",
+                    raw_text_excerpt=raw_text[:_DIAGNOSTIC_EXCERPT_CHARS],
+                    stop_reason=raw_response.stop_reason,
                 ) from exc
 
         return AIResponse(

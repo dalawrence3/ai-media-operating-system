@@ -447,3 +447,87 @@ def test_null_promoted_opportunity_id_does_not_violate_unique_index(
     db.commit()
     count = db.execute("SELECT COUNT(*) FROM topics").fetchone()[0]
     assert count == 3
+
+
+# ---------------------------------------------------------------------------
+# Phase 18H.C — topic-attribute snapshot at promotion time
+# ---------------------------------------------------------------------------
+
+
+def _insert_semantic_fit_row_with_attributes(
+    db: sqlite3.Connection, *, opportunity_id: int, channel_id: int
+) -> None:
+    db.execute(
+        """
+        INSERT INTO opportunity_semantic_fit_results (
+            opportunity_id, channel_id, prompt_version, input_hash, score, fit_label,
+            rationale, provider_name, model, evaluated_at,
+            practical_utility, immediate_payoff, curiosity, personal_relevance,
+            surprise, broad_accessibility, niche_technicality, attribute_rationale
+        ) VALUES (?,?,'3','h-promote-test',0.85,'strong_fit','r','claude',
+                  'claude-haiku-4-5-20251001','2026-09-05T00:00:00',
+                  0.9,0.8,0.7,0.6,0.5,0.4,0.3,'test rationale')
+        """,
+        (opportunity_id, channel_id),
+    )
+    db.commit()
+
+
+def test_promote_snapshots_cached_semantic_fit_attributes_onto_new_topic(
+    db: sqlite3.Connection,
+) -> None:
+    from app.learning.topic_attributes import get_topic_attributes
+
+    channel_id = _make_channel(db)
+    opp = _make_opportunity(db, channel_id)
+    policy_id = _make_policy(db, channel_id)
+    _add_score(db, opp.id, policy_id, 1)
+    _insert_semantic_fit_row_with_attributes(db, opportunity_id=opp.id, channel_id=channel_id)
+
+    topic, _event = promote_opportunity(db, opp.id)
+
+    attributes = get_topic_attributes(db, topic.id)
+    assert attributes is not None
+    assert attributes.practical_utility == pytest.approx(0.9)
+    assert attributes.attribute_rationale == "test rationale"
+
+
+def test_promote_without_cached_attributes_still_succeeds(db: sqlite3.Connection) -> None:
+    """No cached semantic-fit row (or one without attribute columns populated)
+    must never block or corrupt promotion — the snapshot is best-effort."""
+    from app.learning.topic_attributes import get_topic_attributes
+
+    channel_id = _make_channel(db)
+    opp = _make_opportunity(db, channel_id)
+    policy_id = _make_policy(db, channel_id)
+    _add_score(db, opp.id, policy_id, 1)
+    # Deliberately no opportunity_semantic_fit_results row inserted.
+
+    topic, event = promote_opportunity(db, opp.id)
+
+    assert topic.id is not None
+    assert event is not None
+    assert get_topic_attributes(db, topic.id) is None
+
+
+def test_promote_snapshot_failure_does_not_raise_or_block_promotion(
+    db: sqlite3.Connection, monkeypatch
+) -> None:
+    """Even if the snapshot helper itself raises, promotion must still
+    succeed and return normally (Part 35/40 fail-open requirement)."""
+    import app.learning.topic_attributes as ta_module
+
+    def _boom(conn, *, topic_id, opportunity_id):
+        raise RuntimeError("simulated snapshot failure")
+
+    monkeypatch.setattr(ta_module, "snapshot_semantic_fit_attributes_to_topic", _boom)
+
+    channel_id = _make_channel(db)
+    opp = _make_opportunity(db, channel_id)
+    policy_id = _make_policy(db, channel_id)
+    _add_score(db, opp.id, policy_id, 1)
+
+    topic, event = promote_opportunity(db, opp.id)
+
+    assert topic.id is not None
+    assert event is not None

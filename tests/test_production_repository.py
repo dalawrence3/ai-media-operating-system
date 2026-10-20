@@ -183,6 +183,93 @@ def test_create_production_plan_persists_segments(db: sqlite3.Connection) -> Non
     assert segments[1].section_type == "cta"
 
 
+def test_create_production_plan_persists_think_duration_ms(db: sqlite3.Connection) -> None:
+    """Phase 7B, §16 — the quiz pause (think_duration_ms) must survive the
+    full production plan → DB → repository read round trip, not just live
+    inside the in-memory draft."""
+    topic = _topic(db)
+    script = _script(db, topic.id)
+    segments = [
+        ProductionSegmentDraft(
+            segment_index=0,
+            section_index=0,
+            section_type="hook",
+            narration_text="Test your Spanish!",
+            estimated_duration_s=2,
+            estimated_word_count=4,
+        ),
+        ProductionSegmentDraft(
+            segment_index=1,
+            section_index=1,
+            section_type="prompt",
+            narration_text="How do you say 'window'?",
+            estimated_duration_s=3,
+            estimated_word_count=5,
+            think_duration_ms=3000,
+        ),
+        ProductionSegmentDraft(
+            segment_index=2,
+            section_index=2,
+            section_type="reveal",
+            narration_text="La ventana.",
+            estimated_duration_s=2,
+            estimated_word_count=2,
+        ),
+    ]
+    draft = _make_draft(topic.id, script.id, segments=segments)
+    plan = create_production_plan(db, draft)
+
+    read_back = get_production_segments(db, plan.id)
+    by_type = {seg.section_type: seg for seg in read_back}
+    assert by_type["prompt"].think_duration_ms == 3000
+    assert by_type["hook"].think_duration_ms == 0
+    assert by_type["reveal"].think_duration_ms == 0
+
+
+def test_create_production_plan_persists_language_code(db: sqlite3.Connection) -> None:
+    """Phase 7B.1, §1/§2 — a quiz round's source/target language pair must
+    survive the full production plan -> DB -> repository read round trip."""
+    topic = _topic(db)
+    script = _script(db, topic.id)
+    segments = [
+        ProductionSegmentDraft(
+            segment_index=0,
+            section_index=0,
+            section_type="hook",
+            narration_text="Test your Spanish!",
+            estimated_duration_s=2,
+            estimated_word_count=4,
+        ),
+        ProductionSegmentDraft(
+            segment_index=1,
+            section_index=1,
+            section_type="prompt",
+            narration_text="How do you say 'window'?",
+            estimated_duration_s=3,
+            estimated_word_count=5,
+            think_duration_ms=3000,
+            language_code="en",
+        ),
+        ProductionSegmentDraft(
+            segment_index=2,
+            section_index=2,
+            section_type="reveal",
+            narration_text="La ventana.",
+            estimated_duration_s=2,
+            estimated_word_count=2,
+            language_code="es",
+        ),
+    ]
+    draft = _make_draft(topic.id, script.id, segments=segments)
+    plan = create_production_plan(db, draft)
+
+    read_back = get_production_segments(db, plan.id)
+    by_type = {seg.section_type: seg for seg in read_back}
+    assert by_type["prompt"].language_code == "en"
+    assert by_type["reveal"].language_code == "es"
+    assert by_type["hook"].language_code is None
+
+
 def test_create_production_plan_preserves_warnings(db: sqlite3.Connection) -> None:
     topic = _topic(db)
     script = _script(db, topic.id)

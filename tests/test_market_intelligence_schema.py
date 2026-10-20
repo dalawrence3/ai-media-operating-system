@@ -76,7 +76,7 @@ def _make_obs(conn, **overrides):
 
 
 def test_a_schema_version_is_31():
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 # ---------------------------------------------------------------------------

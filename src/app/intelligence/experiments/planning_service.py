@@ -32,6 +32,12 @@ from app.intelligence.experiments.planning import (
     PlanningIntent,
     PlanningPolicy,
 )
+from app.intelligence.experiments.prior_outcome import (
+    NEGATIVE_REPEAT_COVERAGE_PENALTY_WEIGHT,
+    PriorClusterOutcomeResult,
+    PriorOutcomeAssessment,
+    assess_prior_cluster_outcome,
+)
 
 
 def _utc_now() -> str:
@@ -131,6 +137,7 @@ def _score_candidate(
     planning_intent: PlanningIntent,
     composite_score: float | None,
     channel_evidence_maturity: str = "insufficient",
+    prior_outcome: PriorClusterOutcomeResult | None = None,
 ) -> CandidateScoreComponents:
     """Compute all score components for one candidate.
 
@@ -163,9 +170,22 @@ def _score_candidate(
     uncertainty = 1.0 - (assessment.signal_confidence or 0.0)
     uncertainty = min(1.0, max(0.0, uncertainty))
 
-    # 5. cluster_coverage_need: smooth decay based on how many experiments already on cluster
+    # 5. cluster_coverage_need: smooth decay based on how many experiments already on cluster.
+    #    Phase 18H.A: a cluster whose most recent completed experiment is a stable
+    #    (two-agreeing-readings) NEGATIVE outcome, still within its cooldown window,
+    #    counts as one additional already-run experiment for this purpose — reusing
+    #    the existing 1/(1+n) decay shape instead of a new penalty scale. POSITIVE
+    #    and INCONCLUSIVE priors (including the single-reading case that authorized
+    #    the real CRISPR retest) get ordinary decay only, unchanged from before.
     cluster_count = existing_cluster_counts.get(cluster_id, 0)
-    cluster_coverage_need = 1.0 / (1 + cluster_count)
+    effective_cluster_count = cluster_count
+    if (
+        prior_outcome is not None
+        and prior_outcome.assessment == PriorOutcomeAssessment.NEGATIVE
+        and prior_outcome.guard_active
+    ):
+        effective_cluster_count += NEGATIVE_REPEAT_COVERAGE_PENALTY_WEIGHT
+    cluster_coverage_need = 1.0 / (1 + effective_cluster_count)
 
     # 6. information_gain: what we would learn from running this experiment
     ig_cluster_newness = 1.0 if cluster_count == 0 else 0.0
@@ -216,10 +236,79 @@ def _score_candidate(
     )
 
 
+def _validation_repeat_block_reason(
+    candidate: ExperimentCandidate,
+    existing_cluster_counts: dict[int | None, int],
+    cluster_prior_outcomes: dict[int | None, PriorClusterOutcomeResult],
+) -> tuple[str, str] | None:
+    """Phase 18H.A (+ recent-repeat refinement): block an ill-justified repeat.
+
+    A candidate is a validation repeat whenever its cluster already has an
+    (uncancelled) prior experiment. Three distinct cases block selection this
+    cycle — none of them a permanent ban; each lifts on its own once its
+    cooldown (anchored on the prior experiment's own maturity, see
+    prior_outcome.py) passes, or once new evidence resolves the assessment:
+
+    - stable NEGATIVE, still in cooldown: the original Phase 18H.A guard.
+    - INCONCLUSIVE, still in cooldown: too little evidence to justify an
+      immediate repeat — this is the case that let the real CRISPR retest
+      through un-blocked under plain 18H.A (only one mature reading existed
+      at decision time), which is exactly the gap this refinement closes.
+    - UNAVAILABLE with a completed prior experiment but no outcome data yet,
+      still in cooldown: a just-finished experiment that hasn't had a chance
+      to produce any reading is not meaningfully different from INCONCLUSIVE.
+
+    UNAVAILABLE with no prior experiment at all (a genuinely untested
+    cluster) and any assessment past its cooldown are never blocked — see
+    the individual branches below.
+
+    Returns (deferral_reason_code, audit-friendly message), or None if the
+    candidate is not blocked.
+    """
+    cid = candidate.canonical_cluster_id
+    if existing_cluster_counts.get(cid, 0) <= 0:
+        return None
+    prior = cluster_prior_outcomes.get(cid)
+    if prior is None:
+        return None
+
+    if prior.assessment == PriorOutcomeAssessment.NEGATIVE and prior.guard_active:
+        return (
+            "prior_negative_outcome_requires_override",
+            f"validation repeat blocked: cluster {cid}'s most recent completed experiment "
+            f"({prior.prior_experiment_id}) has a stable negative outcome ({prior.reason}); "
+            f"cooldown active until {prior.cooldown_expires_at}",
+        )
+
+    if prior.assessment == PriorOutcomeAssessment.INCONCLUSIVE and prior.cooldown_active:
+        return (
+            "recent_inconclusive_repeat_requires_wait",
+            f"validation repeat deferred: cluster {cid}'s most recent completed experiment "
+            f"({prior.prior_experiment_id}) is still inconclusive ({prior.reason}); waiting "
+            f"until {prior.cooldown_expires_at} for more evidence rather than repeating "
+            "immediately",
+        )
+
+    if (
+        prior.assessment == PriorOutcomeAssessment.UNAVAILABLE
+        and prior.prior_experiment_id is not None
+        and prior.cooldown_active
+    ):
+        return (
+            "recent_unobserved_repeat_requires_wait",
+            f"validation repeat deferred: cluster {cid}'s most recent completed experiment "
+            f"({prior.prior_experiment_id}) has no usable outcome data yet ({prior.reason}); "
+            f"waiting until {prior.cooldown_expires_at} rather than repeating immediately",
+        )
+
+    return None
+
+
 def _select_portfolio(
     candidates: list[ExperimentCandidate],
     existing_cluster_counts: dict[int | None, int],
     policy: PlanningPolicy,
+    cluster_prior_outcomes: dict[int | None, PriorClusterOutcomeResult] | None = None,
 ) -> list[ExperimentSelectionDecision]:
     """Select candidates into exploitation and exploration slots with cluster diversity guards.
 
@@ -232,9 +321,21 @@ def _select_portfolio(
     - Cluster diversity: max floor(max_cluster_share * total_slots) from any one cluster.
     - Consecutive diversity: at most max_consecutive_same_cluster in a row.
     - Tiebreak: lower opportunity_id wins (deterministic, stable sort).
+    - Phase 18H.A (+ recent-repeat refinement): a validation repeat whose
+      cluster's prior outcome is a stable, still-in-cooldown NEGATIVE, or a
+      still-recent INCONCLUSIVE/UNAVAILABLE-with-no-data-yet, is excluded from
+      both pools (see _validation_repeat_block_reason) — it is deferred with a
+      specific reason, never silently dropped and never permanently banned.
     """
     total_slots = policy.max_exploitation_slots + policy.max_exploration_slots
     max_from_cluster = max(1, int(policy.max_cluster_share * total_slots))
+    cluster_prior_outcomes = cluster_prior_outcomes or {}
+
+    repeat_blocked: dict[int, tuple[str, str]] = {}
+    for c in candidates:
+        block = _validation_repeat_block_reason(c, existing_cluster_counts, cluster_prior_outcomes)
+        if block is not None:
+            repeat_blocked[c.opportunity_id] = block
 
     # Exploitation pool: only candidates the planning service explicitly routed to exploitation.
     # New-cluster candidates have planning_intent=EXPLORATION even when general_eligible, so
@@ -244,9 +345,11 @@ def _select_portfolio(
         for c in candidates
         if c.eligibility_classification == "general_eligible"
         and c.planning_intent == PlanningIntent.EXPLOITATION
+        and c.opportunity_id not in repeat_blocked
     ]
-    # exploration pool = all eligible candidates (exploration_only candidates also eligible)
-    explorable = list(candidates)
+    # exploration pool = all eligible candidates (exploration_only candidates also eligible),
+    # minus any candidate blocked per _validation_repeat_block_reason.
+    explorable = [c for c in candidates if c.opportunity_id not in repeat_blocked]
 
     exploitable_sorted = sorted(
         exploitable,
@@ -279,6 +382,26 @@ def _select_portfolio(
         selected_ids.add(candidate.opportunity_id)
         cid = candidate.canonical_cluster_id
         cluster_counts_in_plan[cid] = cluster_counts_in_plan.get(cid, 0) + 1
+
+    def _prior_outcome_suffix(candidate: ExperimentCandidate) -> str:
+        """Phase 18H.A transparency: append why an allowed repeat was allowed.
+
+        No schema change: candidate_score/selection_decision rows have no
+        free-form JSON metadata column, so this reuses the existing
+        selection_reason free-text field the same way hypothesis_sketch and
+        deferral_reason already carry narrative — a future audit can find
+        "prior_outcome=" in either without needing a migration.
+        """
+        cid = candidate.canonical_cluster_id
+        if existing_cluster_counts.get(cid, 0) <= 0:
+            return ""
+        prior = cluster_prior_outcomes.get(cid)
+        if prior is None:
+            return ""
+        return (
+            f" | prior_outcome={prior.assessment.value} "
+            f"(experiment {prior.prior_experiment_id}): {prior.reason}"
+        )
 
     # Fill exploitation slots
     for candidate in exploitable_sorted:
@@ -319,6 +442,7 @@ def _select_portfolio(
                 pool_type="exploitation",
                 selection_reason=(
                     f"top-{rank} in exploitation pool (exploitation_value={score_str})"
+                    f"{_prior_outcome_suffix(candidate)}"
                 ),
                 deferral_reason=None,
                 is_validation_repeat=(
@@ -336,7 +460,10 @@ def _select_portfolio(
                 selected=True,
                 rank_in_pool=rank,
                 pool_type="exploration",
-                selection_reason=f"top-{rank} in exploration pool (exploration_value={score_str})",
+                selection_reason=(
+                    f"top-{rank} in exploration pool (exploration_value={score_str})"
+                    f"{_prior_outcome_suffix(candidate)}"
+                ),
                 deferral_reason=None,
                 is_validation_repeat=(
                     existing_cluster_counts.get(candidate.canonical_cluster_id, 0) > 0
@@ -349,23 +476,28 @@ def _select_portfolio(
     for candidate in candidates:
         if candidate.opportunity_id in selected_ids:
             continue
-        expl_full = len(selected_exploitation) >= policy.max_exploitation_slots
-        expl_only = candidate.eligibility_classification == "exploration_only"
-        if expl_only:
-            reason = "exploration_slots_full"
-        elif expl_full and len(selected_exploration) >= policy.max_exploration_slots:
-            reason = "all_slots_full"
-        elif expl_full:
-            reason = "exploitation_slots_full"
+        block = repeat_blocked.get(candidate.opportunity_id)
+        if block is not None:
+            reason, selection_reason = block
         else:
-            reason = "cluster_diversity_constraint"
+            expl_full = len(selected_exploitation) >= policy.max_exploitation_slots
+            expl_only = candidate.eligibility_classification == "exploration_only"
+            if expl_only:
+                reason = "exploration_slots_full"
+            elif expl_full and len(selected_exploration) >= policy.max_exploration_slots:
+                reason = "all_slots_full"
+            elif expl_full:
+                reason = "exploitation_slots_full"
+            else:
+                reason = "cluster_diversity_constraint"
+            selection_reason = ""
         decisions.append(
             ExperimentSelectionDecision(
                 opportunity_id=candidate.opportunity_id,
                 selected=False,
                 rank_in_pool=None,
                 pool_type=None,
-                selection_reason="",
+                selection_reason=selection_reason,
                 deferral_reason=reason,
                 is_validation_repeat=(
                     existing_cluster_counts.get(candidate.canonical_cluster_id, 0) > 0
@@ -531,6 +663,7 @@ def build_portfolio_plan(
     *,
     policy: PlanningPolicy | None = None,
     dry_run: bool = False,
+    as_of: str | None = None,
 ) -> ExperimentPortfolioPlan:
     """Build an experiment portfolio plan from a list of eligibility assessments.
 
@@ -552,6 +685,12 @@ def build_portfolio_plan(
             Channel Strategy Profile (Phase 17E) if one exists and validates,
             else PlanningPolicy.v1().
         dry_run: If True, compute the plan but do not persist to DB.
+        as_of: ISO timestamp to evaluate the Phase 18H.A prior-outcome/
+            cooldown assessment against (see assess_prior_cluster_outcome).
+            None (the default, and every real caller today) uses real
+            wall-clock "now" exactly as before this parameter existed —
+            this is for deterministic replay/tests only, never production
+            behavior change.
 
     Returns:
         ExperimentPortfolioPlan with all decisions (selected and deferred).
@@ -609,9 +748,9 @@ def build_portfolio_plan(
     channel_evidence_maturity = "insufficient"
     if cp_channel_id is not None:
         try:
-            from app.learning.cross_publication import get_exploration_coverage
+            from app.learning.cross_publication import get_decision_useful_coverage
 
-            feature_coverage = get_exploration_coverage(conn, channel_id=cp_channel_id)
+            feature_coverage = get_decision_useful_coverage(conn, channel_id=cp_channel_id)
         except Exception:
             feature_coverage = {}
         channel_evidence_maturity = _channel_evidence_maturity(
@@ -631,6 +770,18 @@ def build_portfolio_plan(
     existing_cluster_counts: dict[int | None, int] = {
         row["canonical_cluster_id"]: row["cnt"] for row in cluster_rows
     }
+
+    # Phase 18H.A: assess each repeated cluster's most recent completed-experiment
+    # outcome once per plan (not once per candidate — several candidates can share
+    # a cluster). Clusters with no prior experiment (count == 0) need no assessment;
+    # a candidate there is not a validation repeat regardless of this dict's contents.
+    cluster_prior_outcomes: dict[int | None, PriorClusterOutcomeResult] = {}
+    for cid, cnt in existing_cluster_counts.items():
+        if cid is None or cnt <= 0:
+            continue
+        cluster_prior_outcomes[cid] = assess_prior_cluster_outcome(
+            conn, canonical_cluster_id=cid, channel_id=channel_id, as_of=as_of
+        )
 
     # Build and score each candidate
     candidates: list[ExperimentCandidate] = []
@@ -691,6 +842,7 @@ def build_portfolio_plan(
             planning_intent=planning_intent,
             composite_score=composite_score,
             channel_evidence_maturity=channel_evidence_maturity,
+            prior_outcome=cluster_prior_outcomes.get(cluster_id),
         )
 
         # Propose at most one treatment factor.
@@ -726,7 +878,9 @@ def build_portfolio_plan(
         )
         candidates.append(candidate)
 
-    decisions = _select_portfolio(candidates, existing_cluster_counts, policy)
+    decisions = _select_portfolio(
+        candidates, existing_cluster_counts, policy, cluster_prior_outcomes
+    )
     selected_count = sum(1 for d in decisions if d.selected)
     deferred_count = sum(1 for d in decisions if not d.selected)
 

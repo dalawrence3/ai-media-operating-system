@@ -261,7 +261,7 @@ def _build_selected_decision(
 
 
 def test_A_schema_version_is_39(db):
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 def test_A2_strategy_brief_table_exists(db):
@@ -1322,7 +1322,7 @@ def test_Y3_market_exploration_strategic_reason_mentions_no_prior(db):
 
 def test_Z_schema_version_is_39(db):
     row = db.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-    assert row["version"] == 51
+    assert row["version"] == SCHEMA_VERSION
 
 
 def test_Z2_strategy_briefs_fk_on_planning_runs(db):

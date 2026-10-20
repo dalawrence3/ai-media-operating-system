@@ -1,8 +1,130 @@
 # Project State Snapshot
 
-**Date:** 2026-09-01
-**Latest implemented milestone:** Phase 18 — Closed-Loop Autonomy & Visual Quality
-**Next milestone:** None currently planned (Instagram/TikTok adapters remain deferred — see `TASKS.md`)
+**Date:** 2026-10-20
+**Latest implemented milestone:** v60 checkpoint — exploration portfolio, format-aware production, visual verification
+**Next milestone:** None planned. Work is paused at the v60 checkpoint; see the prioritized operational follow-ups below.
+
+---
+
+## v60 checkpoint — current real state (2026-10-20)
+
+This section describes the state actually running on the operator's machine. It
+was written when ~5½ weeks of integrated work (schema v52→v60) was checkpointed
+into Git; the repository had been materially ahead of its documentation until
+that point.
+
+### Current code / DB
+
+- **`SCHEMA_VERSION = 60`.** The live operational database
+  (`~/.local/share/ai-content-engine/content.db`) is **already migrated to v60**
+  and the running daemons are executing this code. Code and live DB agree — do
+  not "roll back" this stack without also restoring the database.
+- A pre-migration backup exists locally at
+  `.backups/content_pre_v60_migration_20260912T215919.db` (git-ignored).
+- Migrations v52→v60, each idempotent and safe to re-run from any prior version:
+
+| Version | Migration | Purpose |
+|---|---|---|
+| v52 | `visual_candidate_evidence` | Bounded, auditable per-beat candidate evidence (Phase 18G) |
+| v53 | `domain_family` | Adds `domain_family` to `market_exploration_probes` (18H.B.1) |
+| v54 | `topic_attributes` | Topic-attribute observation stack (18H.C) |
+| v55 | `visual_engagement_metrics` | Visual relevance/engagement metrics |
+| v56 | `visual_verification_cache` | Actual-content verification cache |
+| v57 | `exploration_portfolio` | Exploration-cell allocation ledger (Phase 7A) |
+| v58 | `format_aware_production` | Format-aware production (Phase 7B) |
+| v59 | `multilingual_narration` | Per-segment language override (7B.1) |
+| v60 | `narration_run_retry_semantics` | A failed narration run must not permanently block its plan hash (7C.4); rebuilds `narration_runs` |
+
+### Major capabilities added since v51
+
+- **Semantic/literal visual-intent translation** (`src/app/visuals/intent_translation.py`)
+  — one structured, text-only Anthropic call per video resolves figurative
+  narration ("a fire drill for your immune system") into the literal subject
+  that should actually be searched. This is the fix for the query-construction
+  root cause 18E identified but only mitigated.
+- **Visual candidate evidence + supply diagnostics** (`src/app/visuals/candidate_supply.py`)
+  — read-only aggregation answering whether a weak render failed in query
+  generation or in scoring. No new table beyond v52.
+- **Vision-based content verification + cache** (`src/app/visuals/verification.py`,
+  `verification_repository.py`) — samples a frame per beat, composites a bounded
+  contact sheet, and asks a vision judge whether the frames depict what the
+  narration describes. Catches coincidentally-polysemous provider metadata.
+- **Topic-attribute observation + evidence maturity** (`src/app/learning/topic_attributes.py`,
+  `evidence_maturity.py`) — seven descriptive 0..1 channel-agnostic attributes,
+  with relationships to performance discovered observationally, never assumed.
+  Four-tier cross-publication evidence classification shared with 12C.
+- **Exploration portfolio: domain × format × audience value**
+  (`src/app/intelligence/exploration/`, 12 modules) — a cell is a hypothesis
+  chosen *before* any specific topic or probe exists, deliberately one level
+  above `market.planner_models.ExplorationProbe`.
+- **Domain-compatible targeted recovery** (`exploration/recovery.py`) — bounded
+  no-eligible-candidate recovery; owns its own cooldown and single-attempt
+  bounds and makes no eligibility bypass beyond a narrow documented carve-out.
+- **Format suitability + format validation** (`exploration/format_suitability.py`,
+  `format_validation.py`).
+- **Production-supported formats** (`exploration/format_contract.py`):
+  `curiosity_explainer` (default), `interactive_recall_quiz`,
+  `practical_micro_lesson`.
+- **Format-aware visual-quality profiles** — quality floors now vary by format
+  rather than applying one global profile.
+- **Multilingual narration metadata** — per-segment language override (v59).
+- **Narration retry/idempotency hardening** — a failed run no longer
+  permanently blocks its plan input hash (v60).
+- **Anthropic timeout / network-transient retry hardening**
+  (`src/app/ai/claude.py`, `errors.py`, `provider.py`).
+- **Outcome-aware repetition guard** (`src/app/intelligence/experiments/prior_outcome.py`,
+  18H.A) — a cluster's own completed-experiment outcomes are now read back into
+  its future re-selection, with a materiality margin.
+
+### Autonomous loop status
+
+Read from the live database and observer log at checkpoint time:
+
+- **The opportunity pool is exhausted: 0 of 8 opportunities currently resolve to
+  an eligible classification.** The decision cycle has returned
+  `no_eligible_candidate` for **933 consecutive ticks**. The loop is alive and
+  scheduled; it has nothing to select.
+- **Slot 7 (`2026-09-08T14`) remains `reserved` and unfilled** — stalled since
+  Sept 8. Last publication was #7 on 2026-09-07.
+- **Persistent exploration recovery is OFF.**
+  `_maybe_attempt_recovery` in `intelligence/autonomy/decision_cycle.py` is
+  gated on `ACE_EXPLORATION_RECOVERY_ENABLED`, which is **not set** in
+  `.env.local`. Off-by-default is deliberate: a missing flag can never
+  unexpectedly start spending.
+- The recovery architecture has been shadow/live-canary tested; canary outputs
+  are local-only under the git-ignored `.canaries/`.
+- `visual_verification_cache` has **0 rows** — the vision verifier has never yet
+  run against live data.
+- `exploration_cell_selections` has 2 rows (2026-09-13); `topic_attribute_evaluations`
+  5; `visual_candidate_evidence` 57.
+- **Publishing configuration:** live publishing, public release and live TTS are
+  all currently *enabled* in `.env.local`, and dry-run is off. The channel is
+  deliberately authorized. Nothing is being published only because no candidate
+  is eligible — not because a gate is closed. Emergency-stop procedures are in
+  the operational runbook.
+
+### Known operational issues / follow-ups
+
+1. **YouTube OAuth is expired/revoked** — `invalid_grant: Token has been expired
+   or revoked`, 87 auto-observer failures. Needs re-authentication.
+2. **Analytics observation is therefore stale**; the learning loop has had no
+   fresh platform data since. This also starves eligibility of outcome evidence.
+3. **ElevenLabs capacity/quota is a live constraint** on narration throughput.
+4. **No 24/7 execution** — the stack runs as macOS LaunchAgents on a local
+   machine, so nothing runs while the Mac is off.
+5. **Free/local TTS evaluation** is the next cost-reduction investigation.
+6. **Cloud migration** remains future operational work.
+
+### Validation at checkpoint
+
+| Check | Result |
+|---|---|
+| Backend tests | 7428 passed, 1 skipped, 0 failed (19m49s; the skipped test is the always-skipped live smoke test) |
+| Frontend unit tests | 434 passed, 24 files (Vitest + RTL + MSW) |
+| Frontend typecheck | clean (`tsc --noEmit`) |
+| Ruff lint | clean (`src/`, `tests/`) |
+| Ruff format | clean, 685 files |
+| Checkpoint date | 2026-10-20 |
 
 ---
 
@@ -38,17 +160,18 @@
 | Phase 16 — Multi-Channel Foundation & Operational Hardening | ✅ Complete | developed with 17–18, see below | 20→51 (16-18 combined) |
 | Phase 17 — Channel Strategy, Market Refresh & Frontend Redesign | ✅ Complete | developed with 16, 18, see below | 20→51 (16-18 combined) |
 | Phase 18 — Closed-Loop Autonomy & Visual Quality | ✅ Complete | 6784 backend + 404 frontend | 51 |
+| v60 checkpoint — Exploration Portfolio, Format-Aware Production, Visual Verification | ✅ Checkpointed (see above) | 7428 backend + 434 frontend | 52→60 |
 
 ---
 
 ## Current codebase state
 
 ### Schema version
-`SCHEMA_VERSION = 51`
+`SCHEMA_VERSION = 60`
 
 ### Test count
-**Backend:** 6784 passed, 1 skipped (ruff check + ruff format clean; skipped test is the always-skipped live smoke test)
-**Frontend:** 404 passed (23 test files; Vitest + RTL + MSW; typecheck clean; lint clean; build clean)
+**Backend:** 7428 passed, 1 skipped, 0 failed (19m49s; the skipped test is the always-skipped live smoke test) (ruff check + ruff format clean)
+**Frontend:** 434 passed (24 test files; Vitest + RTL + MSW; typecheck clean)
 
 ### Packages implemented
 

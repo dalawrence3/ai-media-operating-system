@@ -337,7 +337,7 @@ def _add_velocity(conn, video_id: str, units_per_day: float, is_negative: bool =
 
 
 def test_a_schema_version_is_32():
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 # ===========================================================================

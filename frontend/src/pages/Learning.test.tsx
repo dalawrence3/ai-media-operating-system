@@ -10,6 +10,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { server } from '@/test/server'
+import { creativeFactorLabel } from '@/lib/marketIntelligence'
 import { Learning } from './Learning'
 import {
   WS_ID,
@@ -17,10 +18,16 @@ import {
   PUB_ID,
   recommendation,
   recommendationAccepted,
+  recommendationRejected,
+  recommendationSupersededV1,
+  recommendationSupersededV2,
+  recommendationCurrentV3,
+  recommendationAcceptedStale,
   marketOpportunity,
   experimentStrategyBrief,
   channelPerformanceBaseline,
   featurePerformanceObservation,
+  topicAttributePerformanceObservation,
   publicationListItem,
   publicationAnalytics,
   opportunityEvidenceResponse,
@@ -74,6 +81,13 @@ describe('Learning', () => {
       renderLearning()
       await waitFor(() => screen.getByText(/cross-publication learning hasn't run yet/i))
       expect(screen.getByText(/ace learn cross-pub --channel/i)).toBeInTheDocument()
+    })
+
+    it('shows an honest empty state for topic attribute insights, naming the unlock commands', async () => {
+      renderLearning()
+      await waitFor(() => screen.getByText(/no topic-attribute evidence yet/i))
+      expect(screen.getByText(/ace learn topic-attributes backfill --channel/i)).toBeInTheDocument()
+      expect(screen.getByText(/ace learn topic-attributes recompute --channel/i)).toBeInTheDocument()
     })
 
     it('shows an honest empty state for market opportunities', async () => {
@@ -236,6 +250,80 @@ describe('Learning', () => {
     })
   })
 
+  describe('Phase 18F — default "current" view excludes stale/superseded/rejected history', () => {
+    function seedFullLineage() {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+          HttpResponse.json([
+            recommendationSupersededV1,
+            recommendationSupersededV2,
+            recommendationCurrentV3,
+            recommendationRejected,
+            recommendationAccepted,
+            recommendationAcceptedStale,
+          ]),
+        ),
+      )
+    }
+
+    it('defaults to the "current" tab', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+          HttpResponse.json([recommendation]),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByTestId('filter-current'))
+      expect(screen.getByTestId('filter-current')).toHaveClass('button-primary')
+    })
+
+    it('current view shows only the pending v3 and the valid accepted row', async () => {
+      seedFullLineage()
+      renderLearning()
+      await waitFor(() => screen.getByText(recommendationCurrentV3.title))
+      expect(screen.getByText(recommendationAccepted.title)).toBeInTheDocument()
+      expect(screen.queryByText(recommendationRejected.title)).not.toBeInTheDocument()
+      expect(screen.queryByTestId(`recommendation-${recommendationSupersededV1.id}`)).not.toBeInTheDocument()
+      expect(screen.queryByTestId(`recommendation-${recommendationSupersededV2.id}`)).not.toBeInTheDocument()
+      expect(screen.queryByTestId(`recommendation-${recommendationAcceptedStale.id}`)).not.toBeInTheDocument()
+    })
+
+    it('accepted tab shows every accepted row, including stale evidence, with a stale badge', async () => {
+      seedFullLineage()
+      renderLearning()
+      await waitFor(() => screen.getByText(recommendationCurrentV3.title))
+      fireEvent.click(screen.getByTestId('filter-accepted'))
+      await waitFor(() => screen.getByTestId(`recommendation-${recommendationAcceptedStale.id}`))
+      expect(screen.getByText(recommendationAccepted.title)).toBeInTheDocument()
+      const staleCard = screen.getByTestId(`recommendation-${recommendationAcceptedStale.id}`)
+      expect(within(staleCard).getByText('stale evidence')).toBeInTheDocument()
+      // the valid accepted row must NOT carry the stale badge
+      const validCard = screen.getByTestId(`recommendation-${recommendationAccepted.id}`)
+      expect(within(validCard).queryByText('stale evidence')).not.toBeInTheDocument()
+    })
+
+    it('rejected tab shows only rejected rows', async () => {
+      seedFullLineage()
+      renderLearning()
+      await waitFor(() => screen.getByText(recommendationCurrentV3.title))
+      fireEvent.click(screen.getByTestId('filter-rejected'))
+      await waitFor(() => screen.getByText(recommendationRejected.title))
+      expect(screen.queryByText(recommendationCurrentV3.title)).not.toBeInTheDocument()
+    })
+
+    it('history tab shows the full lineage, including superseded and stale-accepted rows', async () => {
+      seedFullLineage()
+      renderLearning()
+      await waitFor(() => screen.getByText(recommendationCurrentV3.title))
+      fireEvent.click(screen.getByTestId('filter-history'))
+      await waitFor(() => screen.getByTestId(`recommendation-${recommendationSupersededV1.id}`))
+      expect(screen.getByTestId(`recommendation-${recommendationSupersededV2.id}`)).toBeInTheDocument()
+      expect(screen.getByTestId(`recommendation-${recommendationCurrentV3.id}`)).toBeInTheDocument()
+      expect(screen.getByTestId(`recommendation-${recommendationRejected.id}`)).toBeInTheDocument()
+      expect(screen.getByTestId(`recommendation-${recommendationAcceptedStale.id}`)).toBeInTheDocument()
+    })
+  })
+
   describe('populated state — channel evidence', () => {
     it('compares videos by avg % viewed when at least two have analytics', async () => {
       const secondPub = { ...publicationListItem, id: 3, title: 'Second Video' }
@@ -354,7 +442,7 @@ describe('Learning', () => {
   })
 
   describe('populated state — creative factors', () => {
-    it('groups a feature observation under its category with a maturity badge', async () => {
+    it('groups a feature observation under its category with a maturity badge (via show-all-raw, since a lone single-bucket observation has no variation to show by default)', async () => {
       server.use(
         http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/cross-publication`, () =>
           HttpResponse.json({
@@ -365,10 +453,271 @@ describe('Learning', () => {
         ),
       )
       renderLearning()
+      await waitFor(() => screen.getByText(/not enough variation yet/i))
+      fireEvent.click(screen.getByTestId('toggle-show-all-raw-factors'))
       await waitFor(() => screen.getByText('Scene count'))
       expect(screen.getByText('Production')).toBeInTheDocument()
       const row = screen.getByText('Scene count').closest('.factor-observation-row') as HTMLElement
       expect(within(row).getByText('Exploratory')).toBeInTheDocument()
+    })
+  })
+
+  describe('Phase 18H.C — Topic Attribute Insights', () => {
+    it('renders a decision-useful observation by default, with maturity, publication, and domain counts', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/topic-attributes`, () =>
+          HttpResponse.json({
+            channel_id: CH_ID,
+            raw: [topicAttributePerformanceObservation],
+            decision_useful: [topicAttributePerformanceObservation],
+          }),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByText('Practical utility'))
+      const row = screen.getByText('Practical utility').closest('.factor-observation-row') as HTMLElement
+      expect(within(row).getByText('Exploratory')).toBeInTheDocument()
+      expect(within(row).getByText(/2 publications/)).toBeInTheDocument()
+      expect(within(row).getByText(/2 domains/)).toBeInTheDocument()
+    })
+
+    it('keeps Topic Attribute Insights visually and structurally separate from Creative Factors', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/cross-publication`, () =>
+          HttpResponse.json({
+            channel_id: CH_ID,
+            baselines: [channelPerformanceBaseline],
+            feature_observations: [
+              { ...featurePerformanceObservation, sample_maturity: 'directional', publication_count: 5 },
+              {
+                ...featurePerformanceObservation,
+                id: 999,
+                feature_bucket: '10-13',
+                sample_maturity: 'directional',
+                publication_count: 4,
+              },
+            ],
+          }),
+        ),
+        http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/topic-attributes`, () =>
+          HttpResponse.json({
+            channel_id: CH_ID,
+            raw: [topicAttributePerformanceObservation],
+            decision_useful: [topicAttributePerformanceObservation],
+          }),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByText('Practical utility'))
+      expect(screen.getByText('Topic Attribute Insights')).toBeInTheDocument()
+      expect(screen.getByText('Creative factors')).toBeInTheDocument()
+      // The creative-factor row (Scene count) and the attribute row
+      // (Practical utility) must not be rendered inside the same card.
+      const attributeRow = screen.getByText('Practical utility').closest('.factor-observation-row') as HTMLElement
+      expect(within(attributeRow).queryByText('Scene count')).not.toBeInTheDocument()
+    })
+
+    it('never uses causal language for a topic-attribute observation', async () => {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/topic-attributes`, () =>
+          HttpResponse.json({
+            channel_id: CH_ID,
+            raw: [topicAttributePerformanceObservation],
+            decision_useful: [topicAttributePerformanceObservation],
+          }),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByText('Practical utility'))
+      const section = screen.getByText('Topic Attribute Insights').closest('.section') as HTMLElement
+      expect(within(section).queryByText(/\bcauses\b/i)).not.toBeInTheDocument()
+      expect(within(section).queryByText(/\bguarantees\b/i)).not.toBeInTheDocument()
+      expect(within(section).queryByText(/\balways performs\b/i)).not.toBeInTheDocument()
+    })
+
+    it('"Show all raw observations" reveals insufficient/single-domain rows hidden by default', async () => {
+      const insufficientOb = {
+        ...topicAttributePerformanceObservation,
+        id: 202,
+        attribute_name: 'curiosity',
+        sample_maturity: 'insufficient',
+        publication_count: 1,
+        distinct_domain_family_count: 1,
+      }
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/topic-attributes`, () =>
+          HttpResponse.json({
+            channel_id: CH_ID,
+            raw: [topicAttributePerformanceObservation, insufficientOb],
+            decision_useful: [topicAttributePerformanceObservation],
+          }),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByText('Practical utility'))
+      expect(screen.queryByText('Curiosity')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('toggle-show-all-raw-attributes'))
+      await waitFor(() => screen.getByText('Curiosity'))
+      expect(screen.getByText('Practical utility')).toBeInTheDocument()
+    })
+  })
+
+  describe('Phase 18F.1 — creative-factor pattern display filtering', () => {
+    const usefulOb = {
+      ...featurePerformanceObservation,
+      id: 101,
+      feature_name: 'scene_count',
+      feature_bucket: '5-8',
+      metric_name: 'views',
+      sample_maturity: 'directional',
+      publication_count: 5,
+    }
+    const usefulObOtherBucket = {
+      ...featurePerformanceObservation,
+      id: 102,
+      feature_name: 'scene_count',
+      feature_bucket: '9-12',
+      metric_name: 'views',
+      sample_maturity: 'directional',
+      publication_count: 4,
+    }
+    const invariantOb = {
+      ...featurePerformanceObservation,
+      id: 103,
+      feature_name: 'has_hook',
+      feature_bucket: 'true',
+      metric_name: 'views',
+      sample_maturity: 'actionable',
+      publication_count: 10,
+    }
+    const insufficientOb = {
+      ...featurePerformanceObservation,
+      id: 104,
+      feature_name: 'script_format',
+      feature_bucket: 'short',
+      metric_name: 'views',
+      sample_maturity: 'insufficient',
+      publication_count: 1,
+    }
+    const insufficientObOtherBucket = {
+      ...featurePerformanceObservation,
+      id: 105,
+      feature_name: 'script_format',
+      feature_bucket: 'long_form',
+      metric_name: 'views',
+      sample_maturity: 'insufficient',
+      publication_count: 1,
+    }
+
+    function seedFactors() {
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/cross-publication`, () =>
+          HttpResponse.json({
+            channel_id: CH_ID,
+            baselines: [channelPerformanceBaseline],
+            feature_observations: [
+              usefulOb,
+              usefulObOtherBucket,
+              invariantOb,
+              insufficientOb,
+              insufficientObOtherBucket,
+            ],
+          }),
+        ),
+      )
+    }
+
+    it('hides a single-value / invariant pattern by default', async () => {
+      seedFactors()
+      renderLearning()
+      await waitFor(() => screen.getAllByText(creativeFactorLabel('scene_count'))[0])
+      expect(screen.queryByText(creativeFactorLabel('has_hook'))).not.toBeInTheDocument()
+    })
+
+    it('hides an n=1 / insufficient-support pattern by default', async () => {
+      seedFactors()
+      renderLearning()
+      await waitFor(() => screen.getAllByText(creativeFactorLabel('scene_count'))[0])
+      expect(screen.queryByText(creativeFactorLabel('script_format'))).not.toBeInTheDocument()
+    })
+
+    it('shows a supported comparative pattern by default', async () => {
+      seedFactors()
+      renderLearning()
+      await waitFor(() => screen.getAllByText(creativeFactorLabel('scene_count'))[0])
+      expect(screen.getAllByText(creativeFactorLabel('scene_count')).length).toBe(2)
+    })
+
+    it('"Show all raw patterns" reveals the hidden raw rows', async () => {
+      seedFactors()
+      renderLearning()
+      await waitFor(() => screen.getAllByText(creativeFactorLabel('scene_count'))[0])
+      expect(screen.queryByText(creativeFactorLabel('has_hook'))).not.toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('toggle-show-all-raw-factors'))
+      await waitFor(() => screen.getByText(creativeFactorLabel('has_hook')))
+      expect(screen.getAllByText(creativeFactorLabel('script_format'))[0]).toBeInTheDocument()
+    })
+
+    it('raw total count stays accurate regardless of the toggle', async () => {
+      seedFactors()
+      renderLearning()
+      await waitFor(() => screen.getByText(/5 raw observations/))
+      fireEvent.click(screen.getByTestId('toggle-show-all-raw-factors'))
+      await waitFor(() => screen.getByText(/showing all 5 raw observations/i))
+    })
+
+    it('the useful/displayed count is accurate', async () => {
+      seedFactors()
+      renderLearning()
+      await waitFor(() => screen.getByText(/2 useful patterns/))
+    })
+
+    it('raw rows are never deleted from the API response — toggling only changes what is shown', async () => {
+      seedFactors()
+      renderLearning()
+      await waitFor(() => screen.getAllByText(creativeFactorLabel('scene_count'))[0])
+      fireEvent.click(screen.getByTestId('toggle-show-all-raw-factors'))
+      await waitFor(() => screen.getByText(creativeFactorLabel('has_hook')))
+      fireEvent.click(screen.getByTestId('toggle-show-all-raw-factors'))
+      await waitFor(() => screen.getByText(/2 useful patterns/))
+      // toggling back off does not lose scene_count — the underlying raw
+      // data was never mutated, only re-filtered for display.
+      expect(screen.getAllByText(creativeFactorLabel('scene_count')).length).toBe(2)
+    })
+
+    it('a legacy row with missing sample_maturity fails safe (hidden by default, still shown via raw toggle)', async () => {
+      const legacyOb = {
+        ...featurePerformanceObservation,
+        id: 106,
+        feature_name: 'render_caption_burn_in',
+        feature_bucket: 'true',
+        metric_name: 'views',
+        sample_maturity: '',
+        publication_count: 3,
+      }
+      const legacyObOtherBucket = {
+        ...featurePerformanceObservation,
+        id: 107,
+        feature_name: 'render_caption_burn_in',
+        feature_bucket: 'false',
+        metric_name: 'views',
+        sample_maturity: '',
+        publication_count: 3,
+      }
+      server.use(
+        http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/cross-publication`, () =>
+          HttpResponse.json({
+            channel_id: CH_ID,
+            baselines: [channelPerformanceBaseline],
+            feature_observations: [legacyOb, legacyObOtherBucket],
+          }),
+        ),
+      )
+      renderLearning()
+      await waitFor(() => screen.getByText(/not enough variation yet/i))
+      expect(screen.queryByText(creativeFactorLabel('render_caption_burn_in'))).not.toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('toggle-show-all-raw-factors'))
+      await waitFor(() => screen.getAllByText(creativeFactorLabel('render_caption_burn_in'))[0])
     })
   })
 })

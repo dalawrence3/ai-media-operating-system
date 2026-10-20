@@ -14,6 +14,7 @@ import type {
   CPAccount,
   ExperimentStrategyBrief,
   FeaturePerformanceObservation,
+  TopicAttributePerformanceObservation,
   MarketExperiment,
   MarketOpportunity,
   OpportunityEvidenceResponse,
@@ -378,6 +379,56 @@ export const recommendationAccepted: OptimizationRecommendation = {
   input_hash: 'hash-rec-002',
 }
 
+/** Phase 18F — Learn page filtering fixtures: a rejected row and a
+    supersession chain (v1/v2 superseded, v3 current), for the
+    Current/Pending/Accepted/Rejected/History tabs. */
+export const recommendationRejected: OptimizationRecommendation = {
+  ...recommendation,
+  id: 3,
+  title: 'Rejected recommendation',
+  status: 'rejected',
+  input_hash: 'hash-rec-003',
+}
+
+export const recommendationSupersededV1: OptimizationRecommendation = {
+  ...recommendation,
+  id: 4,
+  title: 'Low total watch time relative to view count',
+  status: 'superseded',
+  superseded_by_id: 5,
+  input_hash: 'hash-rec-004-v1',
+}
+
+export const recommendationSupersededV2: OptimizationRecommendation = {
+  ...recommendation,
+  id: 5,
+  title: 'Low total watch time relative to view count',
+  status: 'superseded',
+  superseded_by_id: 6,
+  input_hash: 'hash-rec-004-v2',
+}
+
+export const recommendationCurrentV3: OptimizationRecommendation = {
+  ...recommendation,
+  id: 6,
+  title: 'Low total watch time relative to view count',
+  status: 'pending',
+  input_hash: 'hash-rec-004-v3',
+}
+
+/** An accepted recommendation whose evidence is no longer valid (Phase
+    18F) — must stay visible under Accepted/History but be excluded from
+    the default Current view. */
+export const recommendationAcceptedStale: OptimizationRecommendation = {
+  ...recommendation,
+  id: 7,
+  title: 'Net subscriber loss — review topic alignment with channel audience',
+  status: 'accepted',
+  input_hash: 'hash-rec-007',
+  evidence_valid: false,
+  validity_reason: 'Net subscriber change (+0) no longer meets the current loss threshold (< 0)',
+}
+
 export const marketOpportunity: MarketOpportunity = {
   id: 1,
   channel_id: 1,
@@ -546,6 +597,37 @@ export const featurePerformanceObservation: FeaturePerformanceObservation = {
   updated_at: '2026-08-28T00:00:00',
 }
 
+export const topicAttributePerformanceObservation: TopicAttributePerformanceObservation = {
+  id: 1,
+  channel_id: CH_ID,
+  workspace_id: WS_ID,
+  attribute_name: 'practical_utility',
+  attribute_bucket: 'high',
+  metric_name: 'average_view_percentage',
+  period_type: 'lifetime',
+  publication_count: 2,
+  distinct_topic_count: 2,
+  distinct_domain_family_count: 2,
+  mean: 0.55,
+  median: 0.55,
+  min_value: 0.4,
+  max_value: 0.7,
+  std_dev: 0.1,
+  baseline_mean: 0.4,
+  baseline_median: 0.4,
+  abs_diff_from_baseline: 0.15,
+  rel_diff_from_baseline: 0.375,
+  sample_maturity: 'exploratory',
+  observation_type: 'association',
+  source_publication_ids_json: '[1,4]',
+  source_topic_ids_json: '[2,5]',
+  comparison_schema_version: 'topic-attr-v1',
+  observer_version: 'observer-v1',
+  input_hash: 'hash-topic-attr-fixture',
+  created_at: '2026-09-05T00:00:00',
+  updated_at: '2026-09-05T00:00:00',
+}
+
 export const strategyConfig: StrategyConfig = {
   schema_version: '1.0',
   bootstrap: {
@@ -686,6 +768,22 @@ export const publishingSlotFilled: PublishingSlot = {
   publish_error: null,
   publish_retry_count: 0,
   rescheduled_from_slot_id: null,
+  retired_at: null,
+  retirement_reason: null,
+}
+
+export const publishingSlotMissedReady: PublishingSlot = {
+  ...publishingSlotFilled,
+  id: 6,
+  slot_key: '2026-09-05T21',
+  scheduled_for_local: '2026-09-05T21:00:00-04:00',
+  scheduled_for_utc: '2026-09-06T01:00:00',
+  experiment_id: 'exp-slot-6',
+  production_publishing_plan_id: 8,
+  publish_status: 'skipped_missed',
+  publish_failure_category: 'MISSED_SLOT',
+  publish_error: 'Slot 6 exhausted its publish retry budget (3 attempt(s), max 3) without succeeding.',
+  publish_retry_count: 3,
 }
 
 export const publishingAuthorizationUnauthorized: ChannelPublishingAuthorizationResponse = {

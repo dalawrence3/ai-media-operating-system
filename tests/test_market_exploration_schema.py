@@ -75,7 +75,7 @@ def _make_probe(conn, run_id: int, **overrides):
 
 
 def test_a_schema_version_is_31():
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 # ---------------------------------------------------------------------------
@@ -874,3 +874,96 @@ def test_an_exploration_tables_are_channel_scoped(conn):
     }
     assert "channel_id" in run_cols
     assert "channel_id" in probe_cols
+
+
+# ---------------------------------------------------------------------------
+# AO–AT — Phase 18H.B.1: domain_family / v52->v53 migration
+# ---------------------------------------------------------------------------
+
+
+def test_ao_fresh_db_has_domain_family_column(conn):
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(market_exploration_probes)").fetchall()}
+    assert "domain_family" in cols
+
+
+def test_ap_domain_family_nullable(conn):
+    """A probe created without domain_family (e.g. any v1/v2-prompt-era row,
+    including the real historical run #10) must persist with NULL, not error."""
+    run = create_exploration_run(conn, channel_id=None, workspace_id=None)
+    probe = create_exploration_probe(
+        conn,
+        run_id=run.id,
+        query_text="q",
+        normalized_query="q",
+        probe_type="market_region",
+        channel_id=None,
+        workspace_id=None,
+    )
+    row = conn.execute(
+        "SELECT domain_family FROM market_exploration_probes WHERE id = ?", (probe.id,)
+    ).fetchone()
+    assert row["domain_family"] is None
+
+
+def test_aq_migration_v52_to_v53_adds_column_preserves_rows(tmp_path):
+    """A database frozen at v52 (pre-18H.B.1) gains domain_family on next
+    open_db, and any pre-existing market_exploration_probes rows — the exact
+    shape of the real historical run #10 — keep every other column unchanged
+    with domain_family defaulting to NULL. No backfill, no rewrite."""
+    from app.core.database import _get_version, _set_version
+
+    db_path = tmp_path / "v52.db"
+    conn = open_db(db_path)
+    run = create_exploration_run(conn, channel_id=None, workspace_id=None)
+    probe = create_exploration_probe(
+        conn,
+        run_id=run.id,
+        query_text="how artificial intelligence works",
+        normalized_query="how artificial intelligence works",
+        probe_type="market_region",
+        channel_id=None,
+        workspace_id=None,
+        market_region_label="AI & Machine Learning Fundamentals",
+    )
+    from app.intelligence.market.planner_repository import update_probe_status
+
+    update_probe_status(
+        conn,
+        probe.id,
+        status="selected",
+        priority_score=0.968,
+        priority_components_json='{"niche_fit": 0.92, "novelty": 1.0}',
+        niche_fit_score=0.92,
+    )
+    _set_version(conn, 52)  # simulate a pre-18H.B.1 database
+    conn.commit()
+    conn.close()
+
+    conn2 = open_db(db_path)
+    assert _get_version(conn2) == SCHEMA_VERSION
+    assert SCHEMA_VERSION == 60
+
+    row = conn2.execute(
+        "SELECT * FROM market_exploration_probes WHERE id = ?", (probe.id,)
+    ).fetchone()
+    assert row["domain_family"] is None
+    assert row["status"] == "selected"
+    assert abs(row["priority_score"] - 0.968) < 1e-9
+    assert abs(row["niche_fit_score"] - 0.92) < 1e-9
+    assert row["priority_components_json"] == '{"niche_fit": 0.92, "novelty": 1.0}'
+    assert row["market_region_label"] == "AI & Machine Learning Fundamentals"
+    conn2.close()
+
+
+def test_ar_migration_v53_is_idempotent(tmp_path):
+    """Applying the v53 migration function twice against the same connection
+    does not raise and does not duplicate the column."""
+    from app.core.database import _apply_v53_domain_family
+
+    db_path = tmp_path / "idempotent.db"
+    conn = open_db(db_path)
+    _apply_v53_domain_family(conn)  # already applied by open_db; calling again must be a no-op
+    _apply_v53_domain_family(conn)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(market_exploration_probes)").fetchall()]
+    assert cols.count("domain_family") == 1
+    conn.close()

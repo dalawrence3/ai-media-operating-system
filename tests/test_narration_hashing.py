@@ -154,7 +154,13 @@ def test_segment_hash_manual_sha256() -> None:
         narration_schema_version="Narration-v1",
         narration_algorithm_version="narration-segment-v1",
     )
-    expected_payload = json.dumps(kwargs, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    # Phase 7B, §9: think_duration_ms is part of the hashed payload with a
+    # default of 0 — included explicitly here since the manual expected-
+    # payload reconstruction must match the function's actual payload keys.
+    expected_kwargs = {**kwargs, "think_duration_ms": 0}
+    expected_payload = json.dumps(
+        expected_kwargs, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    )
     expected = hashlib.sha256(expected_payload.encode("utf-8")).hexdigest()
     assert compute_narration_segment_input_hash(**kwargs) == expected
 

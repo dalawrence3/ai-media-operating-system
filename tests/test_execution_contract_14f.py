@@ -367,12 +367,12 @@ def _insert_feature_snapshot(
 
 
 def test_A_schema_version_is_40(db):
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 def test_A2_schema_version_row_is_40(db):
     row = db.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-    assert row["version"] == 51
+    assert row["version"] == SCHEMA_VERSION
 
 
 def test_A3_execution_contract_table_exists(db):
@@ -1756,7 +1756,7 @@ def test_W7_fidelity_round_trips_after_persist(db):
 
 def test_X_fresh_db_has_schema_version_40(db):
     row = db.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-    assert row["version"] == 51
+    assert row["version"] == SCHEMA_VERSION
 
 
 def test_X2_v39_db_migrates_to_v40(tmp_path):
@@ -1780,7 +1780,7 @@ def test_X2_v39_db_migrates_to_v40(tmp_path):
     # Now open again — migration must fire
     conn2 = open_db(tmp_path / "v39.db")
     row = conn2.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
-    assert row["version"] == 51
+    assert row["version"] == SCHEMA_VERSION
     tbl = conn2.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='experiment_execution_contracts'"
     ).fetchone()

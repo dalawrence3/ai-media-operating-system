@@ -46,30 +46,27 @@ from datetime import UTC, datetime
 
 from pydantic import BaseModel
 
+from app.learning.evidence_maturity import (
+    MATURITY_ACTIONABLE,  # noqa: F401 — re-exported for existing external importers
+    MATURITY_DIRECTIONAL,  # noqa: F401 — re-exported for existing external importers
+    MATURITY_EXPLORATORY,  # noqa: F401 — re-exported for existing external importers
+    MATURITY_INSUFFICIENT,
+)
+from app.learning.evidence_maturity import classify_maturity as _classify_maturity
+from app.learning.evidence_maturity import compute_stats as _compute_stats
+
 # ── Version constants ─────────────────────────────────────────────────────────
 
 CROSS_PUB_SCHEMA_VERSION: str = "cross-pub-v1"
 CROSS_PUB_OBSERVER_VERSION: str = "observer-v1"
 
-# ── Evidence maturity classification ─────────────────────────────────────────
-
-MATURITY_INSUFFICIENT = "insufficient"  # n < 2:  no cross-publication inference possible
-MATURITY_EXPLORATORY = "exploratory"  # 2–3:    directionally suggestive only
-MATURITY_DIRECTIONAL = "directional"  # 4–9:    pattern visible but not robust
-MATURITY_ACTIONABLE = "actionable"  # >= 10:  sufficient for systematic consideration
-
-# Semantic note: 'actionable' here means "enough evidence to consider the pattern".
-# It does NOT mean "apply this change automatically" — that remains Phase 12A's domain.
-
-
-def _classify_maturity(n: int) -> str:
-    if n < 2:
-        return MATURITY_INSUFFICIENT
-    if n < 4:
-        return MATURITY_EXPLORATORY
-    if n < 10:
-        return MATURITY_DIRECTIONAL
-    return MATURITY_ACTIONABLE
+# Evidence maturity classification and descriptive statistics now live in
+# app.learning.evidence_maturity (Phase 18H.C) — imported above and
+# re-exported under these original names so every existing call site in
+# this file, and any external `from app.learning.cross_publication import
+# ...`, is unaffected. Deliberately NOT app.learning.maturity, which is a
+# different, pre-existing concept (per-publication MaturityRequirement /
+# evaluate_maturity gating for recommendation generators).
 
 
 # ── V1 comparable feature definitions ────────────────────────────────────────
@@ -250,45 +247,6 @@ def feature_bucket(feature_name: str, value: object) -> str | None:
     if feature_name in CATEGORICAL_FEATURES:
         return str(value)
     return None
-
-
-# ── Statistics ────────────────────────────────────────────────────────────────
-
-
-def _compute_stats(values: list[float]) -> dict[str, object]:
-    """Compute descriptive statistics for a non-empty list of floats.
-
-    std_dev is None when n < 2 (cannot compute sample std dev with one value).
-    """
-    n = len(values)
-    if n == 0:
-        return {
-            "publication_count": 0,
-            "mean": None,
-            "median": None,
-            "min_value": None,
-            "max_value": None,
-            "std_dev": None,
-        }
-    total = sum(values)
-    mean = total / n
-    sorted_v = sorted(values)
-    if n % 2 == 1:
-        median = sorted_v[n // 2]
-    else:
-        median = (sorted_v[n // 2 - 1] + sorted_v[n // 2]) / 2.0
-    std_dev: float | None = None
-    if n >= 2:
-        variance = sum((v - mean) ** 2 for v in values) / (n - 1)
-        std_dev = math.sqrt(variance)
-    return {
-        "publication_count": n,
-        "mean": mean,
-        "median": median,
-        "min_value": sorted_v[0],
-        "max_value": sorted_v[-1],
-        "std_dev": std_dev,
-    }
 
 
 # ── Hashing ───────────────────────────────────────────────────────────────────
@@ -968,3 +926,43 @@ def get_exploration_coverage(
         }
 
     return coverage
+
+
+def get_decision_useful_coverage(
+    conn: sqlite3.Connection,
+    *,
+    channel_id: str,
+    feature_name: str | None = None,
+) -> dict[str, dict[str, dict[str, object]]]:
+    """Planner-facing view of exploration coverage (Phase 18F).
+
+    A feature with only one distinct value observed so far offers no
+    comparison YET — that is not the same as being fixed. Dropping it here
+    removes false "already tested" credit from _compute_feature_coverage_gap
+    / _select_treatment_factor (both key off `feature_coverage.get(name)`
+    truthiness), so it correctly reads as untested and stays eligible for
+    exploring another value — never as covered, never as suppressed.
+    Likewise, a bucket whose sample_maturity is MATURITY_INSUFFICIENT (n < 2
+    publications) is dropped: not enough support for a comparison yet.
+
+    Raw, unfiltered coverage — including invariant and n=1 buckets — remains
+    available via get_exploration_coverage() for display/history; this
+    function exists only so non-discriminating evidence stops registering as
+    planner-facing "tested" coverage. SAFE_CONTROLLABLE_FACTORS
+    (intelligence/experiments/planning.py) remains the sole controllability
+    registry — this function does not gate by it; the planner's own loops
+    already do.
+    """
+    raw = get_exploration_coverage(conn, channel_id=channel_id, feature_name=feature_name)
+    filtered: dict[str, dict[str, dict[str, object]]] = {}
+    for feat_name, buckets in raw.items():
+        if len(buckets) < 2:
+            continue  # one value observed so far — a real gap, not evidence
+        supported = {
+            b: info
+            for b, info in buckets.items()
+            if info.get("sample_maturity") != MATURITY_INSUFFICIENT
+        }
+        if supported:
+            filtered[feat_name] = supported
+    return filtered

@@ -478,3 +478,241 @@ def learn_coverage(
                 f"({info['sample_maturity']})  pubs=[{ids_str}]"
             )
     typer.echo()
+
+
+# ── topic-attributes (Phase 18H.C) ──────────────────────────────────────────
+
+topic_attr_app = typer.Typer(
+    name="topic-attributes",
+    help="Topic-attribute observation stack — descriptive subject-matter characteristics, "
+    "observational only. Never influences planning or eligibility.",
+    no_args_is_help=True,
+)
+learn_app.add_typer(topic_attr_app)
+
+
+@topic_attr_app.command("recompute")
+def learn_topic_attributes_recompute(
+    channel_id: Annotated[str, typer.Option("--channel", help="Channel ID to analyze.")],
+    workspace_id: Annotated[
+        str | None, typer.Option("--workspace", help="Workspace ID (optional).")
+    ] = None,
+) -> None:
+    """Recompute topic-attribute performance observations for a channel.
+
+    Reads only persisted topic_attribute_evaluations and analytics — makes
+    ZERO provider calls. Idempotent: safe to re-run; updated when evidence
+    changes. Observational only; never influences planning.
+    """
+    from app.learning.topic_attributes import run_topic_attribute_learning
+
+    conn = _get_db()
+    try:
+        result = run_topic_attribute_learning(
+            conn, channel_id=channel_id, workspace_id=workspace_id
+        )
+    except Exception as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        conn.close()
+
+    typer.echo(f"Topic-attribute learning complete  channel={channel_id}")
+    typer.echo(f"  Publications considered:  {result.publication_count}")
+    typer.echo(f"  Topics with attributes:   {result.topics_with_attributes}")
+    typer.echo(f"  Observations computed:    {result.observations_computed}")
+    if result.metrics_with_data:
+        typer.echo(f"  Metrics with data:        {', '.join(result.metrics_with_data)}")
+    else:
+        typer.echo("  No qualifying analytics data found for this channel yet.")
+    typer.echo(f"  Schema:   {result.schema_version}  Observer: {result.observer_version}")
+    typer.echo(f"  Computed: {result.computed_at}")
+
+
+@topic_attr_app.command("coverage")
+def learn_topic_attributes_coverage(
+    channel_id: Annotated[str, typer.Option("--channel", help="Channel ID.")],
+    show_all_raw: Annotated[
+        bool,
+        typer.Option("--all", help="Show raw observations, including insufficient/single-domain."),
+    ] = False,
+) -> None:
+    """Show topic-attribute performance observations for a channel.
+
+    By default shows only decision-useful evidence (enough publications,
+    enough distinct domain families). Pass --all for the raw, unfiltered
+    list. Populated by 'ace learn topic-attributes recompute'.
+    """
+    from app.learning.topic_attributes import (
+        get_attribute_observations,
+        get_decision_useful_attribute_coverage,
+    )
+
+    conn = _get_db()
+    try:
+        observations = (
+            get_attribute_observations(conn, channel_id=channel_id)
+            if show_all_raw
+            else get_decision_useful_attribute_coverage(conn, channel_id=channel_id)
+        )
+    finally:
+        conn.close()
+
+    if not observations:
+        typer.echo(
+            f"No topic-attribute evidence found for channel={channel_id}.  "
+            "Run 'ace learn topic-attributes recompute --channel ...' first, "
+            "and ensure topics have been characterized "
+            "('ace learn topic-attributes backfill')."
+        )
+        return
+
+    label = "raw" if show_all_raw else "decision-useful"
+    typer.echo(f"\nTopic-attribute observations ({label})  channel={channel_id}")
+    typer.echo("─" * 72)
+    for ob in observations:
+        rel = (
+            f"{ob.rel_diff_from_baseline * 100:+.0f}% vs. baseline"
+            if ob.rel_diff_from_baseline is not None
+            else "no baseline"
+        )
+        typer.echo(
+            f"  {ob.attribute_name:<20} {ob.attribute_bucket:<8} {ob.metric_name:<24} "
+            f"n={ob.publication_count:>3}  domains={ob.distinct_domain_family_count:>2}  "
+            f"{rel:<20}  ({ob.sample_maturity})"
+        )
+    typer.echo()
+
+
+@topic_attr_app.command("backfill")
+def learn_topic_attributes_backfill(
+    channel: Annotated[
+        int, typer.Option("--channel", help="Channel ID (intelligence-domain, integer).")
+    ],
+    model: Annotated[
+        str, typer.Option("--model", help="Claude model ID for direct characterization.")
+    ] = "claude-haiku-4-5-20251001",
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Report which topics would be characterized and how many provider "
+            "calls that would take, without calling any provider.",
+        ),
+    ] = False,
+) -> None:
+    """Human-triggered backfill/repair: give every published topic lacking
+    a current attribute evaluation the cheapest available path to one.
+
+    Bounded to unique topics, not publications. Skips topics already
+    characterized under the active prompt/input hash. Three recovery
+    classes (see list_topics_needing_attribute_characterization):
+
+      snapshot              opportunity-linked, a cached attribute-bearing
+                             semantic-fit result already exists -> free
+                             snapshot, 0 provider calls.
+      orphan                no promoted_opportunity_id -> direct
+                             characterization, 1 provider call.
+      needs_characterization opportunity-linked but no attribute-bearing
+                             cached semantic-fit result exists (e.g.
+                             evaluated under a pre-18H.C prompt version,
+                             or a promotion-time snapshot write failed)
+                             -> direct characterization, 1 provider call.
+
+    No opportunity-linked topic is ever silently left uncharacterized
+    merely because it isn't an orphan.
+
+    NEVER runs from scheduler startup, learning aggregation, or tests.
+    Human-triggered only, one explicit invocation at a time.
+    """
+    from app.intelligence.repository import get_active_profile_version
+    from app.learning.topic_attributes import (
+        characterize_topic_directly,
+        list_topics_needing_attribute_characterization,
+        snapshot_semantic_fit_attributes_to_topic,
+    )
+
+    conn = _get_db()
+    try:
+        candidates = list_topics_needing_attribute_characterization(conn)
+
+        if not candidates:
+            typer.echo("No topics need attribute characterization.")
+            return
+
+        by_class: dict[str, list[dict]] = {
+            "snapshot": [],
+            "orphan": [],
+            "needs_characterization": [],
+        }
+        for c in candidates:
+            by_class[c["recovery_class"]].append(c)
+
+        typer.echo(f"Topics needing attribute recovery: {len(candidates)}")
+        typer.echo(f"  snapshot (free, 0 provider calls):        {len(by_class['snapshot'])}")
+        for c in by_class["snapshot"]:
+            typer.echo(f"    topic {c['topic_id']}: {c['title']!r}")
+        typer.echo(f"  orphan (direct characterization):         {len(by_class['orphan'])}")
+        for c in by_class["orphan"]:
+            typer.echo(f"    topic {c['topic_id']}: {c['title']!r}")
+        typer.echo(
+            f"  needs_characterization (direct, 1 call):  {len(by_class['needs_characterization'])}"
+        )
+        for c in by_class["needs_characterization"]:
+            typer.echo(f"    topic {c['topic_id']}: {c['title']!r}")
+
+        max_calls = len(by_class["orphan"]) + len(by_class["needs_characterization"])
+        typer.echo(f"Maximum provider calls this would make: {max_calls}")
+
+        if dry_run:
+            typer.echo("\n--dry-run: no provider calls made.")
+            return
+
+        # Snapshots first: zero provider calls, and doing them before any
+        # characterization call means a failure/interruption partway
+        # through still leaves the free recoveries done.
+        snapshotted = 0
+        for c in by_class["snapshot"]:
+            if snapshot_semantic_fit_attributes_to_topic(
+                conn, topic_id=c["topic_id"], opportunity_id=c["promoted_opportunity_id"]
+            ):
+                snapshotted += 1
+                typer.echo(f"  topic {c['topic_id']}: snapshotted (0 provider calls)")
+            else:
+                typer.echo(f"  topic {c['topic_id']}: snapshot FAILED (left uncharacterized)")
+
+        needs_provider_call = by_class["orphan"] + by_class["needs_characterization"]
+        characterized = 0
+        if needs_provider_call:
+            profile_version = get_active_profile_version(conn, channel)
+            if profile_version is None:
+                typer.echo(f"No active channel profile found for channel {channel}.", err=True)
+                raise typer.Exit(1)
+
+            from app.ai.claude import ClaudeProvider
+            from app.core.config import get_config
+
+            config = get_config()
+            api_key = config.anthropic_api_key if hasattr(config, "anthropic_api_key") else ""
+            provider = ClaudeProvider(model=model, api_key=api_key)
+
+            for c in needs_provider_call:
+                values = characterize_topic_directly(
+                    conn,
+                    topic_id=c["topic_id"],
+                    primary_niche=profile_version.primary_niche or "",
+                    audience_description=profile_version.audience_description,
+                    ai_provider=provider,
+                )
+                if values is not None:
+                    characterized += 1
+                    typer.echo(f"  topic {c['topic_id']}: characterized")
+                else:
+                    typer.echo(f"  topic {c['topic_id']}: FAILED (left uncharacterized)")
+
+        typer.echo(
+            f"\nDone. {snapshotted}/{len(by_class['snapshot'])} snapshotted, "
+            f"{characterized}/{len(needs_provider_call)} characterized."
+        )
+    finally:
+        conn.close()

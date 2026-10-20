@@ -844,7 +844,8 @@ def get_approved_narration_run_full(
             nsa.duration_seconds AS duration_seconds,
             nsa.provider     AS provider,
             nsa.model        AS model,
-            nsa.voice_id     AS voice_id
+            nsa.voice_id     AS voice_id,
+            nsa.language     AS language
         FROM narration_segment_assets nsa
         JOIN production_segments ps ON ps.id = nsa.segment_id
         WHERE nsa.run_id = ?
@@ -867,6 +868,7 @@ def get_approved_narration_run_full(
             provider=r[7],
             model=r[8],
             voice_id=r[9],
+            language=r[10],
         )
         for r in rows
     )

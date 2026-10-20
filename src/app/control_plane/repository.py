@@ -1458,6 +1458,46 @@ def list_health_records(
     return [_row_to_health_record(r) for r in rows]
 
 
+def list_latest_health_records(
+    conn: Any, statuses: tuple[str, ...], limit: int = 100
+) -> list[HealthRecord]:
+    """Return at most one row per entity_id — that entity's most recent
+    health record — kept only if that latest status is one of `statuses`.
+
+    cp_health_records is intentionally append-only audit history: every
+    poll/transition writes a new row, nothing is ever updated or deleted.
+    A naive "WHERE status IN (...)" query therefore returns every historical
+    bad reading forever, even long after a later 'healthy' record superseded
+    it — the exact bug this function fixes for the Review Center (mirrors
+    the identical latest-per-entity fix already applied to the Exception
+    Center query in app.application.exception_queue, Phase 18E.2).
+
+    The correlated subquery selects, per entity_id, only its most recent
+    record (by recorded_at, then rowid as a deterministic tiebreaker for
+    same-instant writes — cp_health_records is not a WITHOUT ROWID table).
+    An entity whose latest record is healthy is absent from the result
+    entirely; every row it ever wrote remains in the table unchanged.
+    """
+    if not statuses:
+        return []
+    placeholders = ",".join("?" * len(statuses))
+    rows = conn.execute(
+        f"""
+        SELECT * FROM cp_health_records hr
+         WHERE hr.rowid = (
+             SELECT hr2.rowid FROM cp_health_records hr2
+              WHERE hr2.entity_id = hr.entity_id
+              ORDER BY hr2.recorded_at DESC, hr2.rowid DESC LIMIT 1
+         )
+           AND hr.status IN ({placeholders})
+         ORDER BY hr.recorded_at DESC
+         LIMIT ?
+        """,
+        (*statuses, limit),
+    ).fetchall()
+    return [_row_to_health_record(r) for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Provider Registry
 # ---------------------------------------------------------------------------

@@ -50,6 +50,7 @@ from app.learning.cross_publication import (
     _numeric_bucket,
     feature_bucket,
     get_channel_baselines,
+    get_decision_useful_coverage,
     get_exploration_coverage,
     get_feature_observations,
     run_cross_publication_learning,
@@ -1065,6 +1066,181 @@ class TestX_NoCausalLanguage:
         assert isinstance(result, CrossPublicationResult)
         assert result.schema_version == "cross-pub-v1"
         assert result.observer_version == "observer-v1"
+
+
+class TestY_DecisionUsefulCoverage:
+    """Phase 18F — planner-facing coverage excludes non-discriminating rows,
+    while raw get_exploration_coverage stays fully preserved."""
+
+    def test_invariant_feature_absent_from_filtered_present_in_raw(self, tmp_path):
+        conn = _open_test_db(tmp_path)
+        _seed_channel(
+            conn,
+            channel_id=_CHANNEL_A,
+            publications=[
+                {"publication_id": 1, "script_format": "short", "metrics": {"views": 100.0}},
+                {"publication_id": 2, "script_format": "short", "metrics": {"views": 200.0}},
+                {"publication_id": 3, "script_format": "short", "metrics": {"views": 300.0}},
+            ],
+        )
+        run_cross_publication_learning(conn, channel_id=_CHANNEL_A)
+
+        filtered = get_decision_useful_coverage(
+            conn, channel_id=_CHANNEL_A, feature_name="script_format"
+        )
+        raw = get_exploration_coverage(conn, channel_id=_CHANNEL_A, feature_name="script_format")
+
+        assert "script_format" not in filtered
+        assert "script_format" in raw
+        assert raw["script_format"]["short"]["publication_count"] == 3
+
+    def test_two_buckets_each_n1_absent_from_filtered_present_in_raw(self, tmp_path):
+        conn = _open_test_db(tmp_path)
+        _seed_channel(
+            conn,
+            channel_id=_CHANNEL_A,
+            publications=[
+                {"publication_id": 1, "script_format": "short", "metrics": {"views": 100.0}},
+                {"publication_id": 2, "script_format": "long_form", "metrics": {"views": 200.0}},
+            ],
+        )
+        run_cross_publication_learning(conn, channel_id=_CHANNEL_A)
+
+        filtered = get_decision_useful_coverage(
+            conn, channel_id=_CHANNEL_A, feature_name="script_format"
+        )
+        raw = get_exploration_coverage(conn, channel_id=_CHANNEL_A, feature_name="script_format")
+
+        assert "script_format" not in filtered
+        assert raw["script_format"]["short"]["publication_count"] == 1
+        assert raw["script_format"]["long_form"]["publication_count"] == 1
+
+    def test_two_buckets_both_well_supported_present_in_filtered(self, tmp_path):
+        conn = _open_test_db(tmp_path)
+        _seed_channel(
+            conn,
+            channel_id=_CHANNEL_A,
+            publications=[
+                {"publication_id": 1, "script_format": "short", "metrics": {"views": 100.0}},
+                {"publication_id": 2, "script_format": "short", "metrics": {"views": 150.0}},
+                {"publication_id": 3, "script_format": "long_form", "metrics": {"views": 200.0}},
+                {"publication_id": 4, "script_format": "long_form", "metrics": {"views": 250.0}},
+            ],
+        )
+        run_cross_publication_learning(conn, channel_id=_CHANNEL_A)
+
+        filtered = get_decision_useful_coverage(
+            conn, channel_id=_CHANNEL_A, feature_name="script_format"
+        )
+        assert set(filtered["script_format"].keys()) == {"short", "long_form"}
+        assert filtered["script_format"]["short"]["publication_count"] == 2
+        assert filtered["script_format"]["long_form"]["publication_count"] == 2
+
+    def test_one_supported_one_unsupported_bucket_keeps_only_supported(self, tmp_path):
+        conn = _open_test_db(tmp_path)
+        _seed_channel(
+            conn,
+            channel_id=_CHANNEL_A,
+            publications=[
+                {"publication_id": 1, "script_format": "short", "metrics": {"views": 100.0}},
+                {"publication_id": 2, "script_format": "short", "metrics": {"views": 150.0}},
+                {"publication_id": 3, "script_format": "long_form", "metrics": {"views": 200.0}},
+            ],
+        )
+        run_cross_publication_learning(conn, channel_id=_CHANNEL_A)
+
+        filtered = get_decision_useful_coverage(
+            conn, channel_id=_CHANNEL_A, feature_name="script_format"
+        )
+        assert set(filtered["script_format"].keys()) == {"short"}
+        assert filtered["script_format"]["short"]["publication_count"] == 2
+
+    def test_invariant_controllable_factor_reads_as_maximum_exploration_priority(self, tmp_path):
+        """Integration proof (Phase 18F, Part 3): an invariant
+        SAFE_CONTROLLABLE_FACTORS member (has_hook=true on every
+        publication) must NOT register as "already covered" — it must read
+        as untested (bucket_count=0, not 1) and win maximum exploration
+        priority over an already well-supported factor, proving absence
+        from decision-useful coverage does not suppress exploration."""
+        from app.intelligence.experiments.planning import (
+            SAFE_CONTROLLABLE_FACTORS,
+            PlanningPolicy,
+        )
+        from app.intelligence.experiments.planning_service import (
+            _compute_feature_coverage_gap,
+            _select_treatment_factor,
+        )
+
+        conn = _open_test_db(tmp_path)
+        _seed_channel(
+            conn,
+            channel_id=_CHANNEL_A,
+            publications=[
+                # has_hook is invariant (always true) across all publications —
+                # the one factor this test isolates as "untested, needs
+                # exploring". narration_speaking_rate and script_format both
+                # vary with sufficient support on both sides, so they must NOT
+                # tie with has_hook for maximum exploration priority (every
+                # other unseeded SAFE_CONTROLLABLE_FACTORS member — has_cta,
+                # narration_voice_id, publish_day_of_week,
+                # render_caption_burn_in, visual_style — is also untested and
+                # ties at the same max gap, but has_hook is the first such tied
+                # factor in registry order, so it is still the deterministic
+                # pick once narration_speaking_rate is excluded from the tie).
+                {
+                    "publication_id": 1,
+                    "has_hook": 1,
+                    "narration_speaking_rate": 0.9,
+                    "script_format": "short",
+                    "metrics": {"views": 100.0},
+                },
+                {
+                    "publication_id": 2,
+                    "has_hook": 1,
+                    "narration_speaking_rate": 0.9,
+                    "script_format": "short",
+                    "metrics": {"views": 150.0},
+                },
+                {
+                    "publication_id": 3,
+                    "has_hook": 1,
+                    "narration_speaking_rate": 1.5,
+                    "script_format": "long_form",
+                    "metrics": {"views": 200.0},
+                },
+                {
+                    "publication_id": 4,
+                    "has_hook": 1,
+                    "narration_speaking_rate": 1.5,
+                    "script_format": "long_form",
+                    "metrics": {"views": 250.0},
+                },
+            ],
+        )
+        run_cross_publication_learning(conn, channel_id=_CHANNEL_A)
+
+        coverage = get_decision_useful_coverage(conn, channel_id=_CHANNEL_A)
+        assert "has_hook" in SAFE_CONTROLLABLE_FACTORS
+        assert "script_format" in SAFE_CONTROLLABLE_FACTORS
+        assert "narration_speaking_rate" in SAFE_CONTROLLABLE_FACTORS
+
+        # (a) invariant factor's bucket_count is 0, not 1 — absent from coverage.
+        assert coverage.get("has_hook", {}) == {}
+        # narration_speaking_rate and script_format are genuinely covered.
+        assert coverage.get("narration_speaking_rate", {}) != {}
+        assert coverage.get("script_format", {}) != {}
+        # (b) not marked covered — it contributes to the coverage gap.
+        gap = _compute_feature_coverage_gap(coverage)
+        assert gap > 0.0
+        # (c) it registers maximum exploration priority and is the pick over
+        # both well-supported factors (narration_speaking_rate is checked
+        # first in SAFE_CONTROLLABLE_FACTORS order, so this also proves a
+        # covered factor earlier in iteration order does not shadow an
+        # untested one later in the registry).
+        policy = PlanningPolicy()
+        treatment = _select_treatment_factor(coverage, policy)
+        assert treatment is not None
+        assert treatment.factor_name == "has_hook"
 
 
 # ── Synthetic multi-publication validation ────────────────────────────────────

@@ -171,13 +171,13 @@ def test_B_factors_table_exists(tmp_path):
 
 
 def test_C_schema_version_is_37():
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 def test_C_db_version_is_37(tmp_path):
     conn = _open(tmp_path)
     row = conn.execute("SELECT version FROM schema_version").fetchone()
-    assert row["version"] == 51
+    assert row["version"] == SCHEMA_VERSION
 
 
 # ── D: create_experiment ──────────────────────────────────────────────────────
@@ -712,7 +712,7 @@ def test_T_v36_to_v37_migration_creates_tables(tmp_path):
     assert "experiment_metric_targets" in tables
     assert "experiment_factors" in tables
     version = conn.execute("SELECT version FROM schema_version").fetchone()[0]
-    assert version == 51
+    assert version == SCHEMA_VERSION
 
 
 def test_T_migration_preserves_existing_channels(tmp_path):

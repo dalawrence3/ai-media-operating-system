@@ -507,7 +507,7 @@ def test_schema_v23_upgrade_from_v22(tmp_path):
     """Simulate a v22 database and verify that opening it upgrades to v23."""
     import sqlite3 as _sqlite3
 
-    from app.core.database import open_db
+    from app.core.database import SCHEMA_VERSION, open_db
 
     db_file = tmp_path / "v22_upgrade_test.db"
 
@@ -554,7 +554,7 @@ def test_schema_v23_upgrade_from_v22(tmp_path):
     conn = open_db(db_file)
     try:
         version = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()[0]
-        assert version == 51
+        assert version == SCHEMA_VERSION
         cols = {row[1] for row in conn.execute("PRAGMA table_info(publications)").fetchall()}
         assert "workspace_id" in cols
         assert "channel_id" in cols

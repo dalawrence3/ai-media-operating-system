@@ -35,6 +35,8 @@ import {
   useStartYouTubeOAuth,
   useDisconnectYouTubeAccount,
   useUpdateAutomationPolicy,
+  useChannelPublishingSlots,
+  useRescheduleSlot,
   useVerifyYouTubeConnection,
   useUpgradeYouTubeUploadScope,
   useUpgradeYouTubeAnalyticsScope,
@@ -742,12 +744,15 @@ function computeDeadlineStatus(scheduledForUtc: string): DeadlineStatus {
   return 'comfortably_ahead'
 }
 
+/* A configured publishing time is a PREFERRED time, not a deadline — these
+   labels describe timing only, never an expiration. An overdue artifact
+   keeps retrying automatically; nothing here implies it needs rescuing. */
 function deadlineStatusLabel(status: DeadlineStatus): string {
   switch (status) {
-    case 'comfortably_ahead': return 'Comfortably ahead of slot'
-    case 'approaching': return 'Approaching slot deadline'
-    case 'late': return 'Running late for slot'
-    case 'missed': return 'Missed reserved slot'
+    case 'comfortably_ahead': return 'Comfortably ahead of preferred time'
+    case 'approaching': return 'Approaching preferred time'
+    case 'late': return 'Running late — publishing automatically'
+    case 'missed': return 'Overdue — awaiting next publishing opportunity'
   }
 }
 
@@ -755,8 +760,8 @@ function deadlineStatusBadgeClass(status: DeadlineStatus): string {
   switch (status) {
     case 'comfortably_ahead': return 'badge-healthy'
     case 'approaching': return 'badge-warn'
-    case 'late': return 'badge-error'
-    case 'missed': return 'badge-error'
+    case 'late': return 'badge-warn'
+    case 'missed': return 'badge-warn'
   }
 }
 
@@ -801,6 +806,19 @@ function AutomationPolicyEditModal({ workspaceId, channelId, current, open, onCl
     setQueueTarget(current?.queue_target ?? 1)
     setApiError(null)
   }
+
+  // This component mounts (and its useState initializers lock in) as soon as
+  // the Channels page renders — almost always before the automation-policy
+  // query has resolved, so `current` starts out null. Without this resync,
+  // opening the form later would silently show stale/default values instead
+  // of the real policy, and since every field is unconditionally sent on
+  // save, submitting would overwrite the untouched fields back to those
+  // defaults. Resync every time the form opens so it always reflects the
+  // latest fetched policy.
+  useEffect(() => {
+    if (open) reset()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, current])
 
   function handleClose() {
     reset()
@@ -1206,6 +1224,92 @@ function PublishingAuthorizationConfirmModal({
   )
 }
 
+/** A missed slot whose artifact is already produced and preflight-passed
+    stays reschedulable (sections 12-14): the decision cycle will retire it
+    from the active queue and refill with a new candidate, but the finished
+    video isn't thrown away — it just needs an operator-chosen future slot.
+    Reads the full slot history (not active_slots, which drops a slot the
+    moment it's retired) so this stays reachable after that retirement.
+
+    A configured publishing time is a PREFERRED time, not a deadline: an
+    overdue ready artifact keeps retrying automatically on its own — this
+    card is an OPTIONAL operator override ("move it to a specific time
+    instead"), never a required recovery action, so it only appears once
+    something is actually overdue and still shows the automatic-retry
+    reassurance up front. */
+function MissedSlotRescheduleCard({ workspaceId, channelId }: { workspaceId: string; channelId: string }) {
+  const slotsQuery = useChannelPublishingSlots(workspaceId, channelId)
+  const reschedule = useRescheduleSlot(workspaceId, channelId)
+  const [localTime, setLocalTime] = useState('')
+  const [apiError, setApiError] = useState<string | null>(null)
+  const [justRescheduledId, setJustRescheduledId] = useState<number | null>(null)
+
+  const slots = slotsQuery.data ?? []
+  const hasSuccessor = new Set(slots.map(s => s.rescheduled_from_slot_id).filter((id): id is number => id != null))
+  const candidate = slots.find(
+    s =>
+      s.state === 'filled' &&
+      s.production_status === 'ready' &&
+      s.publish_status !== 'released' &&
+      !s.retired_at &&
+      !hasSuccessor.has(s.id) &&
+      new Date(s.scheduled_for_utc).getTime() < Date.now(),
+  )
+
+  if (slotsQuery.isLoading || !candidate) return null
+
+  async function handleReschedule(e: React.FormEvent) {
+    e.preventDefault()
+    if (!candidate) return
+    setApiError(null)
+    try {
+      await reschedule.mutateAsync({ slotId: candidate.id, body: { scheduled_for_local: localTime } })
+      setJustRescheduledId(candidate.id)
+      setLocalTime('')
+    } catch (err) {
+      setApiError(err instanceof Error ? err.message : 'Failed to reschedule')
+    }
+  }
+
+  if (justRescheduledId === candidate.id) {
+    return (
+      <div className="card" style={{ marginBottom: 'var(--sp-4)', borderColor: 'var(--status-healthy)' }}>
+        <p style={{ margin: 0 }}>
+          Moved — the video from <code>{candidate.experiment_id}</code> now has a new preferred publishing time.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="card" style={{ marginBottom: 'var(--sp-4)', borderColor: 'var(--status-warn)' }}>
+      <p style={{ fontWeight: 600, margin: 0 }}>Overdue — awaiting next publishing opportunity</p>
+      <p className="text-sm text-secondary" style={{ margin: '2px 0 var(--sp-3)' }}>
+        <code>{candidate.experiment_id}</code> was preferred for <LocalTime value={candidate.scheduled_for_utc} variant="relative" />.
+        It is still queued and will publish automatically the next time the account and provider are reachable —
+        no action is required. If you'd rather publish it at a specific time instead, choose one below.
+      </p>
+      <form onSubmit={handleReschedule} style={{ display: 'flex', gap: 'var(--sp-2)', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div className="form-group" style={{ margin: 0 }}>
+          <label htmlFor="reschedule-local-time" className="form-label">New local date &amp; time</label>
+          <input
+            id="reschedule-local-time"
+            className="form-input"
+            type="datetime-local"
+            value={localTime}
+            onChange={e => setLocalTime(e.target.value)}
+            required
+          />
+        </div>
+        <button type="submit" className="btn btn-secondary btn-sm" disabled={reschedule.isPending || !localTime}>
+          {reschedule.isPending ? 'Moving…' : 'Publish at a different time instead'}
+        </button>
+      </form>
+      {apiError && <div role="alert" className="form-error">{apiError}</div>}
+    </div>
+  )
+}
+
 function AutomationPolicySection({ workspaceId, channelId }: { workspaceId: string; channelId: string }) {
   const automation = useChannelAutomationPolicy(workspaceId, channelId)
   const [showEdit, setShowEdit] = useState(false)
@@ -1226,6 +1330,7 @@ function AutomationPolicySection({ workspaceId, channelId }: { workspaceId: stri
           </button>
         }
       />
+      <MissedSlotRescheduleCard workspaceId={workspaceId} channelId={channelId} />
       {automation.isLoading ? <LoadingState /> : !policy ? (
         <EmptyState
           icon="🤖"
@@ -1313,11 +1418,11 @@ function AutomationPolicySection({ workspaceId, channelId }: { workspaceId: stri
                 </div>
               )}
               <div className="detail-meta-row">
-                <span className="detail-meta-label">Reserved publishing slot</span>
+                <span className="detail-meta-label">Preferred publishing time</span>
                 <span className="detail-meta-value"><LocalTime value={nextSlot.scheduled_for_utc} variant="relative" /></span>
               </div>
               <div className="detail-meta-row">
-                <span className="detail-meta-label">Deadline status</span>
+                <span className="detail-meta-label">Publishing status</span>
                 <span className="detail-meta-value">
                   {(() => {
                     const ds = computeDeadlineStatus(nextSlot.scheduled_for_utc)

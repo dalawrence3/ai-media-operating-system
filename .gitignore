@@ -49,6 +49,13 @@ oauth_tokens/
 # Audio artifacts — never committed (M6.2)
 /artifacts/
 
+# Isolated canary run artifacts (rendered MP4s, SQLite DBs) — local
+# operator-inspection outputs only, never committed, never live data.
+/.canaries/
+
+# Pre-migration live-database backups — local recovery copies only.
+/.backups/
+
 # macOS
 .DS_Store
 

@@ -297,6 +297,88 @@ def list_channel_publishing_slots(
     return [s.model_dump(mode="json") for s in list_slots_for_channel(db, channel_id)]
 
 
+@router.post("/{channel_id}/publishing-slots/{slot_id}/reschedule")
+def reschedule_channel_publishing_slot(
+    workspace_id: str,
+    channel_id: str,
+    slot_id: int,
+    body: dict[str, Any] = Body(...),
+    actor: str = Depends(get_actor),
+    db: Any = Depends(get_db),
+) -> dict[str, Any]:
+    """Move a missed slot's already-produced, preflight-passed artifact onto
+    a new future slot (sections 12-14 of the missed-slot recovery design).
+
+    Deliberately narrow: only a slot whose publish_status is already
+    'skipped_missed' with a still-ready artifact can be rescheduled here —
+    this is a rescue path for exactly that state, not a general "edit any
+    slot's time" tool. `scheduled_for_local` is a naive local datetime
+    interpreted in the channel's own configured timezone (or the optional
+    `timezone` override), never silently assumed as UTC. Calling this twice
+    on the same slot is idempotent — see reschedule_missed_slot.
+
+    Never publishes, never bypasses preflight, never re-renders — it moves
+    the same finished artifact's slot record.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    from app.intelligence.autonomy.repository import (
+        SlotNotRescheduleEligibleError,
+        get_autonomy_policy,
+        reschedule_missed_slot,
+    )
+
+    raw_local = body.get("scheduled_for_local")
+    if not raw_local:
+        raise HTTPException(status_code=422, detail="'scheduled_for_local' is required.")
+
+    tz_name = body.get("timezone")
+    if not tz_name:
+        policy = get_autonomy_policy(db, channel_id)
+        tz_name = policy.timezone if policy else None
+    if not tz_name:
+        raise HTTPException(
+            status_code=422,
+            detail="No timezone configured for this channel and none was provided.",
+        )
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(status_code=422, detail=f"Unknown IANA timezone: {tz_name!r}") from exc
+
+    try:
+        naive = datetime.fromisoformat(raw_local)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail=f"Invalid 'scheduled_for_local': {raw_local!r}"
+        ) from exc
+    if naive.tzinfo is not None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "'scheduled_for_local' must be a naive local datetime, "
+                "not one carrying its own offset."
+            ),
+        )
+    new_local_dt = naive.replace(tzinfo=tz)
+
+    try:
+        new_slot = reschedule_missed_slot(
+            db,
+            slot_id,
+            new_local_datetime=new_local_dt,
+            timezone=tz_name,
+            actor=actor,
+        )
+    except SlotNotRescheduleEligibleError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return new_slot.model_dump(mode="json")
+
+
 def _refuse_in_test_mode(operation: str) -> None:
     """Reject an operation with live consequences when running under test mode.
 
@@ -482,4 +564,43 @@ def get_cross_publication_learning(
         "channel_id": channel_id,
         "baselines": [b.model_dump() for b in baselines],
         "feature_observations": [o.model_dump() for o in observations],
+    }
+
+
+@router.get("/{channel_id}/topic-attributes")
+def get_topic_attribute_learning(
+    workspace_id: str,
+    channel_id: str,
+    db: Any = Depends(get_db),
+) -> dict[str, Any]:
+    """Topic-attribute observations — channel-scoped associations between a
+    topic's descriptive semantic attributes and performance (Phase 18H.C).
+
+    Read-only, separate from /cross-publication: topic attributes describe
+    subject matter (survives different scripts/hooks/renders of the same
+    topic) while cross-publication's feature_observations describe
+    creative/production factors — deliberately not the same table or
+    endpoint (see app.learning.topic_attributes module docstring).
+
+    Both `raw` (every persisted observation, including insufficient-evidence
+    and single-domain rows) and `decision_useful` (filtered to evidence that
+    can support a claim) are returned so the frontend can offer a raw-vs-
+    useful toggle exactly like the existing Creative Factors panel.
+
+    An empty result is a real, expected state — this channel has not yet run
+    'ace learn topic-attributes recompute', or no topic has been
+    characterized yet ('ace learn topic-attributes backfill'). This endpoint
+    never fabricates observations to fill that gap.
+    """
+    from app.learning.topic_attributes import (
+        get_attribute_observations,
+        get_decision_useful_attribute_coverage,
+    )
+
+    raw = get_attribute_observations(db, channel_id=channel_id)
+    useful = get_decision_useful_attribute_coverage(db, channel_id=channel_id)
+    return {
+        "channel_id": channel_id,
+        "raw": [o.model_dump() for o in raw],
+        "decision_useful": [o.model_dump() for o in useful],
     }

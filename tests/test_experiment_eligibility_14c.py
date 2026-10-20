@@ -48,7 +48,11 @@ from app.intelligence.experiments.eligibility_service import (
     assess_semantic_fit,
     assess_signal_integrity,
     assess_signal_maturity_confidence,
+    compute_semantic_fit_input_hash,
+    get_cached_semantic_fit,
+    save_semantic_fit_result,
 )
+from app.learning.topic_attributes import TopicAttributeValues
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -674,7 +678,7 @@ def test_AF_cancelled_experiment_no_conflict():
 def test_AG_fake_provider_above_threshold_passes():
     policy = EligibilityPolicy()
     provider = _fake_fit_provider(score=0.80)
-    score, label, findings, _specificity = assess_semantic_fit(
+    score, label, findings, _specificity, _attributes = assess_semantic_fit(
         opportunity_normalized_topic="python async tutorial",
         opportunity_title="Python Async Guide",
         opportunity_topic_summary="Learn async in Python.",
@@ -692,7 +696,7 @@ def test_AG_fake_provider_above_threshold_passes():
 def test_AH_fake_provider_below_threshold_blocks():
     policy = EligibilityPolicy()
     provider = _fake_fit_provider(score=0.30, fit_label="weak_fit")
-    score, label, findings, _specificity = assess_semantic_fit(
+    score, label, findings, _specificity, _attributes = assess_semantic_fit(
         opportunity_normalized_topic="stock market tips",
         opportunity_title="Finance Strategies",
         opportunity_topic_summary="Investing basics.",
@@ -708,7 +712,7 @@ def test_AH_fake_provider_below_threshold_blocks():
 
 def test_AI_no_provider_skips_with_warn():
     policy = EligibilityPolicy()
-    score, label, findings, _specificity = assess_semantic_fit(
+    score, label, findings, _specificity, _attributes = assess_semantic_fit(
         opportunity_normalized_topic="python async",
         opportunity_title="Async Python",
         opportunity_topic_summary="",
@@ -732,7 +736,7 @@ def test_AJ_provider_call_failure_returns_warn():
         def complete(self, request):
             raise RuntimeError("connection refused")
 
-    score, label, findings, _specificity = assess_semantic_fit(
+    score, label, findings, _specificity, _attributes = assess_semantic_fit(
         opportunity_normalized_topic="python async",
         opportunity_title="Async Python",
         opportunity_topic_summary="",
@@ -1294,6 +1298,53 @@ def test_BX_ineligible_from_semantic_fit_block():
     assert any(f.code == "semantic_fit_below_threshold" for f in result.findings)
 
 
+# ---------------------------------------------------------------------------
+# Phase 7A — exploration_cell niche-fit carve-out
+# ---------------------------------------------------------------------------
+
+
+def test_BX2_default_behavior_unchanged_when_exploration_cell_omitted():
+    """exploration_cell defaults to False — byte-identical to test_BX for
+    every existing caller that doesn't pass it."""
+    conn = _full_db_general_eligible()
+    provider = _fake_fit_provider(score=0.20, fit_label="no_fit")
+    result = assess_experiment_eligibility(conn, 1, 1, ai_provider=provider)
+    assert result.classification == ExperimentEligibilityClassification.INELIGIBLE
+
+
+def test_BX3_exploration_cell_downgrades_niche_fit_block_to_warn():
+    conn = _full_db_general_eligible()
+    provider = _fake_fit_provider(score=0.20, fit_label="no_fit")
+    result = assess_experiment_eligibility(conn, 1, 1, ai_provider=provider, exploration_cell=True)
+    assert result.classification != ExperimentEligibilityClassification.INELIGIBLE
+    finding = next(f for f in result.findings if f.code == "semantic_fit_below_threshold")
+    assert finding.severity == "warn"
+
+
+def test_BX4_exploration_cell_still_blocks_on_other_hard_failures():
+    """The carve-out narrows ONE finding code — an unrelated hard block
+    (active conflict) must still classify INELIGIBLE even with
+    exploration_cell=True."""
+    conn = _full_db_general_eligible()
+    conn.execute(
+        "INSERT INTO experiments (id, channel_id, opportunity_id, status) "
+        "VALUES ('exp-explore-carveout', 1, 1, 'planned')"
+    )
+    provider = _fake_fit_provider(score=0.85, fit_label="strong_fit")
+    result = assess_experiment_eligibility(conn, 1, 1, ai_provider=provider, exploration_cell=True)
+    assert result.classification == ExperimentEligibilityClassification.INELIGIBLE
+
+
+def test_BX5_exploration_cell_true_with_passing_fit_still_general_eligible():
+    """The carve-out only ever downgrades a block that is actually present —
+    it never fabricates or removes findings that weren't there."""
+    conn = _full_db_general_eligible()
+    provider = _fake_fit_provider(score=0.85, fit_label="strong_fit")
+    result = assess_experiment_eligibility(conn, 1, 1, ai_provider=provider, exploration_cell=True)
+    assert result.classification == ExperimentEligibilityClassification.GENERAL_ELIGIBLE
+    assert not any(f.code == "semantic_fit_below_threshold" for f in result.findings)
+
+
 def test_BY_assessment_is_block_method():
     """ExperimentEligibilityAssessment.blocks() only returns block-severity findings."""
     conn = _full_db_general_eligible()
@@ -1355,3 +1406,232 @@ def test_BZ_semantic_fit_uses_haiku_not_sonnet5():
         "claude-sonnet-5 raises BadRequestError with response_schema."
     )
     assert captured[0].model != "claude-sonnet-5"
+
+
+# ---------------------------------------------------------------------------
+# CA–CG: Phase 18H.C — descriptive topic-attribute piggyback on semantic fit
+# ---------------------------------------------------------------------------
+
+_ATTRIBUTE_FIELDS = {
+    "practical_utility": 0.9,
+    "immediate_payoff": 0.8,
+    "curiosity": 0.7,
+    "personal_relevance": 0.6,
+    "surprise": 0.5,
+    "broad_accessibility": 0.4,
+    "niche_technicality": 0.3,
+    "attribute_rationale": "concise rationale",
+}
+
+
+def _fake_fit_provider_with_attributes(
+    score: float = 0.80, fit_label: str = "strong_fit", **attribute_overrides
+) -> FakeProvider:
+    payload = {"score": score, "fit_label": fit_label, "rationale": "Good fit."}
+    payload.update(_ATTRIBUTE_FIELDS)
+    payload.update(attribute_overrides)
+    return FakeProvider(output=json.dumps(payload))
+
+
+def test_CA_attributes_parse_alongside_fit():
+    policy = EligibilityPolicy()
+    provider = _fake_fit_provider_with_attributes()
+    score, label, findings, _specificity, attributes = assess_semantic_fit(
+        opportunity_normalized_topic="how does money actually work",
+        opportunity_title="How Money Works",
+        opportunity_topic_summary="Explains monetary systems.",
+        primary_niche="science and technology explained",
+        audience_description="curious adults",
+        excluded_topics=[],
+        ai_provider=provider,
+        policy=policy,
+    )
+    assert score == pytest.approx(0.80)
+    assert attributes.evaluated is True
+    assert attributes.practical_utility == pytest.approx(0.9)
+    assert attributes.immediate_payoff == pytest.approx(0.8)
+    assert attributes.curiosity == pytest.approx(0.7)
+    assert attributes.personal_relevance == pytest.approx(0.6)
+    assert attributes.surprise == pytest.approx(0.5)
+    assert attributes.broad_accessibility == pytest.approx(0.4)
+    assert attributes.niche_technicality == pytest.approx(0.3)
+    assert attributes.attribute_rationale == "concise rationale"
+
+
+def test_CB_attributes_absent_from_v1_v2_shaped_response_are_not_evaluated():
+    """A response shaped like the old v1/v2 prompt (no attribute fields) must
+    yield evaluated=False, never zeros — absence is not a failing score."""
+    policy = EligibilityPolicy()
+    provider = _fake_fit_provider(score=0.80)  # no attribute fields at all
+    _score, _label, _findings, _specificity, attributes = assess_semantic_fit(
+        opportunity_normalized_topic="t",
+        opportunity_title="T",
+        opportunity_topic_summary="",
+        primary_niche="n",
+        audience_description=None,
+        excluded_topics=[],
+        ai_provider=provider,
+        policy=policy,
+    )
+    assert attributes.evaluated is False
+    assert attributes.practical_utility is None
+
+
+def test_CC_attributes_never_influence_eligibility_findings():
+    """A LOW fit score combined with HIGH attribute values must still block —
+    descriptive attributes must never leak into the eligibility gate."""
+    policy = EligibilityPolicy()
+    provider = _fake_fit_provider_with_attributes(score=0.10, fit_label="no_fit")
+    score, _label, findings, _specificity, attributes = assess_semantic_fit(
+        opportunity_normalized_topic="t",
+        opportunity_title="T",
+        opportunity_topic_summary="",
+        primary_niche="n",
+        audience_description=None,
+        excluded_topics=[],
+        ai_provider=provider,
+        policy=policy,
+    )
+    assert score == pytest.approx(0.10)
+    assert any(f.code == "semantic_fit_below_threshold" and f.severity == "block" for f in findings)
+    # Attributes were still faithfully recorded despite the block.
+    assert attributes.practical_utility == pytest.approx(0.9)
+
+
+def test_CD_attribute_values_are_clamped_to_unit_interval():
+    policy = EligibilityPolicy()
+    provider = _fake_fit_provider_with_attributes(practical_utility=1.4, curiosity=-0.3)
+    _score, _label, _findings, _specificity, attributes = assess_semantic_fit(
+        opportunity_normalized_topic="t",
+        opportunity_title="T",
+        opportunity_topic_summary="",
+        primary_niche="n",
+        audience_description=None,
+        excluded_topics=[],
+        ai_provider=provider,
+        policy=policy,
+    )
+    assert attributes.practical_utility == 1.0
+    assert attributes.curiosity == 0.0
+
+
+def test_CE_unknown_extra_field_still_rejected():
+    """The schema's extra='forbid' must still reject a genuinely unrecognized
+    field even with the seven new optional attribute fields present."""
+    policy = EligibilityPolicy()
+    payload = {"score": 0.8, "fit_label": "strong_fit", "rationale": "r", "not_a_real_field": 1}
+    provider = FakeProvider(output=json.dumps(payload))
+    score, _label, findings, _specificity, attributes = assess_semantic_fit(
+        opportunity_normalized_topic="t",
+        opportunity_title="T",
+        opportunity_topic_summary="",
+        primary_niche="n",
+        audience_description=None,
+        excluded_topics=[],
+        ai_provider=provider,
+        policy=policy,
+    )
+    assert score is None
+    assert attributes.evaluated is False
+    assert any(f.code == "semantic_fit_call_failed" for f in findings)
+
+
+def test_CF_save_semantic_fit_result_persists_attributes(tmp_path):
+    from app.core.database import open_db
+
+    conn = open_db(tmp_path / "test.db")
+    input_hash = compute_semantic_fit_input_hash(
+        opportunity_normalized_topic="t",
+        opportunity_title="T",
+        opportunity_topic_summary="",
+        channel_profile_version_id=None,
+        primary_niche="n",
+        secondary_niches=[],
+        excluded_topics=[],
+        audience_description=None,
+        prompt_version="3",
+    )
+    attributes = TopicAttributeValues(
+        evaluated=True,
+        practical_utility=0.9,
+        immediate_payoff=0.8,
+        curiosity=0.7,
+        personal_relevance=0.6,
+        surprise=0.5,
+        broad_accessibility=0.4,
+        niche_technicality=0.3,
+        attribute_rationale="r",
+    )
+    save_semantic_fit_result(
+        conn,
+        opportunity_id=1,
+        channel_id=1,
+        channel_profile_version_id=None,
+        prompt_version="3",
+        input_hash=input_hash,
+        score=0.8,
+        fit_label="strong_fit",
+        rationale="r",
+        provider_name="claude",
+        model="claude-haiku-4-5-20251001",
+        attributes=attributes,
+    )
+    row = get_cached_semantic_fit(conn, opportunity_id=1, input_hash=input_hash)
+    assert row is not None
+    assert row["practical_utility"] == pytest.approx(0.9)
+    assert row["attribute_rationale"] == "r"
+    conn.close()
+
+
+def test_CG_prompt_version_bump_invalidates_cache_for_future_assessments():
+    """Bumping semantic_fit_prompt_version must change the computed input
+    hash, so a v2-cached row is never mistakenly reused for a v3 assessment."""
+    common = dict(
+        opportunity_normalized_topic="t",
+        opportunity_title="T",
+        opportunity_topic_summary="",
+        channel_profile_version_id=None,
+        primary_niche="n",
+        secondary_niches=[],
+        excluded_topics=[],
+        audience_description=None,
+    )
+    h_v2 = compute_semantic_fit_input_hash(prompt_version="2", **common)
+    h_v3 = compute_semantic_fit_input_hash(prompt_version="3", **common)
+    assert h_v2 != h_v3
+
+
+def test_CH_default_policy_prompt_version_is_3():
+    assert EligibilityPolicy().semantic_fit_prompt_version == "3"
+
+
+def test_CI_domain_family_parses_alongside_attributes():
+    policy = EligibilityPolicy()
+    provider = _fake_fit_provider_with_attributes(domain_family="Personal Finance")
+    _score, _label, _findings, _specificity, attributes = assess_semantic_fit(
+        opportunity_normalized_topic="t",
+        opportunity_title="T",
+        opportunity_topic_summary="",
+        primary_niche="n",
+        audience_description=None,
+        excluded_topics=[],
+        ai_provider=provider,
+        policy=policy,
+    )
+    assert attributes.domain_family == "Personal Finance"
+
+
+def test_CJ_domain_family_absent_is_none_not_empty_string():
+    policy = EligibilityPolicy()
+    provider = _fake_fit_provider(score=0.80)  # no domain_family field at all
+    _score, _label, _findings, _specificity, attributes = assess_semantic_fit(
+        opportunity_normalized_topic="t",
+        opportunity_title="T",
+        opportunity_topic_summary="",
+        primary_niche="n",
+        audience_description=None,
+        excluded_topics=[],
+        ai_provider=provider,
+        policy=policy,
+    )
+    assert attributes.domain_family is None

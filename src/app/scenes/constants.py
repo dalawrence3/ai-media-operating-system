@@ -186,6 +186,21 @@ SECTION_SHOT_TYPE_MAP: dict[str, str] = {
     "evidence": SHOT_TYPE_CUTAWAY,
     "outro": SHOT_TYPE_MEDIUM,
     "cta": SHOT_TYPE_CLOSE_UP,
+    # Phase 7B, §10 — interactive_recall_quiz: the question and its answer
+    # both get the same close-up intimacy as "hook"/"cta" (they are the
+    # moments the viewer must focus on); "next_challenge" is transitional,
+    # like "intro".
+    "prompt": SHOT_TYPE_CLOSE_UP,
+    "reveal": SHOT_TYPE_CLOSE_UP,
+    "next_challenge": SHOT_TYPE_MEDIUM,
+    # Phase 7B, §10 — practical_micro_lesson: "problem" mirrors "hook"
+    # (personally relevant), "explanation" mirrors "body", "example"
+    # mirrors "evidence" (a concrete, specific instance), "takeaway"
+    # mirrors "outro".
+    "problem": SHOT_TYPE_CLOSE_UP,
+    "explanation": SHOT_TYPE_WIDE,
+    "example": SHOT_TYPE_CUTAWAY,
+    "takeaway": SHOT_TYPE_MEDIUM,
 }
 DEFAULT_SHOT_TYPE = SHOT_TYPE_MEDIUM
 
@@ -198,6 +213,20 @@ SECTION_CAMERA_MAP: dict[str, str] = {
     "evidence": CAMERA_STATIC,
     "outro": CAMERA_ZOOM_OUT,
     "cta": CAMERA_STATIC,
+    # Phase 7B, §10 — "prompt" zooms in to build anticipation during the
+    # think window (mirrors "hook"); "reveal" holds static so the answer
+    # text is easy to read without competing motion; "next_challenge"
+    # pans forward into the next round (mirrors "intro").
+    "prompt": CAMERA_ZOOM_IN,
+    "reveal": CAMERA_STATIC,
+    "next_challenge": CAMERA_PAN,
+    # Phase 7B, §10 — micro-lesson mirrors explainer beats: "problem"
+    # zooms in like "hook", "explanation"/"example" hold static, "takeaway"
+    # zooms out like "outro".
+    "problem": CAMERA_ZOOM_IN,
+    "explanation": CAMERA_STATIC,
+    "example": CAMERA_STATIC,
+    "takeaway": CAMERA_ZOOM_OUT,
 }
 DEFAULT_CAMERA_MOVEMENT = CAMERA_STATIC
 
@@ -210,5 +239,18 @@ SECTION_ASSET_PREFERENCES: dict[str, list[str]] = {
     "evidence": [ASSET_PHOTOGRAPH, ASSET_CHART, ASSET_DIAGRAM, ASSET_HISTORICAL_IMAGERY],
     "outro": [ASSET_STOCK_FOOTAGE, ASSET_ANIMATION],
     "cta": [ASSET_ICON, ASSET_ANIMATION],
+    # Phase 7B, §10 — quiz prompt/reveal favor icon/animation overlays
+    # (a question-mark / checkmark motif) over stock footage, same
+    # category set as "cta" since both are graphic-forward moments.
+    "prompt": [ASSET_ICON, ASSET_ANIMATION],
+    "reveal": [ASSET_ICON, ASSET_ANIMATION],
+    "next_challenge": [ASSET_STOCK_FOOTAGE, ASSET_ILLUSTRATION],
+    # Phase 7B, §10 — micro-lesson: "explanation" favors diagrams/
+    # illustration for the concept, "example" favors concrete photograph/
+    # chart evidence, "problem"/"takeaway" mirror hook/outro.
+    "problem": [ASSET_STOCK_FOOTAGE, ASSET_AI_GENERATED_BROLL],
+    "explanation": [ASSET_ILLUSTRATION, ASSET_DIAGRAM],
+    "example": [ASSET_PHOTOGRAPH, ASSET_CHART],
+    "takeaway": [ASSET_STOCK_FOOTAGE, ASSET_ANIMATION],
 }
 DEFAULT_ASSET_PREFERENCES = [ASSET_STOCK_FOOTAGE, ASSET_AI_GENERATED_IMAGE]

@@ -411,6 +411,27 @@ class TestSynthesisWithMockedClient:
         call_kwargs = client.text_to_speech.convert_with_timestamps.call_args[1]
         assert "seed" not in call_kwargs
 
+    def test_language_code_forwarded_when_override_set(self):
+        """Phase 7B.1, §1/§3 — a per-segment language override reaches the
+        SDK call as language_code."""
+        client = _make_sdk_client()
+        p = ElevenLabsTTSProvider(_sdk_client=client)
+        p.initialize()
+        p.synthesize(_default_request(language_override="es"))
+        call_kwargs = client.text_to_speech.convert_with_timestamps.call_args[1]
+        assert call_kwargs.get("language_code") == "es"
+
+    def test_language_code_omitted_when_no_override(self):
+        """Every pre-existing call (no override set) must stay
+        byte-identical: language_code is never forwarded just because
+        request.language happens to be populated."""
+        client = _make_sdk_client()
+        p = ElevenLabsTTSProvider(_sdk_client=client)
+        p.initialize()
+        p.synthesize(_default_request(language="en-US"))
+        call_kwargs = client.text_to_speech.convert_with_timestamps.call_args[1]
+        assert "language_code" not in call_kwargs
+
     def test_stability_forwarded(self):
         client = _make_sdk_client()
         p = ElevenLabsTTSProvider(_sdk_client=client)

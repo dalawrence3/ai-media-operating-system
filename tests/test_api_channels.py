@@ -821,3 +821,239 @@ class TestPublishingAuthorizationAPI:
 
         state = dev_client.get(self._url(workspace.id, channel.id)).json()
         assert state["decision"]["allowed"] is False
+
+
+# ── Automation policy endpoint — persistence round trip ───────────────────────
+
+
+class TestAutomationPolicyAPI:
+    """PUT .../automation-policy followed by a GET on a brand-new request (a
+    fresh DB connection each time, exactly like get_db() gives every real
+    HTTP request) must return exactly what was saved — this is the contract
+    the Channels page's edit form relies on. The live bug traced to the
+    frontend never resyncing its form state with this data (see
+    Channels.test.tsx); these tests pin down that the backend side of the
+    contract holds regardless."""
+
+    def _url(self, workspace_id: str, channel_id: str) -> str:
+        return f"/api/v1/workspaces/{workspace_id}/channels/{channel_id}/automation-policy"
+
+    def test_update_then_get_returns_the_saved_policy(self, dev_client, workspace, channel):
+        resp = dev_client.put(
+            self._url(workspace.id, channel.id),
+            json={
+                "decision_automation_enabled": True,
+                "production_automation_enabled": True,
+                "cadence_type": "every_12h",
+                "timezone": "America/New_York",
+                "preferred_local_hour": 11,
+                "queue_target": 1,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        # A brand-new request — get_db() opens an entirely fresh connection,
+        # the same as a browser refresh hitting the API again.
+        get_resp = dev_client.get(self._url(workspace.id, channel.id))
+        policy = get_resp.json()["policy"]
+        assert policy["decision_automation_enabled"] is True
+        assert policy["production_automation_enabled"] is True
+        assert policy["cadence_type"] == "every_12h"
+        assert policy["timezone"] == "America/New_York"
+        assert policy["preferred_local_hour"] == 11
+        assert policy["queue_target"] == 1
+
+    def test_partial_update_does_not_disturb_untouched_fields(self, dev_client, workspace, channel):
+        dev_client.put(
+            self._url(workspace.id, channel.id),
+            json={
+                "decision_automation_enabled": True,
+                "cadence_type": "every_12h",
+                "timezone": "America/New_York",
+                "preferred_local_hour": 11,
+                "queue_target": 1,
+            },
+        )
+        resp = dev_client.put(
+            self._url(workspace.id, channel.id), json={"preferred_local_hour": 14}
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["preferred_local_hour"] == 14
+        # Everything else survives a partial update untouched.
+        assert body["decision_automation_enabled"] is True
+        assert body["cadence_type"] == "every_12h"
+        assert body["timezone"] == "America/New_York"
+        assert body["queue_target"] == 1
+
+    def test_enabling_decision_automation_without_timezone_is_rejected(
+        self, dev_client, workspace, channel
+    ):
+        resp = dev_client.put(
+            self._url(workspace.id, channel.id),
+            json={"decision_automation_enabled": True},
+        )
+        assert resp.status_code == 422
+        assert "timezone" in resp.json()["detail"]
+
+    def test_unknown_field_is_rejected(self, dev_client, workspace, channel):
+        resp = dev_client.put(self._url(workspace.id, channel.id), json={"not_a_real_field": True})
+        assert resp.status_code == 422
+
+    def test_two_channels_do_not_share_a_policy(self, dev_client, workspace, channel, db_conn):
+        from app.control_plane import repository as cp_repo2
+        from app.control_plane.models import ChannelDraft
+
+        other = cp_repo2.create_channel(
+            db_conn,
+            ChannelDraft(
+                id=_uid(),
+                workspace_id=workspace.id,
+                name="Other Channel",
+                slug="other-channel",
+                actor="cli",
+            ),
+        )
+        db_conn.commit()
+
+        dev_client.put(
+            self._url(workspace.id, channel.id),
+            json={
+                "decision_automation_enabled": True,
+                "cadence_type": "daily",
+                "timezone": "America/New_York",
+                "preferred_local_hour": 9,
+                "queue_target": 1,
+            },
+        )
+        other_policy = dev_client.get(self._url(workspace.id, other.id)).json()["policy"]
+        assert other_policy is None
+
+
+# ── Missed-slot reschedule endpoint (sections 12-14) ──────────────────────────
+
+
+class TestRescheduleSlotAPI:
+    def _seed_missed_ready_slot(self, db_conn, channel_id: str, workspace_id: str) -> int:
+        from datetime import UTC, datetime, timedelta
+
+        from app.intelligence.autonomy.repository import fill_slot, reserve_slot
+
+        past = datetime.now(UTC) - timedelta(days=2)
+        slot = reserve_slot(
+            db_conn,
+            channel_id=channel_id,
+            workspace_id=workspace_id,
+            slot_key="api-missed-slot",
+            scheduled_for_local=past.isoformat(),
+            timezone="America/New_York",
+            scheduled_for_utc=past,
+        )
+        fill_slot(db_conn, slot.id, brief_id=None, selection_decision_id=None, opportunity_id=None)
+        db_conn.execute(
+            "UPDATE publishing_slots SET production_status='ready', "
+            "publish_status='skipped_missed' WHERE id=?",
+            (slot.id,),
+        )
+        db_conn.commit()
+        return slot.id
+
+    def _url(self, workspace_id: str, channel_id: str, slot_id: int) -> str:
+        return (
+            f"/api/v1/workspaces/{workspace_id}/channels/{channel_id}"
+            f"/publishing-slots/{slot_id}/reschedule"
+        )
+
+    def test_reschedules_a_missed_ready_slot_to_a_future_time(
+        self, dev_client, workspace, channel, db_conn
+    ):
+        slot_id = self._seed_missed_ready_slot(db_conn, channel.id, workspace.id)
+        resp = dev_client.post(
+            self._url(workspace.id, channel.id, slot_id),
+            json={"scheduled_for_local": "2099-01-01T12:00:00", "timezone": "America/New_York"},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["id"] != slot_id
+        assert body["rescheduled_from_slot_id"] == slot_id
+        assert body["publish_status"] is None
+        assert body["scheduled_for_local"].startswith("2099-01-01T12:00:00")
+
+    def test_uses_the_channel_policy_timezone_when_none_is_given(
+        self, dev_client, workspace, channel, db_conn
+    ):
+        from app.intelligence.autonomy.repository import upsert_autonomy_policy
+
+        upsert_autonomy_policy(
+            db_conn,
+            channel_id=channel.id,
+            workspace_id=workspace.id,
+            actor="test",
+            timezone="America/Los_Angeles",
+        )
+        slot_id = self._seed_missed_ready_slot(db_conn, channel.id, workspace.id)
+        resp = dev_client.post(
+            self._url(workspace.id, channel.id, slot_id),
+            json={"scheduled_for_local": "2099-01-01T12:00:00"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert (
+            "-08:00" in resp.json()["scheduled_for_local"]
+            or "-07:00" in resp.json()["scheduled_for_local"]
+        )
+
+    def test_missing_timezone_and_no_policy_is_rejected(
+        self, dev_client, workspace, channel, db_conn
+    ):
+        slot_id = self._seed_missed_ready_slot(db_conn, channel.id, workspace.id)
+        resp = dev_client.post(
+            self._url(workspace.id, channel.id, slot_id),
+            json={"scheduled_for_local": "2099-01-01T12:00:00"},
+        )
+        assert resp.status_code == 422
+
+    def test_a_slot_that_never_missed_is_rejected(self, dev_client, workspace, channel, db_conn):
+        from datetime import UTC, datetime, timedelta
+
+        from app.intelligence.autonomy.repository import reserve_slot
+
+        future = datetime.now(UTC) + timedelta(days=1)
+        slot = reserve_slot(
+            db_conn,
+            channel_id=channel.id,
+            workspace_id=workspace.id,
+            slot_key="api-not-missed",
+            scheduled_for_local=future.isoformat(),
+            timezone="UTC",
+            scheduled_for_utc=future,
+        )
+        resp = dev_client.post(
+            self._url(workspace.id, channel.id, slot.id),
+            json={"scheduled_for_local": "2099-01-01T12:00:00", "timezone": "UTC"},
+        )
+        assert resp.status_code == 409
+
+    def test_a_past_time_is_rejected(self, dev_client, workspace, channel, db_conn):
+        slot_id = self._seed_missed_ready_slot(db_conn, channel.id, workspace.id)
+        resp = dev_client.post(
+            self._url(workspace.id, channel.id, slot_id),
+            json={"scheduled_for_local": "2020-01-01T12:00:00", "timezone": "UTC"},
+        )
+        assert resp.status_code == 422
+        assert "future" in resp.json()["detail"]
+
+    def test_calling_it_twice_is_idempotent(self, dev_client, workspace, channel, db_conn):
+        slot_id = self._seed_missed_ready_slot(db_conn, channel.id, workspace.id)
+        body = {"scheduled_for_local": "2099-01-01T12:00:00", "timezone": "UTC"}
+        first = dev_client.post(self._url(workspace.id, channel.id, slot_id), json=body)
+        second = dev_client.post(self._url(workspace.id, channel.id, slot_id), json=body)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["id"] == second.json()["id"]
+
+    def test_unauthenticated_returns_401(self, prod_client, workspace, channel, db_conn):
+        resp = prod_client.post(
+            self._url(workspace.id, channel.id, 999999),
+            json={"scheduled_for_local": "2099-01-01T12:00:00", "timezone": "UTC"},
+        )
+        assert resp.status_code == 401

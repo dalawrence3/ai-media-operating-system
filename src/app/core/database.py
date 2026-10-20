@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 # Increment when the schema changes; add a migration branch in _migrate().
-SCHEMA_VERSION = 51
+SCHEMA_VERSION = 60
 
 # Phase 1 DDL — topics, sources, scripts, runs.
 _DDL_V1 = """
@@ -4149,6 +4149,228 @@ def _apply_v51_slot_retirement(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _apply_v52_visual_candidate_evidence(conn: sqlite3.Connection) -> None:
+    """Bounded, auditable per-beat candidate evidence (Phase 18G).
+
+    Only the selected asset was ever persisted per beat; a future audit
+    could not tell "nothing better existed" apart from "the ranking picked
+    poorly." This child table records up to
+    MAX_REJECTED_CANDIDATES_PERSISTED runner-up/rejected candidates per beat
+    alongside the selected one, each carrying a genuine three-way decision
+    (selected / eligible_not_selected / rejected) derived from the scorer's
+    own already-computed verdict — never a fabricated rejection reason for a
+    candidate that simply wasn't chosen.
+
+    Cascades from visual_beats exactly as visual_beats itself cascades from
+    scene_manifests, so save_visual_plan's existing
+    "DELETE FROM visual_beats WHERE scene_manifest_id=?" replace-on-save
+    pattern automatically clears old evidence rows too — no manual cleanup,
+    no unbounded growth.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS visual_candidate_evidence (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            visual_beat_id      INTEGER NOT NULL,
+            provider            TEXT NOT NULL,
+            provider_asset_id   TEXT NOT NULL,
+            asset_key           TEXT NOT NULL,
+            title               TEXT NOT NULL DEFAULT '',
+            tags_json           TEXT NOT NULL DEFAULT '[]',
+            query               TEXT NOT NULL DEFAULT '',
+            score               REAL NOT NULL DEFAULT 0.0,
+            semantic_score      REAL,
+            topic_score         REAL,
+            evidence_score      REAL,
+            decision            TEXT NOT NULL DEFAULT 'rejected'
+                                    CHECK (decision IN
+                                        ('selected','eligible_not_selected','rejected')),
+            rejection_reason    TEXT,
+            provider_rank       INTEGER NOT NULL DEFAULT 0,
+            created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (visual_beat_id) REFERENCES visual_beats (id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_visual_candidate_evidence_beat
+            ON visual_candidate_evidence (visual_beat_id);
+        """
+    )
+
+
+def _apply_v53_domain_family(conn: sqlite3.Connection) -> None:
+    """Add domain_family to market_exploration_probes (Phase 18H.B.1).
+
+    Broad-domain cold-start discovery (market_region probes) needs a
+    queryable, GROUP-BY-able subject-category label to (a) enforce a
+    concentration cap across generated candidates and (b) compare domain
+    breadth across separate cold-start runs — neither is practical from
+    priority_components_json alone. Nullable, additive: historical rows
+    (including live run #10, predating this design) simply have
+    domain_family = NULL, exactly like market_region_label's own earlier
+    v33 addition.
+
+    Idempotent — no-op if the table does not exist or the column is already present.
+    """
+    if not conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_exploration_probes'"
+    ).fetchone():
+        return
+    if conn.execute(
+        "SELECT 1 FROM pragma_table_info('market_exploration_probes') WHERE name='domain_family'"
+    ).fetchone():
+        return
+    conn.execute("ALTER TABLE market_exploration_probes ADD COLUMN domain_family TEXT")
+
+
+def _apply_v54_topic_attributes(conn: sqlite3.Connection) -> None:
+    """Topic-attribute observation stack (Phase 18H.C).
+
+    Three additive pieces, all nullable/idempotent:
+
+    1. Seven descriptive 0..1 attribute columns + attribute_rationale on
+       opportunity_semantic_fit_results — mirrors the exact Phase 18E
+       precedent (topic_specificity et al.) of extending the SAME cached
+       row rather than a new table, because they come from the same
+       structured LLM response about the same opportunity. Purely
+       descriptive: nothing here is read by the eligibility gate.
+
+    2. topic_attribute_evaluations — the canonical, topic-keyed persistence
+       surface. Every topic (opportunity-linked or manually-seeded/orphan)
+       can have a row here, whether snapshotted from an opportunity's
+       semantic-fit evaluation or produced by direct topic characterization.
+       source_opportunity_id / source_semantic_fit_result_id are nullable
+       provenance only — never fabricated when no opportunity exists.
+
+    3. topic_attribute_performance_observations — the cross-publication
+       aggregation read model, deliberately separate from
+       feature_performance_observations (creative/production factors are a
+       different semantic layer from topic subject-matter attributes).
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    attribute_columns = {
+        "practical_utility": "REAL",
+        "immediate_payoff": "REAL",
+        "curiosity": "REAL",
+        "personal_relevance": "REAL",
+        "surprise": "REAL",
+        "broad_accessibility": "REAL",
+        "niche_technicality": "REAL",
+        "attribute_rationale": "TEXT",
+        "domain_family": "TEXT",
+    }
+    fit_existing = {
+        r["name"]
+        for r in conn.execute("PRAGMA table_info('opportunity_semantic_fit_results')").fetchall()
+    }
+    if fit_existing:
+        for col, ddl in attribute_columns.items():
+            if col not in fit_existing:
+                conn.execute(f"ALTER TABLE opportunity_semantic_fit_results ADD COLUMN {col} {ddl}")
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS topic_attribute_evaluations (
+            id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic_id                        INTEGER NOT NULL REFERENCES topics(id),
+            source_opportunity_id           INTEGER REFERENCES opportunities(id),
+            source_semantic_fit_result_id   INTEGER
+                                                REFERENCES opportunity_semantic_fit_results(id),
+
+            prompt_name                     TEXT    NOT NULL,
+            prompt_version                  TEXT    NOT NULL,
+            provider_name                   TEXT    NOT NULL,
+            model                           TEXT    NOT NULL DEFAULT '',
+            input_hash                      TEXT    NOT NULL,
+
+            practical_utility               REAL,
+            immediate_payoff                REAL,
+            curiosity                       REAL,
+            personal_relevance              REAL,
+            surprise                        REAL,
+            broad_accessibility             REAL,
+            niche_technicality              REAL,
+            attribute_rationale             TEXT    NOT NULL DEFAULT '',
+
+            -- Closure-audit addition (still schema v54, not yet deployed):
+            -- a topic-level SEMANTIC domain family, generated by the same
+            -- characterization call as the seven attributes. Distinct from
+            -- (and provenance-honest about not being) Phase 18H.B.1's
+            -- market_exploration_probes.domain_family — no persisted path
+            -- links a topic/opportunity back to the probe that originated
+            -- it, so that field is unusable here. Nullable: historical rows
+            -- characterized before this column existed simply have NULL,
+            -- read as "unknown", never fabricated.
+            domain_family                   TEXT,
+
+            evaluated_at                    TEXT    NOT NULL,
+            created_at                      TEXT    NOT NULL,
+
+            UNIQUE (topic_id, input_hash)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topic_attr_eval_topic
+            ON topic_attribute_evaluations (topic_id);
+        CREATE INDEX IF NOT EXISTS idx_topic_attr_eval_opportunity
+            ON topic_attribute_evaluations (source_opportunity_id)
+            WHERE source_opportunity_id IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS topic_attribute_performance_observations (
+            id                              INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id                      TEXT    NOT NULL,
+            workspace_id                    TEXT,
+
+            attribute_name                  TEXT    NOT NULL,
+            attribute_bucket                TEXT    NOT NULL,
+            metric_name                     TEXT    NOT NULL,
+            period_type                     TEXT    NOT NULL DEFAULT 'lifetime',
+
+            publication_count               INTEGER NOT NULL DEFAULT 0,
+            distinct_topic_count            INTEGER NOT NULL DEFAULT 0,
+            distinct_domain_family_count    INTEGER NOT NULL DEFAULT 0,
+
+            mean                            REAL,
+            median                          REAL,
+            min_value                       REAL,
+            max_value                       REAL,
+            std_dev                         REAL,
+
+            baseline_mean                   REAL,
+            baseline_median                 REAL,
+            abs_diff_from_baseline          REAL,
+            rel_diff_from_baseline          REAL,
+
+            sample_maturity                 TEXT    NOT NULL
+                                                CHECK (sample_maturity IN (
+                                                    'insufficient','exploratory',
+                                                    'directional','actionable'
+                                                )),
+            observation_type                TEXT    NOT NULL DEFAULT 'association',
+
+            source_publication_ids_json     TEXT    NOT NULL DEFAULT '[]',
+            source_topic_ids_json           TEXT    NOT NULL DEFAULT '[]',
+
+            comparison_schema_version       TEXT    NOT NULL,
+            observer_version                TEXT    NOT NULL,
+            input_hash                      TEXT    NOT NULL,
+
+            created_at                      TEXT    NOT NULL,
+            updated_at                      TEXT    NOT NULL,
+
+            UNIQUE (channel_id, attribute_name, attribute_bucket, metric_name)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_topic_attr_perf_channel
+            ON topic_attribute_performance_observations (channel_id);
+        CREATE INDEX IF NOT EXISTS idx_topic_attr_perf_attribute
+            ON topic_attribute_performance_observations (attribute_name, attribute_bucket);
+        """
+    )
+    conn.commit()
+
+
 def _apply_v48_autonomous_production(conn: sqlite3.Connection) -> None:
     """Autonomous production tracking on publishing_slots (Phase 18B).
 
@@ -4602,6 +4824,335 @@ PRAGMA foreign_keys = ON;
     )
 
 
+def _apply_v55_visual_engagement_metrics(conn: sqlite3.Connection) -> None:
+    """Visual relevance/engagement metrics (Phase 2 visual pipeline hardening).
+
+    Three additive pieces, all nullable/idempotent:
+
+    1. `visual_beats.verification_status/verification_reason/
+       visual_relevance_confidence` — the actual-content verification result
+       for the beat's realized asset (§7-9). `resolved_score` already existed
+       (v50); these are the OUTPUT of a separate, optional verification pass
+       over the already-scored, already-selected asset, not a replacement for
+       it. NULL means "verification did not run" — never fabricated as a
+       confidence value or a "verified" status.
+
+    2. `render_visual_assessments` gains the whole-render aggregates that
+       `app.visuals.composition` now computes but had nowhere durable to
+       land: moving_visual_runtime_ms, relevant_visual_runtime_ms,
+       low_confidence_scene_count, rejected_scene_count,
+       severe_mismatch_count. All NOT NULL DEFAULT 0 like their v50 siblings
+       — a video genuinely can have zero of any of these, and the historical
+       backfill question is already answered by v50's own precedent (the row
+       simply does not exist for pre-assessment renders, rather than every
+       column being retrofitted with a sentinel).
+
+    3. `render_visual_assessments.visualizability_score` — the observational
+       topic/production signal from §17. Nullable: computed only from render
+       manifests that were actually assessed after this column existed.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='visual_beats'"
+    ).fetchone():
+        existing = {r["name"] for r in conn.execute("PRAGMA table_info('visual_beats')").fetchall()}
+        for col, ddl in (
+            ("verification_status", "TEXT"),
+            ("verification_reason", "TEXT"),
+            ("visual_relevance_confidence", "REAL"),
+        ):
+            if col not in existing:
+                conn.execute(f"ALTER TABLE visual_beats ADD COLUMN {col} {ddl}")
+
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='render_visual_assessments'"
+    ).fetchone():
+        existing = {
+            r["name"]
+            for r in conn.execute("PRAGMA table_info('render_visual_assessments')").fetchall()
+        }
+        for col, ddl in (
+            ("moving_visual_runtime_ms", "INTEGER NOT NULL DEFAULT 0"),
+            ("relevant_visual_runtime_ms", "INTEGER NOT NULL DEFAULT 0"),
+            ("low_confidence_scene_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("rejected_scene_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("severe_mismatch_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("visualizability_score", "REAL"),
+        ):
+            if col not in existing:
+                conn.execute(f"ALTER TABLE render_visual_assessments ADD COLUMN {col} {ddl}")
+
+
+def _apply_v56_visual_verification_cache(conn: sqlite3.Connection) -> None:
+    """Actual-content verification cache (Phase 3, §7).
+
+    One row per (asset, beat intent, verifier model/version) — the exact
+    identity `app.visuals.verification.verification_cache_key` computes.
+    Keyed by that hash rather than by beat/render, on purpose: the whole
+    point is that the same retrieved asset judged against the same
+    narration/intent by the same verifier version must be reused across a
+    restart, a rerender, or a repeated preflight, regardless of which beat,
+    scene manifest, or render manifest it happens to belong to this time.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS visual_verification_cache (
+            cache_key           TEXT PRIMARY KEY,
+            asset_key           TEXT NOT NULL,
+            model               TEXT NOT NULL,
+            verifier_version    TEXT NOT NULL,
+            status              TEXT NOT NULL
+                                    CHECK (status IN
+                                        ('verified','questionable','rejected','unavailable')),
+            reason              TEXT,
+            confidence          REAL,
+            created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_visual_verification_cache_asset
+            ON visual_verification_cache (asset_key);
+        """
+    )
+
+
+def _apply_v57_exploration_portfolio(conn: sqlite3.Connection) -> None:
+    """Exploration-cell allocation ledger (Phase 7A, §4/§19).
+
+    One row per (domain, format, audience_value) hypothesis the exploration
+    portfolio allocator chose to pursue, whether or not a concrete
+    opportunity/topic ever materialized from it. This is the ledger the
+    rolling diversity guard (§6) and the next-N-cells simulation (§16) read
+    from, and the anchor `opportunity_id` links forward to when/if a real
+    opportunity resulted (nullable — many selections may not pan out).
+
+    Deliberately does NOT try to thread domain/format back onto
+    `topics`/`opportunities`/`publications`: `topic_attributes.py`'s own
+    18H.C closure audit already found that no reliable persisted lineage
+    connects a market_exploration_probe back to the topic/publication it
+    ultimately produced, and concluded the topic-keyed sidecar table
+    (topic_attribute_evaluations) was the only workable answer for
+    topic-level semantic attributes. Exploration cells are a similar but
+    distinct concept — a SELECTION-TIME hypothesis, chosen before a topic
+    exists — so they get their own ledger rather than inheriting that
+    lineage problem.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS exploration_cell_selections (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_id      INTEGER NOT NULL REFERENCES channels(id),
+            workspace_id    TEXT,
+            domain          TEXT    NOT NULL,
+            format          TEXT    NOT NULL,
+            audience_value  TEXT    NOT NULL,
+            designation     TEXT    NOT NULL
+                                    CHECK (designation IN ('exploration', 'exploitation')),
+            rationale       TEXT    NOT NULL DEFAULT '',
+            policy_version  TEXT    NOT NULL DEFAULT 'v1',
+            opportunity_id  INTEGER REFERENCES opportunities(id),
+            source          TEXT    NOT NULL DEFAULT 'portfolio_allocator'
+                                    CHECK (source IN ('portfolio_allocator', 'recovery_discovery')),
+            selected_at     TEXT    NOT NULL,
+            created_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ecs_channel_time
+            ON exploration_cell_selections (channel_id, selected_at);
+        CREATE INDEX IF NOT EXISTS idx_ecs_channel_domain
+            ON exploration_cell_selections (channel_id, domain);
+        CREATE INDEX IF NOT EXISTS idx_ecs_opportunity
+            ON exploration_cell_selections (opportunity_id)
+            WHERE opportunity_id IS NOT NULL;
+        """
+    )
+
+
+def _apply_v58_format_aware_production(conn: sqlite3.Connection) -> None:
+    """Format-aware production (Phase 7B, §16/§17/§9).
+
+    Two additive columns, both defaulting to the exact pre-existing implicit
+    behavior so no historical row changes meaning:
+
+    1. scripts.exploration_format — the durable record of which exploration-
+       cell format (interactive_recall_quiz, practical_micro_lesson, or the
+       default curiosity_explainer) a script was generated for. NOT the
+       same concept as the pre-existing scripts.format column (v9), which is
+       a video-LENGTH format ('short'/'long_form') — deliberately a
+       different column, never conflated, to avoid repeating the exact
+       naming collision `topic_attributes.py`'s domain_family closure audit
+       already had to work around once. Every existing script simply reads
+       as 'curiosity_explainer' — the format nothing-else-specified has
+       always implicitly meant.
+
+    2. production_segments.think_duration_ms — structured pause duration
+       (Phase 7B, §7/§9) for an interactive_recall_quiz "prompt" segment,
+       propagated from the script's `ScriptSection.think_duration_ms`
+       (content/schemas.py). 0 for every segment of every other format —
+       "no intentional pause", byte-identical to today's behavior.
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    scripts_cols = {r["name"] for r in conn.execute("PRAGMA table_info('scripts')").fetchall()}
+    if scripts_cols and "exploration_format" not in scripts_cols:
+        conn.execute(
+            "ALTER TABLE scripts ADD COLUMN exploration_format TEXT "
+            "NOT NULL DEFAULT 'curiosity_explainer'"
+        )
+
+    segment_cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info('production_segments')").fetchall()
+    }
+    if segment_cols and "think_duration_ms" not in segment_cols:
+        conn.execute(
+            "ALTER TABLE production_segments ADD COLUMN think_duration_ms "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+
+
+def _apply_v59_multilingual_narration(conn: sqlite3.Connection) -> None:
+    """Per-segment language override (Phase 7B.1, §1/§2).
+
+    One additive, nullable column: production_segments.language_code.  NULL
+    (the default, and every historical row) means "no override" — the
+    voice profile's own language is used exactly as before. Set, it names
+    the BCP-47-ish language/locale this ONE segment's narration should be
+    synthesized in — e.g. an interactive_recall_quiz "prompt" section
+    carries the source-language locale and its "reveal" section carries the
+    target-language locale, letting a single quiz mix languages without
+    forcing a new voice profile per language. Not restricted to any
+    section type at the schema level (unlike think_duration_ms, which is
+    only ever meaningful on "prompt" — a language override is harmless
+    metadata anywhere it's unset, so no CHECK constraint is needed).
+
+    Idempotent — safe to run against a database at any prior version.
+    """
+    segment_cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info('production_segments')").fetchall()
+    }
+    if segment_cols and "language_code" not in segment_cols:
+        conn.execute("ALTER TABLE production_segments ADD COLUMN language_code TEXT")
+
+
+def _apply_v60_narration_run_retry_semantics(conn: sqlite3.Connection) -> None:
+    """Phase 7C.4, §1-§4 — a FAILED narration run must not permanently block
+    a legitimate retry.
+
+    Root cause: `narration_runs` carried a single, unconditional
+    `UNIQUE (plan_id, input_hash)` table constraint. `input_hash` names the
+    LOGICAL narration input (script + voice profile + settings) and is
+    deliberately provider-agnostic — a retry after a real ElevenLabs
+    failure, even switching to FakeTTS, computes the identical input_hash.
+    So a 'failed' row from a first attempt permanently blocked
+    create_narration_run()'s plain INSERT on every subsequent retry,
+    regardless of provider or how much time had passed, with no code path
+    that ever superseded or cleared it — production would fail forever with
+    "Narration run with same input_hash already exists", not because
+    anything was actually in flight, but because history was preserved.
+
+    Fix: replace the unconditional constraint with a partial unique index
+    that excludes 'failed' rows. 'completed' / 'approved' / 'running' /
+    'rejected' rows still collide on (plan_id, input_hash) exactly as
+    before — idempotent reuse for completed/approved work and blocking of
+    genuine duplicate concurrent work (a 'running' row) are both preserved
+    byte-for-byte. Only a 'failed' row stops participating in the
+    uniqueness check, so a fresh create_narration_run() call for the same
+    logical input now succeeds as an ordinary new row — the failed row is
+    never mutated, deleted, or stripped of its error_message, so its
+    history remains queryable exactly as it was (list_narration_runs
+    already returns every row for a plan, failed ones included).
+
+    Table rebuild (SQLite has no ALTER TABLE DROP CONSTRAINT), same pattern
+    already used by _apply_v36_opportunities_topic_dedup_partial. Guarded
+    and idempotent: a database already rebuilt (no inline-UNIQUE
+    autoindex left) only ensures the partial index exists.
+    """
+    nr_exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='narration_runs'"
+    ).fetchone()
+    if not nr_exists:
+        return
+
+    autoindex = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='index' AND tbl_name='narration_runs' AND name LIKE 'sqlite_autoindex%'"
+    ).fetchone()
+
+    if autoindex is None:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_unique_active_input_hash "
+            "ON narration_runs(plan_id, input_hash) WHERE status != 'failed'"
+        )
+        return
+
+    conn.executescript("""
+PRAGMA foreign_keys = OFF;
+
+CREATE TABLE narration_runs_v60_new (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    plan_id                 INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE RESTRICT,
+    plan_input_hash         TEXT    NOT NULL,
+    voice_profile_id        INTEGER NOT NULL REFERENCES voice_profiles(id) ON DELETE RESTRICT,
+    voice_profile_version   INTEGER NOT NULL,
+    language                TEXT    NOT NULL,
+    speaking_rate           REAL    NOT NULL,
+    style                   TEXT,
+    stability               REAL,
+    similarity_boost        REAL,
+    settings_json           TEXT    NOT NULL,
+    output_format           TEXT    NOT NULL,
+    sample_rate_hz          INTEGER NOT NULL,
+    input_hash              TEXT    NOT NULL,
+    status  TEXT    NOT NULL DEFAULT 'running'
+            CHECK (status IN ('running', 'completed', 'failed', 'approved', 'rejected')),
+    experiment_id           TEXT,
+    notes                   TEXT,
+    error_message           TEXT,
+    completed_at            TEXT,
+    approved_at             TEXT,
+    rejected_at             TEXT,
+    superseded_at           TEXT,
+    superseded_by_run_id    INTEGER REFERENCES narration_runs_v60_new(id),
+    created_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now')),
+    updated_at              TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now'))
+);
+
+INSERT INTO narration_runs_v60_new
+    SELECT id, plan_id, plan_input_hash, voice_profile_id, voice_profile_version,
+           language, speaking_rate, style, stability, similarity_boost,
+           settings_json, output_format, sample_rate_hz, input_hash,
+           status, experiment_id, notes, error_message, completed_at,
+           approved_at, rejected_at, superseded_at, superseded_by_run_id,
+           created_at, updated_at
+    FROM narration_runs;
+
+DROP TABLE narration_runs;
+ALTER TABLE narration_runs_v60_new RENAME TO narration_runs;
+
+PRAGMA foreign_keys = ON;
+""")
+
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_unique_active_input_hash "
+        "ON narration_runs(plan_id, input_hash) WHERE status != 'failed'"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_one_active_normal "
+        "ON narration_runs (plan_id) "
+        "WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NULL"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_nr_one_active_experiment "
+        "ON narration_runs (plan_id, experiment_id) "
+        "WHERE status = 'approved' AND superseded_at IS NULL AND experiment_id IS NOT NULL"
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_nr_plan ON narration_runs (plan_id)")
+
+
 def _get_version(conn: sqlite3.Connection) -> int:
     exists = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
@@ -4675,6 +5226,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Schema ready at version %d", SCHEMA_VERSION)
 
@@ -4730,6 +5290,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -4784,6 +5353,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -4837,6 +5415,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -4889,6 +5476,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -4940,6 +5536,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -4990,6 +5595,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5039,6 +5653,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5087,6 +5710,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5134,6 +5766,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5180,6 +5821,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5225,6 +5875,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5269,6 +5928,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5312,6 +5980,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5354,6 +6031,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5395,6 +6081,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5435,6 +6130,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5474,6 +6178,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5512,6 +6225,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
     elif current == 19:
@@ -5548,6 +6270,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5584,6 +6315,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5619,6 +6359,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5653,6 +6402,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5686,6 +6444,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5718,6 +6485,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5749,6 +6525,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5779,6 +6564,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5808,6 +6602,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5836,6 +6639,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5863,6 +6675,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5889,6 +6710,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5914,6 +6744,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5938,6 +6777,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5961,6 +6809,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -5983,6 +6840,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6004,6 +6870,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6024,6 +6899,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6043,6 +6927,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6061,6 +6954,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6078,6 +6980,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6094,6 +7005,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6109,6 +7029,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6123,6 +7052,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6136,6 +7074,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6148,6 +7095,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6159,6 +7115,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6169,6 +7134,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6178,6 +7152,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6186,6 +7169,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         _apply_v49_scheduled_publishing(conn)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
@@ -6193,12 +7185,120 @@ def _migrate(conn: sqlite3.Connection) -> None:
         logger.info("Migrating schema from version 49 to %d", SCHEMA_VERSION)
         _apply_v50_visual_quality(conn)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 
     elif current == 50:
         logger.info("Migrating schema from version 50 to %d", SCHEMA_VERSION)
         _apply_v51_slot_retirement(conn)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 51:
+        logger.info("Migrating schema from version 51 to %d", SCHEMA_VERSION)
+        _apply_v52_visual_candidate_evidence(conn)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 52:
+        logger.info("Migrating schema from version 52 to %d", SCHEMA_VERSION)
+        _apply_v53_domain_family(conn)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 53:
+        logger.info("Migrating schema from version 53 to %d", SCHEMA_VERSION)
+        _apply_v54_topic_attributes(conn)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 54:
+        logger.info("Migrating schema from version 54 to %d", SCHEMA_VERSION)
+        _apply_v55_visual_engagement_metrics(conn)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 55:
+        logger.info("Migrating schema from version 55 to %d", SCHEMA_VERSION)
+        _apply_v56_visual_verification_cache(conn)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 56:
+        logger.info("Migrating schema from version 56 to %d", SCHEMA_VERSION)
+        _apply_v57_exploration_portfolio(conn)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 57:
+        logger.info("Migrating schema from version 57 to %d", SCHEMA_VERSION)
+        _apply_v58_format_aware_production(conn)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 58:
+        logger.info("Migrating schema from version 58 to %d", SCHEMA_VERSION)
+        _apply_v59_multilingual_narration(conn)
+        _apply_v60_narration_run_retry_semantics(conn)
+        _set_version(conn, SCHEMA_VERSION)
+        logger.info("Migration complete")
+
+    elif current == 59:
+        logger.info("Migrating schema from version 59 to %d", SCHEMA_VERSION)
+        _apply_v60_narration_run_retry_semantics(conn)
         _set_version(conn, SCHEMA_VERSION)
         logger.info("Migration complete")
 

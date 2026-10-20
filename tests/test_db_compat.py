@@ -115,7 +115,7 @@ def test_compat_cursor_returns_self_from_execute():
 
 
 def test_schema_version_is_20():
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 def test_v20_auth_tables_exist(tmp_path: Path):

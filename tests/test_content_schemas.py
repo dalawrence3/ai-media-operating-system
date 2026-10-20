@@ -61,6 +61,31 @@ class TestLLMScriptSection:
             LLMScriptSection(section_type="unknown", text="t", cited_claim_ids=[])
 
 
+class TestLLMScriptSectionLanguageCode:
+    """Phase 7B.1, §1/§2 — per-section language override."""
+
+    def test_defaults_to_none(self):
+        s = LLMScriptSection(**_section("prompt", "Question?"))
+        assert s.language_code is None
+
+    def test_accepts_a_source_language_code(self):
+        s = LLMScriptSection(**_section("prompt", "How do you say 'window'?"), language_code="en")
+        assert s.language_code == "en"
+
+    def test_accepts_a_target_language_code(self):
+        s = LLMScriptSection(**_section("reveal", "La ventana."), language_code="es")
+        assert s.language_code == "es"
+
+    def test_not_restricted_to_any_particular_section_type(self):
+        """Unlike think_duration_ms, an unused language override anywhere
+        is harmless — no validator restricts which section_type may carry
+        it (any two-language pair, any domain, per the spec's 'do not
+        hardcode English/Spanish' instruction)."""
+        for section_type in ("hook", "body", "cta", "problem", "takeaway"):
+            s = LLMScriptSection(**_section(section_type, "t"), language_code="fr")
+            assert s.language_code == "fr"
+
+
 class TestLLMGeneratedScript:
     def test_valid(self):
         s = LLMGeneratedScript(**_valid_llm())
@@ -135,3 +160,32 @@ class TestGeneratedScriptFromLLM:
         gs = GeneratedScript.from_llm(llm)
         types = [s.section_type for s in gs.sections]
         assert types == ["hook", "body"]
+
+    def test_language_code_propagates(self):
+        """Phase 7B.1, §1/§2 — a section's language_code must survive the
+        LLM-output -> internal ScriptSection conversion, same as
+        think_duration_ms already does."""
+        llm = LLMGeneratedScript(
+            title="Quiz",
+            sections=[
+                LLMScriptSection(section_type="hook", text="Hook.", cited_claim_ids=[]),
+                LLMScriptSection(
+                    section_type="prompt",
+                    text="How do you say 'window'?",
+                    cited_claim_ids=[],
+                    think_duration_ms=3000,
+                    language_code="en",
+                ),
+                LLMScriptSection(
+                    section_type="reveal",
+                    text="La ventana.",
+                    cited_claim_ids=[],
+                    language_code="es",
+                ),
+            ],
+        )
+        gs = GeneratedScript.from_llm(llm)
+        by_type = {s.section_type: s for s in gs.sections}
+        assert by_type["hook"].language_code is None
+        assert by_type["prompt"].language_code == "en"
+        assert by_type["reveal"].language_code == "es"

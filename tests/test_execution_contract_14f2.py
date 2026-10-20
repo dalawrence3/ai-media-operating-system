@@ -1947,7 +1947,7 @@ def test_AK_schema_version_41(db):
     """SCHEMA_VERSION is 41 — Phase 14G added experiment_outcomes table."""
     from app.core.database import SCHEMA_VERSION
 
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 def test_AL_persist_fidelity_includes_classification_in_json(db):

@@ -270,6 +270,29 @@ def test_evergreen_value_multi_run_bonus() -> None:
     assert multi_result.raw_score >= single_result.raw_score  # type: ignore[operator]
 
 
+def test_evergreen_opportunity_competes_with_zero_trend_evidence() -> None:
+    """Phase 7A, §8 — evergreen usefulness must not require a current trend.
+    An opportunity with NO trend evidence at all (a Spanish vocabulary quiz,
+    a budgeting fundamentals lesson — nothing time-bound about either) still
+    gets a real, strong evergreen_value; trend_strength being absent is a
+    separate, independently-weighted factor, not a gate on the whole score
+    (confirmed via test_trend_strength_no_evidence_absent above — this test
+    adds the missing other half: a genuinely strong evergreen score in that
+    same no-trend-evidence shape)."""
+    ctx = _ctx(
+        topic="how to say thank you in spanish beginner guide",
+        normalized_topic="how to say thank you in spanish beginner guide",
+        observations=[_obs()],
+        evidence={},  # no trend evidence of any kind
+    )
+    trend_result = compute_trend_strength(ctx, _policy())
+    evergreen_result = compute_evergreen_value(ctx, _policy())
+    assert trend_result.status == FactorStatus.absent
+    assert evergreen_result.status == FactorStatus.present
+    assert evergreen_result.raw_score is not None
+    assert evergreen_result.raw_score > 0.6
+
+
 # ---------------------------------------------------------------------------
 # compute_audience_fit
 # ---------------------------------------------------------------------------

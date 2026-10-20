@@ -370,11 +370,21 @@ export interface PublishingSlot {
   publish_error: string | null
   publish_retry_count: number
   rescheduled_from_slot_id: number | null
+  retired_at: string | null
+  retirement_reason: string | null
 }
 
 export interface ChannelAutomationPolicyResponse {
   policy: AutonomyPolicy | null
   active_slots: PublishingSlot[]
+}
+
+/** Request body for POST .../publishing-slots/{id}/reschedule.
+    scheduled_for_local is a naive "YYYY-MM-DDTHH:mm" local datetime,
+    interpreted in the channel's own configured timezone unless overridden. */
+export interface RescheduleSlotRequest {
+  scheduled_for_local: string
+  timezone?: string
 }
 
 /* Phase 18C — public-publishing authorization */
@@ -535,6 +545,9 @@ export interface OptimizationRecommendation {
   superseded_at: string | null
   superseded_by_id: number | null
   created_at: string
+  /** Read-only, computed at fetch time — never persisted. See Phase 18F. */
+  evidence_valid?: boolean
+  validity_reason?: string | null
 }
 
 /* Cross-publication learning (Phase 17D) — channel_performance_baselines
@@ -599,6 +612,50 @@ export interface CrossPublicationLearning {
   channel_id: string
   baselines: ChannelPerformanceBaseline[]
   feature_observations: FeaturePerformanceObservation[]
+}
+
+/* Phase 18H.C — topic-attribute observations. A deliberately SEPARATE
+   semantic layer from FeaturePerformanceObservation above: attributes
+   describe a topic's subject matter (survives different scripts/hooks/
+   renders of the same topic), while feature_observations describe
+   creative/production factors of one specific render. Never merge the two
+   in the UI. Always observational (observation_type is always
+   'association') — never a causal claim. */
+export interface TopicAttributePerformanceObservation {
+  id: number
+  channel_id: string
+  workspace_id: string | null
+  attribute_name: string
+  attribute_bucket: string
+  metric_name: string
+  period_type: string
+  publication_count: number
+  distinct_topic_count: number
+  distinct_domain_family_count: number
+  mean: number | null
+  median: number | null
+  min_value: number | null
+  max_value: number | null
+  std_dev: number | null
+  baseline_mean: number | null
+  baseline_median: number | null
+  abs_diff_from_baseline: number | null
+  rel_diff_from_baseline: number | null
+  sample_maturity: string
+  observation_type: string
+  source_publication_ids_json: string
+  source_topic_ids_json: string
+  comparison_schema_version: string
+  observer_version: string
+  input_hash: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TopicAttributeLearning {
+  channel_id: string
+  raw: TopicAttributePerformanceObservation[]
+  decision_useful: TopicAttributePerformanceObservation[]
 }
 
 /* Market intelligence (Phase 17D) — external YouTube opportunity signals,

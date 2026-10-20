@@ -296,9 +296,15 @@ export function VideoAnalytics() {
 }
 
 /** Recommendations that reference this specific publication — excludes dev
-    fixture recommendations the same way useChannelRecommendations does. */
+    fixture recommendations, and matches the Learn page's "current" filter
+    (pending/accepted with valid evidence only; see Phase 18F). */
 function useRecommendationsForVideo(workspaceId: string, publicationId: number | null) {
   const { data } = useRecommendations(workspaceId, undefined, undefined, publicationId ?? undefined)
-  const recommendations = (data ?? []).filter(r => !r.title.startsWith('[DEV]'))
+  const recommendations = (data ?? []).filter(
+    r =>
+      !r.title.startsWith('[DEV]') &&
+      (r.status === 'pending' || r.status === 'accepted') &&
+      r.evidence_valid !== false,
+  )
   return { recommendations }
 }

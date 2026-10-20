@@ -120,6 +120,68 @@ def test_narrate_plan_assets_synthesized(conn: sqlite3.Connection, artifacts: Pa
         assert asset.audio_sha256 is not None
 
 
+def test_narrate_plan_think_duration_extends_segment_audio(
+    conn: sqlite3.Connection, artifacts: Path
+) -> None:
+    """Phase 7B, §9 — the quiz pause is baked into the synthesized audio's
+    own measured duration (via append_silence), not a separate timing
+    concept downstream consumers (captions, scene timing) must
+    special-case; they already work purely off measured audio duration."""
+    conn.execute(
+        "INSERT INTO production_segments "
+        "(id, plan_id, segment_index, section_index, section_type, narration_text, "
+        "think_duration_ms, created_at) "
+        "VALUES (3, 1, 2, 2, 'prompt', 'How do you say window?', 3000, "
+        "'2026-01-01T00:00:00')"
+    )
+    conn.commit()
+    vp = create_voice_profile(conn, _vpc())
+    result = narrate_plan(
+        conn,
+        plan_id=1,
+        plan_input_hash="a" * 64,
+        voice_profile_id=vp.id,
+        artifacts_path=artifacts,
+        provider=FakeTTSProvider(),
+    )
+    by_segment = {a.segment_id: a for a in result.assets}
+    paused = by_segment[3]
+    unpaused = by_segment[1]
+    assert paused.duration_seconds is not None
+    assert unpaused.duration_seconds is not None
+    # "How do you say window?" is short narration, yet its measured
+    # duration must exceed a plain unpaused segment by close to the
+    # full 3s pause.
+    assert paused.duration_seconds >= unpaused.duration_seconds + 2.9
+
+
+def test_narrate_plan_language_code_overrides_voice_profile_language(
+    conn: sqlite3.Connection, artifacts: Path
+) -> None:
+    """Phase 7B.1, §1/§2 — a segment with language_code set is synthesized
+    under that language, not the voice profile's; a segment that never
+    sets it stays on the voice profile's language exactly as before."""
+    conn.execute(
+        "INSERT INTO production_segments "
+        "(id, plan_id, segment_index, section_index, section_type, narration_text, "
+        "language_code, created_at) "
+        "VALUES (3, 1, 2, 2, 'reveal', 'La ventana.', 'es', '2026-01-01T00:00:00')"
+    )
+    conn.commit()
+    vp = create_voice_profile(conn, _vpc(language="en-US"))
+    result = narrate_plan(
+        conn,
+        plan_id=1,
+        plan_input_hash="a" * 64,
+        voice_profile_id=vp.id,
+        artifacts_path=artifacts,
+        provider=FakeTTSProvider(),
+    )
+    by_segment = {a.segment_id: a for a in result.assets}
+    assert by_segment[1].language == "en-US"  # no override — matches the voice profile
+    assert by_segment[3].language == "es"  # per-segment override
+
+
 def test_narrate_plan_audio_files_exist(conn: sqlite3.Connection, artifacts: Path) -> None:
     vp = create_voice_profile(conn, _vpc())
     narrate_plan(
@@ -209,6 +271,57 @@ def test_narrate_plan_tts_failure_marks_run_failed(
         )
     runs = conn.execute("SELECT status FROM narration_runs WHERE plan_id=1").fetchall()
     assert any(r[0] == "failed" for r in runs)
+
+
+def test_narrate_plan_retries_cleanly_after_provider_failure(
+    conn: sqlite3.Connection, artifacts: Path
+) -> None:
+    """Phase 7C.4, §7.D/§8 — the actual shadow-canary scenario: a first
+    attempt fails partway through (deterministic mocked failure, not a real
+    ElevenLabs call), then a second narrate_plan() call for the identical
+    logical input (same plan/voice profile/settings -- only the provider
+    instance differs, matching an operator switching to FakeTTS after a
+    real quota failure) must succeed with NO manual DB cleanup: no deleted
+    rows, no cleared idempotency state, no retry-limit override."""
+    vp = create_voice_profile(conn, _vpc())
+
+    with pytest.raises(SynthesisError):
+        narrate_plan(
+            conn,
+            plan_id=1,
+            plan_input_hash="a" * 64,
+            voice_profile_id=vp.id,
+            artifacts_path=artifacts,
+            provider=FakeTTSProvider(fail_on={2}),
+        )
+
+    failed_runs = conn.execute("SELECT id, status FROM narration_runs WHERE plan_id=1").fetchall()
+    assert len(failed_runs) == 1
+    assert failed_runs[0]["status"] == "failed"
+    first_run_id = failed_runs[0]["id"]
+
+    # No manual cleanup between attempts -- just a fresh call, same inputs,
+    # a provider that this time succeeds (standing in for FakeTTS after a
+    # real ElevenLabs quota failure).
+    result = narrate_plan(
+        conn,
+        plan_id=1,
+        plan_input_hash="a" * 64,
+        voice_profile_id=vp.id,
+        artifacts_path=artifacts,
+        provider=FakeTTSProvider(),
+    )
+
+    assert result.run_id != first_run_id
+    assert len(result.assets) == 2
+
+    all_runs = conn.execute(
+        "SELECT id, status FROM narration_runs WHERE plan_id=1 ORDER BY id"
+    ).fetchall()
+    assert len(all_runs) == 2
+    assert all_runs[0]["id"] == first_run_id
+    assert all_runs[0]["status"] == "failed"
+    assert all_runs[1]["status"] == "completed"
 
 
 def test_narrate_plan_missing_voice_profile_raises(

@@ -120,9 +120,15 @@ def build_production_plan(
         else:
             chunks = [narration_text]
 
-        for chunk_text in chunks:
+        for chunk_index, chunk_text in enumerate(chunks):
             chunk_wc = _count_words(chunk_text)
             chunk_dur = _segment_duration_s(chunk_wc)
+            # Phase 7B, §7/§9: the pause belongs after the section's LAST
+            # spoken chunk, never a chunk that still has more narration
+            # after it (rare in practice — quiz "prompt" sections are
+            # short — but correct if a section is ever long enough to
+            # split).
+            is_last_chunk = chunk_index == len(chunks) - 1
             segments.append(
                 ProductionSegmentDraft(
                     segment_index=segment_index,
@@ -132,6 +138,12 @@ def build_production_plan(
                     estimated_duration_s=chunk_dur,
                     estimated_word_count=chunk_wc,
                     citation_claim_ids=list(section.cited_claim_ids),
+                    think_duration_ms=section.think_duration_ms if is_last_chunk else 0,
+                    # Phase 7B.1, §1/§2 — unlike the pause (time-bound, only
+                    # meaningful at the section's audio end), a language
+                    # override is a content/voice property of the section's
+                    # narration as a whole, so it applies to every chunk.
+                    language_code=section.language_code,
                 )
             )
             segment_index += 1

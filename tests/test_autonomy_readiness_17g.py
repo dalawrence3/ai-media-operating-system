@@ -22,6 +22,7 @@ Tests:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,7 @@ from app.control_plane import services as cp_services
 from app.control_plane.models import ChannelDraft, WorkspaceDraft
 from app.core.config import reset_config
 from app.core.database import open_db
+from app.intelligence.autonomy.repository import fill_slot, reserve_slot, upsert_autonomy_policy
 from app.intelligence.channel_bridge import bootstrap_intelligence_channel
 
 
@@ -158,7 +160,7 @@ def _seed_eligible_opportunity_stub(db_conn, channel, monkeypatch) -> None:
     intel_channel_id = get_intelligence_channel_id(db_conn, channel.id)
     _seed_bare_opportunity(db_conn, intel_channel_id)
 
-    def _fake_eligible(conn, opp_id, ch_id, ai_provider=None, policy=None):
+    def _fake_eligible(conn, opp_id, ch_id, ai_provider=None, policy=None, exploration_cell=False):
         return ExperimentEligibilityAssessment(
             opportunity_id=opp_id,
             channel_id=ch_id,
@@ -425,7 +427,9 @@ def test_F_eligible_opportunities_check_reflects_real_eligibility_result(
     intel_channel_id = get_intelligence_channel_id(db_conn, channel.id)
     _seed_bare_opportunity(db_conn, intel_channel_id)
 
-    def _fake_ineligible(conn, opp_id, ch_id, ai_provider=None, policy=None):
+    def _fake_ineligible(
+        conn, opp_id, ch_id, ai_provider=None, policy=None, exploration_cell=False
+    ):
         return ExperimentEligibilityAssessment(
             opportunity_id=opp_id,
             channel_id=ch_id,
@@ -441,7 +445,7 @@ def test_F_eligible_opportunities_check_reflects_real_eligibility_result(
     assert by_key_before["eligible_opportunities_available"] is False
     assert view_before.ready_for_decision_automation is False
 
-    def _fake_eligible(conn, opp_id, ch_id, ai_provider=None, policy=None):
+    def _fake_eligible(conn, opp_id, ch_id, ai_provider=None, policy=None, exploration_cell=False):
         return ExperimentEligibilityAssessment(
             opportunity_id=opp_id,
             channel_id=ch_id,
@@ -471,3 +475,217 @@ def test_G_readiness_computation_spends_zero_llm_calls(db_conn, workspace, chann
     monkeypatch.setattr(claude_module.ClaudeProvider, "__init__", _boom)
     # Must not raise — proves the readiness path never reaches ClaudeProvider().
     get_autonomy_readiness(db_conn, workspace.id, channel.id)
+
+
+# ── Phase 18F — queue-aware decision readiness ───────────────────────────────
+#
+# H  0 eligible + queue at target, no in-flight slot -> ready, queue-satisfied
+#    detail, eligible count still shown
+# I  0 eligible + queue below target -> stays blocked (regression)
+# J  eligible > 0 + queue below target -> ready (regression)
+# K  0 eligible + queue at target but WITH an in-flight slot -> stays blocked
+#    (proves the in-flight fix is load-bearing, not cosmetic)
+# L  queue-satisfied (ready) + learning evidence exploratory (degraded) ->
+#    overall_status is "degraded", not "blocked"
+
+
+def _fake_ineligible_all(
+    conn, opp_id, ch_id, ai_provider=None, policy=None, exploration_cell=False
+):
+    from app.intelligence.experiments.eligibility import (
+        ExperimentEligibilityAssessment,
+        ExperimentEligibilityClassification,
+    )
+
+    return ExperimentEligibilityAssessment(
+        opportunity_id=opp_id,
+        channel_id=ch_id,
+        classification=ExperimentEligibilityClassification.UNRESOLVED,
+        findings=[],
+        policy_snapshot_json="{}",
+        assessed_at="2026-01-01T00:00:00",
+    )
+
+
+def _fill_one_slot(db_conn, workspace, channel, slot_key: str = "2026-01-01"):
+    db_conn.execute("PRAGMA foreign_keys = OFF")
+    slot = reserve_slot(
+        db_conn,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        slot_key=slot_key,
+        scheduled_for_local=f"{slot_key}T09:00:00",
+        timezone="UTC",
+        scheduled_for_utc=datetime(2026, 1, 1, 9, tzinfo=UTC),
+    )
+    return fill_slot(
+        db_conn, slot.id, brief_id="brief-1", selection_decision_id=1, opportunity_id=1
+    )
+
+
+def test_H_queue_satisfied_makes_zero_eligible_ready_not_blocked(
+    db_conn, workspace, channel, monkeypatch
+):
+    from app.intelligence.channel_bridge import get_intelligence_channel_id
+    from app.intelligence.experiments import eligibility_service as elig_svc
+
+    _make_ready_channel(db_conn, workspace, channel, monkeypatch)
+    upsert_autonomy_policy(
+        db_conn,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        actor="test",
+        decision_automation_enabled=True,
+        timezone="UTC",
+        cadence_type="daily",
+        preferred_local_hour=9,
+        queue_target=1,
+    )
+    _fill_one_slot(db_conn, workspace, channel)
+    intel_channel_id = get_intelligence_channel_id(db_conn, channel.id)
+    _seed_bare_opportunity(db_conn, intel_channel_id)
+    monkeypatch.setattr(elig_svc, "assess_experiment_eligibility", _fake_ineligible_all)
+    db_conn.commit()
+
+    view = get_autonomy_readiness(db_conn, workspace.id, channel.id)
+    check = next(c for c in view.checks if c.key == "eligible_opportunities_available")
+    assert check.status == "ready"
+    assert check.ready is True
+    assert "satisfied" in check.detail.lower()
+    assert "0 of 1" in check.detail
+    assert view.ready_for_decision_automation is True
+
+
+def test_I_queue_below_target_zero_eligible_stays_blocked(db_conn, workspace, channel, monkeypatch):
+    from app.intelligence.channel_bridge import get_intelligence_channel_id
+    from app.intelligence.experiments import eligibility_service as elig_svc
+
+    _make_ready_channel(db_conn, workspace, channel, monkeypatch)
+    upsert_autonomy_policy(
+        db_conn,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        actor="test",
+        decision_automation_enabled=True,
+        timezone="UTC",
+        cadence_type="daily",
+        preferred_local_hour=9,
+        queue_target=1,
+    )
+    intel_channel_id = get_intelligence_channel_id(db_conn, channel.id)
+    _seed_bare_opportunity(db_conn, intel_channel_id)
+    monkeypatch.setattr(elig_svc, "assess_experiment_eligibility", _fake_ineligible_all)
+    db_conn.commit()
+
+    view = get_autonomy_readiness(db_conn, workspace.id, channel.id)
+    check = next(c for c in view.checks if c.key == "eligible_opportunities_available")
+    assert check.status == "blocked"
+    assert view.ready_for_decision_automation is False
+
+
+def test_J_queue_below_target_eligible_present_is_ready(db_conn, workspace, channel, monkeypatch):
+    _make_ready_channel(db_conn, workspace, channel, monkeypatch)
+    upsert_autonomy_policy(
+        db_conn,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        actor="test",
+        decision_automation_enabled=True,
+        timezone="UTC",
+        cadence_type="daily",
+        preferred_local_hour=9,
+        queue_target=1,
+    )
+    db_conn.commit()
+    _seed_eligible_opportunity_stub(db_conn, channel, monkeypatch)
+
+    view = get_autonomy_readiness(db_conn, workspace.id, channel.id)
+    check = next(c for c in view.checks if c.key == "eligible_opportunities_available")
+    assert check.status == "ready"
+    assert view.ready_for_decision_automation is True
+
+
+def test_K_in_flight_slot_keeps_zero_eligible_blocked_even_at_target(
+    db_conn, workspace, channel, monkeypatch
+):
+    """Regression guard for the gap an earlier draft of this fix missed:
+    filled >= target alone is not "satisfied" while a reserved-but-brief-
+    less slot is still in flight — that slot is a live signal a candidate
+    is needed right now, matching decision_cycle.py's own condition."""
+    from app.intelligence.channel_bridge import get_intelligence_channel_id
+    from app.intelligence.experiments import eligibility_service as elig_svc
+
+    _make_ready_channel(db_conn, workspace, channel, monkeypatch)
+    upsert_autonomy_policy(
+        db_conn,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        actor="test",
+        decision_automation_enabled=True,
+        timezone="UTC",
+        cadence_type="daily",
+        preferred_local_hour=9,
+        queue_target=1,
+    )
+    _fill_one_slot(db_conn, workspace, channel, slot_key="2026-01-01")
+    reserve_slot(
+        db_conn,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        slot_key="2026-01-02",
+        scheduled_for_local="2026-01-02T09:00:00",
+        timezone="UTC",
+        scheduled_for_utc=datetime(2026, 1, 2, 9, tzinfo=UTC),
+    )
+    intel_channel_id = get_intelligence_channel_id(db_conn, channel.id)
+    _seed_bare_opportunity(db_conn, intel_channel_id)
+    monkeypatch.setattr(elig_svc, "assess_experiment_eligibility", _fake_ineligible_all)
+    db_conn.commit()
+
+    view = get_autonomy_readiness(db_conn, workspace.id, channel.id)
+    check = next(c for c in view.checks if c.key == "eligible_opportunities_available")
+    assert check.status == "blocked"
+    assert view.ready_for_decision_automation is False
+
+
+def test_L_queue_satisfied_with_exploratory_learning_yields_degraded_not_blocked_overall(
+    db_conn, workspace, channel, monkeypatch
+):
+    """Once eligible_opportunities_available correctly reports ready while
+    the queue is satisfied, the decision category's worst status is no
+    longer forced to blocked by that check — proving Part 5's
+    healthy-but-early distinction already falls out of Part 1's fix with no
+    further change needed. Global overall_status in this minimal fixture is
+    separately blocked by provider_account_healthy/release_scope_granted
+    (no YouTube OAuth connected) — real, unrelated blockers this phase does
+    not touch — so the assertion is scoped to the decision/analytics
+    categories that Part 1/5 actually govern, not the global aggregate."""
+    from app.intelligence.channel_bridge import get_intelligence_channel_id
+    from app.intelligence.experiments import eligibility_service as elig_svc
+
+    _make_ready_channel(db_conn, workspace, channel, monkeypatch)
+    upsert_autonomy_policy(
+        db_conn,
+        channel_id=channel.id,
+        workspace_id=workspace.id,
+        actor="test",
+        decision_automation_enabled=True,
+        timezone="UTC",
+        cadence_type="daily",
+        preferred_local_hour=9,
+        queue_target=1,
+    )
+    _fill_one_slot(db_conn, workspace, channel)
+    intel_channel_id = get_intelligence_channel_id(db_conn, channel.id)
+    _seed_bare_opportunity(db_conn, intel_channel_id)
+    monkeypatch.setattr(elig_svc, "assess_experiment_eligibility", _fake_ineligible_all)
+    db_conn.commit()
+
+    view = get_autonomy_readiness(db_conn, workspace.id, channel.id)
+    by_key_status = {c.key: c.status for c in view.checks}
+    assert by_key_status["eligible_opportunities_available"] == "ready"
+    assert by_key_status["channel_learning_evidence"] == "degraded"
+    by_cat_status = {c.key: c.status for c in view.categories}
+    assert by_cat_status["decision"] == "ready"
+    assert by_cat_status["analytics_learning"] == "degraded"
+    assert view.ready_for_decision_automation is True

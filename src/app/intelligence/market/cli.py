@@ -631,15 +631,29 @@ def plan(
         is_channel_cold_start,
         plan_cold_start,
     )
+    from app.intelligence.market.planner_repository import has_running_exploration_run
     from app.intelligence.repository import get_active_profile_version
 
     conn = _get_db()
 
+    # Phase 18H.B: state-based mutual exclusion, not a time-based cooldown —
+    # cold-start is human-triggered (never scheduler-triggered), so the only
+    # condition that should defer a fresh attempt is one genuinely in flight.
+    # Not overridable by --force: forcing a second concurrent attempt is
+    # unsafe regardless of operator intent.
+    if has_running_exploration_run(conn, channel):
+        typer.echo(
+            f"Channel {channel} already has an exploration run in progress. "
+            f"Wait for it to finish before starting another.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
     if not force and not is_channel_cold_start(conn, channel):
         typer.echo(
-            f"Channel {channel} is not in cold-start state "
-            f"(already has enough dispatched probes). "
-            f"Use --force to override.",
+            f"Channel {channel} has already completed broad-domain discovery "
+            f"(at least one market_region probe was selected or dispatched). "
+            f"Use --force to run cold-start again anyway.",
             err=True,
         )
         raise typer.Exit(1)

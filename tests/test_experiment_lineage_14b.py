@@ -1196,5 +1196,5 @@ def test_BI_schema_version_unchanged_at_37(tmp_path):
 
     conn = _open(tmp_path)
     version = conn.execute("SELECT version FROM schema_version").fetchone()["version"]
-    assert version == 51
-    assert SCHEMA_VERSION == 51
+    assert version == SCHEMA_VERSION
+    assert SCHEMA_VERSION == 60

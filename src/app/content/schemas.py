@@ -18,7 +18,36 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # LLM output models (provider boundary — what the model returns)
 # ---------------------------------------------------------------------------
 
-_SECTION_TYPES = Literal["hook", "intro", "body", "transition", "conclusion", "cta"]
+# Phase 7B, §7/§13 — additive only: the original six remain the explainer
+# format's exact vocabulary (untouched, still the default/fallback format —
+# §17). The new entries are format_contract.py's interactive_recall_quiz
+# ("prompt", "reveal", "next_challenge") and practical_micro_lesson
+# ("problem", "explanation", "example", "takeaway") section vocabularies.
+# A Literal only ever gains legal values here, never loses one — no old
+# script's section_type can become invalid.
+_SECTION_TYPES = Literal[
+    "hook",
+    "intro",
+    "body",
+    "transition",
+    "conclusion",
+    "cta",
+    "prompt",
+    "reveal",
+    "next_challenge",
+    "problem",
+    "explanation",
+    "example",
+    "takeaway",
+]
+
+# Phase 7B, §9 — bounds for LLMScriptSection.think_duration_ms. Applies only
+# to "prompt" sections in interactive_recall_quiz scripts; every other
+# format's sections simply never set it (defaults to 0, meaning "no
+# intentional pause"). Named and bounded rather than an unbounded int so a
+# malformed/malicious value can never stall a render indefinitely.
+MIN_THINK_DURATION_MS: int = 1_000
+MAX_THINK_DURATION_MS: int = 8_000
 
 
 class LLMScriptSection(BaseModel):
@@ -29,6 +58,19 @@ class LLMScriptSection(BaseModel):
     section_type: _SECTION_TYPES
     text: str = Field(min_length=1, max_length=2000)
     cited_claim_ids: list[int] = Field(default_factory=list, max_length=20)
+    # Phase 7B, §7/§9 — structured think-time for interactive_recall_quiz's
+    # "prompt" sections: an explicit, timed silent interval AFTER this
+    # section's narration and BEFORE the next section's, never represented
+    # as fake punctuation/blank narration. 0 for every other section/format.
+    think_duration_ms: int = Field(default=0, ge=0, le=MAX_THINK_DURATION_MS)
+    # Phase 7B.1, §1/§2 — optional per-section language/locale override for
+    # narration synthesis, e.g. a language-learning quiz's "prompt" section
+    # carries the source-language locale and its "reveal" section carries
+    # the target-language locale. None (default) means "use the voice
+    # profile's own language", byte-identical to every format that never
+    # sets it. Not restricted to any section_type — unlike think_duration_ms,
+    # an unused language override is harmless metadata, so no validator here.
+    language_code: str | None = Field(default=None, max_length=20)
 
     @field_validator("cited_claim_ids")
     @classmethod
@@ -36,6 +78,20 @@ class LLMScriptSection(BaseModel):
         if len(v) != len(set(v)):
             raise ValueError("cited_claim_ids must not contain duplicate IDs")
         return v
+
+    @model_validator(mode="after")
+    def _think_duration_only_on_prompt_sections(self) -> LLMScriptSection:
+        if self.think_duration_ms > 0 and self.section_type != "prompt":
+            raise ValueError(
+                "think_duration_ms may only be set on 'prompt' sections "
+                f"(got section_type={self.section_type!r})"
+            )
+        if self.section_type == "prompt" and 0 < self.think_duration_ms < MIN_THINK_DURATION_MS:
+            raise ValueError(
+                f"think_duration_ms must be 0 or >= {MIN_THINK_DURATION_MS}ms, "
+                f"got {self.think_duration_ms}"
+            )
+        return self
 
 
 class LLMGeneratedScript(BaseModel):
@@ -71,6 +127,8 @@ class ScriptSection(BaseModel):
     section_type: _SECTION_TYPES
     text: str
     cited_claim_ids: list[int]
+    think_duration_ms: int = 0
+    language_code: str | None = None
 
 
 class GeneratedScript(BaseModel):
@@ -91,6 +149,8 @@ class GeneratedScript(BaseModel):
                 section_type=s.section_type,
                 text=s.text,
                 cited_claim_ids=list(s.cited_claim_ids),
+                think_duration_ms=s.think_duration_ms,
+                language_code=s.language_code,
             )
             for i, s in enumerate(llm.sections)
         ]

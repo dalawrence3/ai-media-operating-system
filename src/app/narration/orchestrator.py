@@ -56,6 +56,7 @@ from app.narration.repository import (
     require_voice_profile,
 )
 from app.narration.storage import (
+    append_silence,
     cleanup_stale_temp_files,
     compute_audio_sha256,
     final_audio_path,
@@ -83,9 +84,18 @@ def narrate_plan(
     """Synthesise all narration segments for a production plan.
 
     Idempotent: if a completed/approved run with the same input_hash already
-    exists its result is returned without re-synthesis.  If a 'running' run
-    exists (from a crashed prior attempt), it is reused and synthesis
-    continues from where it left off.
+    exists, its result is returned without re-synthesis. A 'running' run
+    with the same input_hash is genuine concurrent work in flight — it is
+    never reused here; create_narration_run() raises DuplicateNarrationInputHashError
+    for it, exactly as for a completed/approved/rejected collision (Phase
+    7C.4, §2: "in-progress -> do not create duplicate concurrent work").
+
+    A 'failed' run with the same input_hash does NOT block this call (Phase
+    7C.4, §1-§4): narration_runs' uniqueness is a partial index that
+    excludes 'failed' rows, so a fresh retry — including one after a real
+    provider failure, on the same or a different provider — creates its own
+    new row. The failed row is never mutated or deleted; its error_message
+    and full history remain queryable via list_narration_runs().
 
     Args:
         speaking_rate_override: when set, overrides voice_profile.speaking_rate
@@ -156,8 +166,8 @@ def narrate_plan(
     conn.commit()
 
     segments = conn.execute(
-        "SELECT id, narration_text FROM production_segments "
-        "WHERE plan_id = ? ORDER BY segment_index",
+        "SELECT id, narration_text, think_duration_ms, language_code "
+        "FROM production_segments WHERE plan_id = ? ORDER BY segment_index",
         (plan_id,),
     ).fetchall()
 
@@ -177,6 +187,8 @@ def narrate_plan(
                 provider=provider,
                 pr=pr,
                 dry_run=dry_run,
+                think_duration_ms=seg[2] or 0,
+                language_code=seg[3],
             )
             if asset is not None:
                 result.assets.append(asset)
@@ -206,10 +218,17 @@ def _narrate_segment(
     provider: TTSProvider,
     pr: TTSPricingRegistry,
     dry_run: bool,
+    think_duration_ms: int = 0,
+    language_code: str | None = None,
 ):
     existing = get_active_segment_asset(conn, run_id, segment_id)
     if existing and existing.status == "synthesized":
         return existing
+
+    # Phase 7B.1, §1/§2 — a segment-level language_code override takes
+    # priority over the voice profile's own language; unset (the default,
+    # and every pre-existing segment), this is byte-identical to before.
+    effective_language = language_code or vp.language
 
     narration_text_hash = compute_narration_text_hash(narration_text)
     segment_input_hash = compute_narration_segment_input_hash(
@@ -224,7 +243,7 @@ def _narrate_segment(
         voice_id=vp.voice_id,
         voice_profile_id=vp.id,
         voice_profile_version=vp.version,
-        language=vp.language,
+        language=effective_language,
         speaking_rate=speaking_rate,
         style=vp.style,
         stability=vp.stability,
@@ -234,6 +253,7 @@ def _narrate_segment(
         sample_rate_hz=NARRATION_DEFAULT_SAMPLE_RATE_HZ,
         narration_schema_version=NARRATION_SCHEMA_VERSION,
         narration_algorithm_version=NARRATION_ALGORITHM_VERSION,
+        think_duration_ms=think_duration_ms,
     )
 
     asset_draft = NarrationSegmentAssetDraft(
@@ -245,7 +265,7 @@ def _narrate_segment(
         voice_id=vp.voice_id,
         voice_profile_id=vp.id,
         voice_profile_version=vp.version,
-        language=vp.language,
+        language=effective_language,
         speaking_rate=speaking_rate,
         style=vp.style,
         stability=vp.stability,
@@ -267,7 +287,7 @@ def _narrate_segment(
         provider=provider.provider_name,
         model=provider.default_model,
         voice_id=vp.voice_id,
-        language=vp.language,
+        language=effective_language,
         speaking_rate=speaking_rate,
         output_format=NARRATION_DEFAULT_OUTPUT_FORMAT,
         sample_rate_hz=NARRATION_DEFAULT_SAMPLE_RATE_HZ,
@@ -275,6 +295,7 @@ def _narrate_segment(
         stability=vp.stability,
         similarity_boost=vp.similarity_boost,
         settings_json=vp.settings_json,
+        language_override=language_code,
     )
 
     t0 = time.monotonic()
@@ -322,6 +343,14 @@ def _narrate_segment(
         raise SynthesisError(f"TTS failed for segment {segment_id}: {tts_error}")
 
     audio_data = tts_response.audio_bytes
+    # Phase 7B, §9 — bake the intentional think-pause into the segment's
+    # own audio duration (append_silence's docstring explains why this,
+    # not a new "silent segment" concept, is the safe integration point).
+    # Only the default WAV output format is supported; a segment
+    # configured for a compressed format simply gets no pause rather than
+    # a broken/unreadable audio file — fail-open, never fail-closed.
+    if think_duration_ms > 0 and NARRATION_DEFAULT_OUTPUT_FORMAT == "wav":
+        audio_data = append_silence(audio_data, duration_ms=think_duration_ms)
     audio_meta = validate_wav_bytes(audio_data)
     audio_sha = compute_audio_sha256(audio_data)
 

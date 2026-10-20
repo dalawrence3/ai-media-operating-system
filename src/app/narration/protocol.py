@@ -20,6 +20,14 @@ class TTSRequest:
     stability: float | None = None
     similarity_boost: float | None = None
     settings_json: str = "{}"
+    # Phase 7B.1, §1/§3 — set ONLY when a segment explicitly overrides the
+    # voice profile's own language (e.g. a language-quiz's target-language
+    # reveal). `language` above is always populated (asset metadata/hashing
+    # use it unconditionally); this field distinguishes "genuine override"
+    # from "fell back to the voice profile", so a provider forwards an
+    # explicit language_code to its API only when one was actually asked
+    # for — every call that never sets this stays byte-identical to before.
+    language_override: str | None = None
 
 
 @dataclass

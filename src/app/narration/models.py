@@ -261,6 +261,11 @@ class ApprovedNarrationSegment:
     provider: str
     model: str
     voice_id: str
+    # Phase 7B.1, §1/§2 — this segment's EFFECTIVE synthesis language
+    # (segment override if one was set, otherwise the run's voice-profile
+    # language) — always populated, never None, so caption/visual
+    # consumers can read it without a fallback branch of their own.
+    language: str
 
 
 @dataclass(frozen=True)

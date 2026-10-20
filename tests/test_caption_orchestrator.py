@@ -75,6 +75,44 @@ def _seed_full_approved_narration(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+class TestApprovedNarrationSegmentLanguage:
+    def test_segment_language_override_differs_from_run_language(
+        self, db: sqlite3.Connection
+    ) -> None:
+        """Phase 7B.1, §1/§2 — a quiz's 'reveal' segment can be
+        synthesized in a different language than the run's own voice
+        profile; the caption-handoff read must surface THAT segment's
+        effective language, not silently fall back to the run's."""
+        from app.narration.repository import get_approved_narration_run_full
+
+        _seed_full_approved_narration(db)
+        db.execute(
+            "INSERT INTO production_segments"
+            " (id, plan_id, segment_index, section_index, section_type,"
+            "  narration_text, estimated_duration_s, language_code, created_at)"
+            " VALUES (2, 1, 1, 1, 'reveal', 'La ventana.', 2, 'es', '2024-01-01')"
+        )
+        db.execute(
+            "INSERT INTO narration_segment_assets"
+            " (id, run_id, segment_id, narration_text_hash, provider, model, voice_id,"
+            "  voice_profile_id, voice_profile_version, language, speaking_rate,"
+            "  settings_json_hash, output_format, sample_rate_hz, input_hash, status,"
+            "  audio_path, audio_sha256, duration_seconds, created_at, updated_at)"
+            " VALUES (2, 1, 2, 'th2', 'mock', 'm1', 'v1', 1, 1, 'es', 1.0,"
+            "  'sh2', 'wav', 22050, 'ah2', 'synthesized',"
+            "  'narration/plan_1/run_1/segment_2.wav', 'def456', 2.0,"
+            "  '2024-01-01', '2024-01-01')"
+        )
+        db.commit()
+
+        handoff = get_approved_narration_run_full(db, 1)
+
+        assert handoff.language == "en-US"  # the run's own (voice-profile) language
+        by_segment = {s.segment_id: s for s in handoff.segments}
+        assert by_segment[1].language == "en-US"  # no override — matches the run
+        assert by_segment[2].language == "es"  # per-segment override
+
+
 class TestGenerateCaptions:
     def test_generates_completed_run(self, db: sqlite3.Connection, tmp_path: Path) -> None:
         _seed_full_approved_narration(db)

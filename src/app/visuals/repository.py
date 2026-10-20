@@ -5,14 +5,23 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from app.visuals.constants import MAX_REJECTED_CANDIDATES_PERSISTED
 from app.visuals.memory import clear_manifest_usage, record_asset_usage
-from app.visuals.models import VisualBeatRecord, VisualPlan
+from app.visuals.models import CandidateEvidence, VisualBeatRecord, VisualPlan
 
 
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return bool(
         conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone()
+    )
+
+
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return bool(
+        conn.execute(
+            f"SELECT 1 FROM pragma_table_info('{table}') WHERE name=?", (column,)
         ).fetchone()
     )
 
@@ -39,10 +48,63 @@ def save_visual_plan(
     by_index = {r.beat.beat_index: r for r in plan.resolutions}
     written = 0
 
+    evidence_table_exists = _table_exists(conn, "visual_candidate_evidence")
+    # Phase 2 (§9): additive, nullable verification columns. Guarded so a
+    # database still on schema < 55 (or a test fixture that only applies the
+    # v44 visual_intelligence DDL) keeps working exactly as before.
+    has_verification_columns = _has_column(conn, "visual_beats", "verification_status")
+
+    verification_cols_sql = (
+        ", verification_status, verification_reason, visual_relevance_confidence"
+        if has_verification_columns
+        else ""
+    )
+    verification_placeholders = ", ?, ?, ?" if has_verification_columns else ""
+
     for beat in plan.beats:
         resolution = by_index.get(beat.beat_index)
-        conn.execute(
-            """
+        params = [
+            plan.scene_manifest_id,
+            beat.scene_id,
+            beat.beat_index,
+            beat.scene_index,
+            beat.segment_id,
+            beat.start_ms,
+            beat.end_ms,
+            beat.duration_ms,
+            beat.narration_text,
+            json.dumps(beat.keywords),
+            json.dumps(beat.entities),
+            beat.visual_intent,
+            json.dumps(beat.media_type_preferences),
+            json.dumps(beat.search_queries),
+            json.dumps(beat.avoid_terms),
+            json.dumps(beat.claim_ids),
+            beat.preferred_motion,
+            beat.importance,
+            beat.confidence,
+            resolution.media_type if resolution else None,
+            resolution.provider if resolution else None,
+            resolution.asset_key if resolution else None,
+            resolution.local_path if resolution else None,
+            resolution.score if resolution else None,
+            resolution.motion if resolution else None,
+            resolution.license_status if resolution else None,
+            resolution.attribution_text if resolution else None,
+            resolution.fallback_reason if resolution else None,
+            plan.engine_version,
+            plan.planner_version,
+        ]
+        if has_verification_columns:
+            params.extend(
+                [
+                    resolution.verification_status if resolution else None,
+                    resolution.verification_reason if resolution else None,
+                    resolution.visual_relevance_confidence if resolution else None,
+                ]
+            )
+        cur = conn.execute(
+            f"""
             INSERT INTO visual_beats (
                 scene_manifest_id, scene_id, beat_index, scene_index, segment_id,
                 start_ms, end_ms, duration_ms, narration_text,
@@ -52,44 +114,46 @@ def save_visual_plan(
                 resolved_media_type, resolved_provider, resolved_asset_key,
                 resolved_local_path, resolved_score, resolved_motion,
                 license_status, attribution_text, fallback_reason,
-                engine_version, planner_version
+                engine_version, planner_version{verification_cols_sql}
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?{verification_placeholders})
             """,
-            (
-                plan.scene_manifest_id,
-                beat.scene_id,
-                beat.beat_index,
-                beat.scene_index,
-                beat.segment_id,
-                beat.start_ms,
-                beat.end_ms,
-                beat.duration_ms,
-                beat.narration_text,
-                json.dumps(beat.keywords),
-                json.dumps(beat.entities),
-                beat.visual_intent,
-                json.dumps(beat.media_type_preferences),
-                json.dumps(beat.search_queries),
-                json.dumps(beat.avoid_terms),
-                json.dumps(beat.claim_ids),
-                beat.preferred_motion,
-                beat.importance,
-                beat.confidence,
-                resolution.media_type if resolution else None,
-                resolution.provider if resolution else None,
-                resolution.asset_key if resolution else None,
-                resolution.local_path if resolution else None,
-                resolution.score if resolution else None,
-                resolution.motion if resolution else None,
-                resolution.license_status if resolution else None,
-                resolution.attribution_text if resolution else None,
-                resolution.fallback_reason if resolution else None,
-                plan.engine_version,
-                plan.planner_version,
-            ),
+            params,
         )
         written += 1
+        visual_beat_id = cur.lastrowid
+
+        if evidence_table_exists and resolution and resolution.candidate_evidence:
+            # Defensive re-bound at the persistence layer: the engine already
+            # bounds this list, but the repository must never persist more
+            # than intended regardless of what a caller hands it.
+            for entry in resolution.candidate_evidence[: 1 + MAX_REJECTED_CANDIDATES_PERSISTED]:
+                conn.execute(
+                    """
+                    INSERT INTO visual_candidate_evidence (
+                        visual_beat_id, provider, provider_asset_id, asset_key,
+                        title, tags_json, query, score, semantic_score,
+                        topic_score, evidence_score, decision, rejection_reason,
+                        provider_rank
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        visual_beat_id,
+                        entry.provider,
+                        entry.provider_asset_id,
+                        entry.asset_key,
+                        entry.title,
+                        json.dumps(entry.tags),
+                        entry.query,
+                        entry.score,
+                        entry.semantic_score,
+                        entry.topic_score,
+                        entry.evidence_score,
+                        entry.decision,
+                        entry.rejection_reason,
+                        entry.provider_rank,
+                    ),
+                )
 
         if resolution and resolution.asset_key and resolution.provider != "programmatic":
             provider, _, provider_asset_id = resolution.asset_key.partition(":")
@@ -121,6 +185,36 @@ def list_visual_beats(conn: sqlite3.Connection, scene_manifest_id: int) -> list[
         (scene_manifest_id,),
     ).fetchall()
     return [VisualBeatRecord.from_row(row) for row in rows]
+
+
+def list_candidate_evidence(
+    conn: sqlite3.Connection, visual_beat_id: int
+) -> list[CandidateEvidence]:
+    """Bounded candidate evidence persisted for one beat, for future audits."""
+    if not _table_exists(conn, "visual_candidate_evidence"):
+        return []
+    rows = conn.execute(
+        "SELECT * FROM visual_candidate_evidence WHERE visual_beat_id = ? ORDER BY id",
+        (visual_beat_id,),
+    ).fetchall()
+    return [
+        CandidateEvidence(
+            provider=row["provider"],
+            provider_asset_id=row["provider_asset_id"],
+            asset_key=row["asset_key"],
+            title=row["title"],
+            tags=json.loads(row["tags_json"]),
+            query=row["query"],
+            score=row["score"],
+            semantic_score=row["semantic_score"] or 0.0,
+            topic_score=row["topic_score"] or 0.0,
+            evidence_score=row["evidence_score"] or 0.0,
+            decision=row["decision"],
+            rejection_reason=row["rejection_reason"],
+            provider_rank=row["provider_rank"],
+        )
+        for row in rows
+    ]
 
 
 def attach_render_manifest(

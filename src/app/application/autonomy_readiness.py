@@ -224,15 +224,48 @@ def _eligible_opportunities_check(
         ):
             eligible_count += 1
 
+    checked_detail = (
+        f"{eligible_count} of {len(rows)} checked opportunities are eligible"
+        if rows
+        else "No active opportunities found for this channel"
+    )
+
+    if eligible_count > 0:
+        return _check(
+            key="eligible_opportunities_available",
+            label="Eligible opportunities available",
+            status=STATUS_READY,
+            detail=checked_detail,
+            category=CAT_DECISION,
+        )
+
+    # A candidate is only actually needed when the decision cycle would not
+    # itself short-circuit on QUEUE_ALREADY_SATISFIED — see decision_cycle.py
+    # step 2, which run_decision_cycle checks via this exact same
+    # compute_queue_occupancy() before ever looking at eligibility. Reporting
+    # BLOCKED here while the queue is satisfied would flag a non-blocker as
+    # an operational failure (Phase 18F).
+    from app.intelligence.autonomy.repository import compute_queue_occupancy
+
+    occupancy = compute_queue_occupancy(conn, cp_channel_id)
+    if occupancy.satisfied:
+        return _check(
+            key="eligible_opportunities_available",
+            label="Eligible opportunities available",
+            status=STATUS_READY,
+            detail=(
+                f"Queue target already satisfied "
+                f"({len(occupancy.filled_slots)}/{occupancy.queue_target} filled) — "
+                f"no additional candidate needed right now. {checked_detail}"
+            ),
+            category=CAT_DECISION,
+        )
+
     return _check(
         key="eligible_opportunities_available",
         label="Eligible opportunities available",
-        status=STATUS_READY if eligible_count > 0 else STATUS_BLOCKED,
-        detail=(
-            f"{eligible_count} of {len(rows)} checked opportunities are eligible"
-            if rows
-            else "No active opportunities found for this channel"
-        ),
+        status=STATUS_BLOCKED,
+        detail=checked_detail,
         category=CAT_DECISION,
     )
 
@@ -301,12 +334,12 @@ def _production_queue_check(conn: Any, cp_channel_id: str) -> AutonomyReadinessC
     without any prospect of progressing, which stalls the whole channel. That
     is degraded, not merely informational.
     """
-    from app.intelligence.autonomy.repository import get_autonomy_policy, list_active_slots
+    from app.intelligence.autonomy.repository import compute_queue_occupancy
 
-    policy = get_autonomy_policy(conn, cp_channel_id)
-    target = policy.queue_target if policy else 1
-    slots = list_active_slots(conn, cp_channel_id)
-    filled = [s for s in slots if s.state.value == "filled"]
+    occupancy = compute_queue_occupancy(conn, cp_channel_id)
+    target = occupancy.queue_target
+    slots = occupancy.active_slots
+    filled = occupancy.filled_slots
     stuck = [
         s
         for s in filled

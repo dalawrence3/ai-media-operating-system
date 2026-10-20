@@ -19,6 +19,7 @@ inline at each step.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from typing import Any
@@ -26,9 +27,9 @@ from typing import Any
 from app.intelligence.autonomy.models import AutonomyPolicy, DecisionCycleResult, DecisionOutcome
 from app.intelligence.autonomy.repository import (
     compute_next_publishable_slot,
+    compute_queue_occupancy,
     fill_slot,
     get_autonomy_policy,
-    list_active_slots,
     record_decision_outcome,
     reserve_slot,
 )
@@ -92,13 +93,13 @@ def run_decision_cycle(
         return result
 
     # ── 2. Cheap queue check — before any real work (section 17) ───────────
-    active_slots = list_active_slots(conn, cp_channel_id)
-    filled_slots = [s for s in active_slots if s.state == "filled"]
-    in_flight_slots = [s for s in active_slots if s.state == "reserved" and s.brief_id is None]
+    occupancy = compute_queue_occupancy(conn, cp_channel_id)
 
-    if len(filled_slots) >= policy.queue_target and not in_flight_slots:
+    if occupancy.satisfied:
         result.outcome = DecisionOutcome.QUEUE_ALREADY_SATISFIED
-        result.reason = f"{len(filled_slots)}/{policy.queue_target} slots already filled."
+        result.reason = (
+            f"{len(occupancy.filled_slots)}/{occupancy.queue_target} slots already filled."
+        )
         result.completed_at = _now_iso()
         record_decision_outcome(conn, cp_channel_id, result.outcome.value, at=result.completed_at)
         return result
@@ -151,7 +152,7 @@ def run_decision_cycle(
             workspace_id=workspace_id,
             intel_channel_id=intel_channel_id,
             policy=policy,
-            in_flight_slots=in_flight_slots,
+            in_flight_slots=occupancy.in_flight_slots,
             ai_provider=ai_provider,
             youtube_api_key=youtube_api_key,
             anthropic_api_key=anthropic_api_key,
@@ -242,6 +243,25 @@ def _run_locked_cycle(
     except Exception as exc:  # noqa: BLE001 — learning is never allowed to block the cycle
         result.errors.append(f"cross_publication_learning: {exc}")
 
+    # ── 5b. Topic-attribute performance learning (Phase 18H.C) — cheap,
+    # idempotent, no external calls. Reads only persisted topic_attribute_
+    # evaluations + analytics; makes zero provider calls. Observation only —
+    # never influences this or any other stage of the decision cycle.
+    try:
+        from app.learning.topic_attributes import run_topic_attribute_learning
+
+        ta_result = run_topic_attribute_learning(
+            conn,
+            channel_id=cp_channel_id,
+            workspace_id=workspace_id,
+        )
+        result.topic_attribute_learning_ran = True
+        result.topic_attribute_learning_observation_count = getattr(
+            ta_result, "observations_computed", 0
+        )
+    except Exception as exc:  # noqa: BLE001 — learning is never allowed to block the cycle
+        result.errors.append(f"topic_attribute_learning: {exc}")
+
     # ── 6. Market Intelligence freshness ────────────────────────────────────
     _ensure_market_freshness(
         conn,
@@ -276,9 +296,28 @@ def _run_locked_cycle(
         (intel_channel_id, _OPPORTUNITY_CONSIDER_LIMIT),
     ).fetchall()
     eligibility_policy = EligibilityPolicy.v1()
+    # Phase 7A, §1/§9: an opportunity that resulted from a deliberately-
+    # chosen exploration cell (exploration_cell_selections.opportunity_id)
+    # gets the narrow niche-fit carve-out — low niche-nativeness is the
+    # expected, intended shape of a deliberate exploration probe, not a
+    # defect. Every opportunity NOT linked to a cell is assessed exactly as
+    # before (exploration_cell defaults to False).
+    explored_opportunity_ids: set[int] = {
+        row["opportunity_id"]
+        for row in conn.execute(
+            "SELECT DISTINCT opportunity_id FROM exploration_cell_selections "
+            "WHERE channel_id = ? AND opportunity_id IS NOT NULL",
+            (intel_channel_id,),
+        ).fetchall()
+    }
     assessments = [
         assess_experiment_eligibility(
-            conn, r["id"], intel_channel_id, ai_provider=None, policy=eligibility_policy
+            conn,
+            r["id"],
+            intel_channel_id,
+            ai_provider=None,
+            policy=eligibility_policy,
+            exploration_cell=r["id"] in explored_opportunity_ids,
         )
         for r in opp_rows
     ]
@@ -294,6 +333,13 @@ def _run_locked_cycle(
         if result.eligible_count == 0:
             result.outcome = DecisionOutcome.NO_ELIGIBLE_CANDIDATE
             result.reason = "No opportunity currently resolves to an eligible classification."
+            _maybe_attempt_recovery(
+                conn,
+                cp_channel_id=cp_channel_id,
+                workspace_id=workspace_id,
+                intel_channel_id=intel_channel_id,
+                result=result,
+            )
         else:
             result.outcome = DecisionOutcome.NO_ELIGIBLE_CANDIDATE
             result.reason = "Planner found eligible candidates but selected none this cycle."
@@ -435,3 +481,77 @@ def _resolve_semantic_fit(
         result.semantic_fit_eligible = resolution.eligible
     except Exception as exc:  # noqa: BLE001 — semantic-fit failure degrades, never blocks
         result.errors.append(f"semantic_fit_resolution: {exc}")
+
+
+def _consecutive_no_eligible_streak(conn: sqlite3.Connection, cp_channel_id: str) -> int:
+    """Count consecutive most-recent `autonomy_decision_cycle` operations
+    whose recorded outcome was `no_eligible_candidate`, most recent first.
+    Reuses `cp_operation_executions` (already written by every decision
+    cycle at the top of this module) rather than adding a new counter
+    column — no schema change needed for this signal."""
+    rows = conn.execute(
+        """SELECT output_json FROM cp_operation_executions
+            WHERE operation_type = 'autonomy_decision_cycle'
+              AND channel_id = ?
+              AND status = 'completed'
+            ORDER BY created_at DESC
+            LIMIT 50""",
+        (cp_channel_id,),
+    ).fetchall()
+    streak = 0
+    for row in rows:
+        try:
+            output = json.loads(row["output_json"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            break
+        if output.get("outcome") != DecisionOutcome.NO_ELIGIBLE_CANDIDATE.value:
+            break
+        streak += 1
+    return streak
+
+
+def _maybe_attempt_recovery(
+    conn: sqlite3.Connection,
+    *,
+    cp_channel_id: str,
+    workspace_id: str,
+    intel_channel_id: int,
+    result: DecisionCycleResult,
+) -> None:
+    """Phase 7A, §9 — the bounded no-eligible-candidate recovery hook.
+
+    Off by default (`ACE_EXPLORATION_RECOVERY_ENABLED`), matching every
+    other AI-dependent feature added across this project: a missing flag
+    can never unexpectedly start spending. When enabled, delegates entirely
+    to `app.intelligence.exploration.recovery.attempt_recovery_discovery`,
+    which owns every actual bound (cooldown, single attempt, no eligibility
+    bypass beyond the narrow opt-in carve-out it documents). This function's
+    only job is deciding WHETHER to call it and recording what happened —
+    never retries selection within the same tick (see recovery.py's module
+    docstring for why that would require an eligibility bypass this project
+    is not willing to make).
+    """
+    import os
+
+    if os.environ.get("ACE_EXPLORATION_RECOVERY_ENABLED", "").strip().lower() not in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return
+
+    try:
+        from app.intelligence.exploration.recovery import attempt_recovery_discovery
+
+        streak = _consecutive_no_eligible_streak(conn, cp_channel_id)
+        recovery = attempt_recovery_discovery(
+            conn,
+            intel_channel_id,
+            workspace_id=workspace_id,
+            consecutive_no_eligible_streak=streak,
+        )
+        conn.commit()
+        result.recovery_attempted = recovery.recovery_attempted
+        result.recovery_reason = recovery.reason
+    except Exception as exc:  # noqa: BLE001 — recovery must never fail the decision cycle
+        result.errors.append(f"exploration_recovery: {exc}")

@@ -268,6 +268,9 @@ export const handlers = [
       updated_at: '2026-08-29T00:00:00',
     })
   }),
+  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/publishing-slots`, () =>
+    HttpResponse.json([]),
+  ),
 
   // Pipelines
   http.post(`${B}/workspaces/${WS_ID}/pipelines`, async ({ request }) => {
@@ -472,6 +475,9 @@ export const handlers = [
   ),
   http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/cross-publication`, () =>
     HttpResponse.json({ channel_id: CH_ID, baselines: [], feature_observations: [] }),
+  ),
+  http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/topic-attributes`, () =>
+    HttpResponse.json({ channel_id: CH_ID, raw: [], decision_useful: [] }),
   ),
   http.get(`${B}/workspaces/${WS_ID}/market/opportunities/:opportunityId/evidence`, () =>
     HttpResponse.json({ opportunity_id: 1, evidence_count: 0, snapshots: [] }),

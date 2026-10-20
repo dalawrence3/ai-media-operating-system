@@ -13,7 +13,10 @@ def _make_request(**kwargs) -> AIRequest:
 
 def test_ai_request_defaults() -> None:
     r = _make_request()
-    assert r.temperature == 0.3
+    # Phase 7C.1 — None means "no opinion, use the model's own default";
+    # some current models (claude-sonnet-5) reject an explicit temperature
+    # outright, so no-opinion must never silently become a hardcoded value.
+    assert r.temperature is None
     assert r.max_tokens == 1024
     assert r.response_schema is None
     assert r.prompt_name == ""

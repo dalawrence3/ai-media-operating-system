@@ -23,8 +23,10 @@ from app.visuals.constants import (
     NUMBER_STOCK_SCORE_FLOOR,
     STRUCTURAL_INTENTS,
     STRUCTURAL_STOCK_SCORE_FLOOR,
+    VISION_RESCUE_MIN_SCORE,
 )
 from app.visuals.models import ScoredCandidate, VisualBeat, VisualCandidate
+from app.visuals.semantics import GENERIC_AGENT_TERMS
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9'’-]*")
 
@@ -47,6 +49,24 @@ REASON_AVOID_TERM = "matches_avoid_concept"
 REASON_OVERUSED_IN_VIDEO = "overused_in_video"
 REASON_NO_RELEVANCE_EVIDENCE = "no_relevance_evidence"
 REASON_WEAK_EVIDENCE = "weak_relevance_evidence"
+# Phase 4 — textually inconclusive, not textually wrong. A candidate lands
+# here instead of REASON_WEAK_EVIDENCE when it has SOME real textual
+# connection to the beat (at least one matched term — REASON_NO_RELEVANCE_
+# EVIDENCE already covers zero matches) that simply isn't independently
+# corroborated, its aggregate score still clears a conservative rescue floor,
+# and it carries no avoid-term conflict. This is not an acceptance — see
+# `ScoredCandidate.verify_eligible` — it is a deferral to actual-content
+# verification, because the deterministic scorer is a cheap first-pass
+# filter over provider METADATA, not the final semantic authority on what an
+# asset actually shows.
+REASON_NEEDS_VERIFICATION = "needs_verification"
+
+# Tri-state candidate disposition (Phase 4, §2). `ScoredCandidate.disposition`
+# is the definitive three-way read of a scored candidate; `accepted` and
+# `verify_eligible` are the two booleans engine.py actually branches on.
+DISPOSITION_ACCEPT = "accept"
+DISPOSITION_VERIFY = "verify"
+DISPOSITION_REJECT = "reject"
 
 
 @dataclass
@@ -162,6 +182,12 @@ def _term_specificity(term: str, high_specificity: set[str]) -> float:
     """
     if term in high_specificity:
         return 1.0
+    if term in GENERIC_AGENT_TERMS:
+        # A closed class of generic human-agent/reporting nouns. "scientists"
+        # is 11 characters and would otherwise land in the 0.9 tier purely on
+        # length, letting it single-handedly clear MIN_EVIDENCE_WEIGHT and
+        # pass generic "scientist in a lab" stock as relevant to any beat.
+        return 0.3
     length = len(term)
     if length >= 9:
         return 0.9
@@ -349,6 +375,20 @@ def score_candidate(
     evidence, matched = _evidence_weight(beat, candidate, ctx)
     factors["evidence"] = round(evidence, 4)
 
+    high_specificity = _specific_tokens(beat.entities) | _specific_tokens(ctx.topic_entities)
+    # A lone matched term is real evidence only if it is independently backed:
+    # either a second matched term corroborates it, it is a named entity/
+    # acronym (unambiguous by construction), or the candidate coheres with the
+    # *whole video's* subject vocabulary rather than merely this one beat's
+    # incidental wording. That last clause is what separates a candidate
+    # genuinely tagged for this video's subject ("cosmology" candidate tagged
+    # cosmology, universe, space — on a cosmology video) from one that shares
+    # a single polysemous word with one beat and nothing else about the video
+    # ("elliptical" bicycle-trainer stock matching an "elliptical galaxy"
+    # beat, sharing no other vocabulary with a galaxy-formation video).
+    corroborated = len(matched) >= 2 or bool(matched & high_specificity) or factors["topic"] >= 0.5
+    factors["corroborated"] = 1.0 if corroborated else 0.0
+
     score = round(max(0.0, min(1.0, score)), 4)
 
     # ── Hard rejections ─────────────────────────────────────────────────────
@@ -366,9 +406,35 @@ def score_candidate(
         # beat OR with the video. Technical quality cannot make an unrelated
         # clip relevant, so it must not be able to carry one over the floor.
         reason = REASON_NO_RELEVANCE_EVIDENCE
-    elif evidence < ctx.min_evidence:
-        # A single ordinary word in common is not evidence of aboutness.
-        reason = REASON_WEAK_EVIDENCE
+    elif evidence < ctx.min_evidence or not corroborated:
+        # A single ordinary word in common is not evidence of aboutness — not
+        # even a *long* ordinary word. Length is a crude specificity proxy
+        # (_term_specificity), and a lone 9+ letter word (e.g. "elliptical",
+        # matching both "elliptical galaxy" and a stock library's own
+        # "elliptical bicycle/trainer" tagging) reaches the evidence floor by
+        # itself on length alone, without actually being unambiguous. Real
+        # aboutness needs either a second independent matched term, or a
+        # named-entity/acronym match (_specific_tokens), neither of which a
+        # single polysemous common word can fake.
+        #
+        # Phase 4: this is exactly where the deterministic scorer runs out of
+        # signal, not necessarily where the candidate runs out of relevance —
+        # provider metadata is often sparse or metaphor-mismatched even for a
+        # genuinely on-topic asset. A candidate with SOME real textual
+        # connection (matched is non-empty — REASON_NO_RELEVANCE_EVIDENCE
+        # already caught the zero-overlap case above) and no avoid-term
+        # conflict, whose aggregate score still clears a conservative rescue
+        # floor, is deferred to actual-content verification instead of being
+        # discarded outright. The elliptical-bicycle case still cannot reach
+        # this path unearned: matching "elliptical" alone is a SINGLE term,
+        # so it still needs corroboration or vision to become anything more
+        # than "needs verification" — see REASON_NEEDS_VERIFICATION's own
+        # docstring and the regression tests that pin this down.
+        avoid_conflict = avoid_hits and own_hits == 0 and factors["semantic"] < 0.2
+        if score >= VISION_RESCUE_MIN_SCORE and not avoid_conflict:
+            reason = REASON_NEEDS_VERIFICATION
+        else:
+            reason = REASON_WEAK_EVIDENCE
     elif avoid_hits and own_hits == 0 and factors["semantic"] < 0.2:
         reason = REASON_AVOID_TERM
     elif score < ctx.min_score:

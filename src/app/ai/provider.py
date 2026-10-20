@@ -15,7 +15,17 @@ class AIRequest:
     system: str
     user: str
     model: str
-    temperature: float = 0.3
+    # Phase 7C.1 — None (the default) means "no opinion, use the model's
+    # own default sampling behavior". Newer Claude models (confirmed:
+    # claude-sonnet-5) reject an explicit temperature outright with a 400
+    # invalid_request_error ("`temperature` is deprecated for this
+    # model."), which is exactly what broke cold_start.py's discovery
+    # call — it never had a reason to want a specific value, it just
+    # inherited this dataclass's old hardcoded 0.3 default. Callers that
+    # genuinely need a specific value (content/generator.py,
+    # research/extractor.py) already always pass one explicitly and are
+    # unaffected by this default changing.
+    temperature: float | None = None
     max_tokens: int = 1024
     response_schema: type[BaseModel] | None = None
     prompt_name: str = ""

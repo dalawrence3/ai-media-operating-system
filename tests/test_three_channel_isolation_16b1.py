@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.database import open_db
+from app.core.database import SCHEMA_VERSION, open_db
 from app.intelligence.channel_bridge import (
     bootstrap_intelligence_channel,
     get_intelligence_channel_id,
@@ -682,7 +682,7 @@ def test_K_adding_third_channel_requires_no_schema_change(db):
     version = db.execute(
         "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1"
     ).fetchone()[0]
-    assert version == 51
+    assert version == SCHEMA_VERSION
 
 
 # ---------------------------------------------------------------------------

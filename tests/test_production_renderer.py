@@ -39,12 +39,16 @@ def _make_section(
     section_type: str = "body",
     text: str = "Plain narration text.",
     cited_claim_ids: list[int] | None = None,
+    think_duration_ms: int = 0,
+    language_code: str | None = None,
 ) -> ScriptSection:
     return ScriptSection(
         section_index=section_index,
         section_type=section_type,
         text=text,
         cited_claim_ids=cited_claim_ids or [],
+        think_duration_ms=think_duration_ms,
+        language_code=language_code,
     )
 
 
@@ -82,6 +86,85 @@ def _make_approved_script(
         evidence_hash=evidence_hash,
         approved_at="2024-01-01T00:00:00",
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 7B, §16 — think_duration_ms (quiz pause) propagates onto segments
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_section_think_duration_propagates_to_its_segment() -> None:
+    sections = [
+        _make_section(0, "hook", "Test your Spanish!"),
+        _make_section(1, "prompt", "How do you say 'window'?", think_duration_ms=3000),
+        _make_section(2, "reveal", "La ventana."),
+        _make_section(3, "cta", "Follow for more!"),
+    ]
+    approved = _make_approved_script(sections=sections)
+    plan = build_production_plan(approved)
+
+    by_section_type = {seg.section_type: seg for seg in plan.segments}
+    assert by_section_type["prompt"].think_duration_ms == 3000
+    assert by_section_type["hook"].think_duration_ms == 0
+    assert by_section_type["reveal"].think_duration_ms == 0
+    assert by_section_type["cta"].think_duration_ms == 0
+
+
+def test_think_duration_only_lands_on_the_last_chunk_when_a_section_is_split() -> None:
+    """§7/§9 — a pause belongs after the section's final spoken chunk, not
+    a chunk with more narration still to come."""
+    long_text = " ".join(f"This is sentence number {i}." for i in range(30))
+    sections = [
+        _make_section(0, "hook", "Hook."),
+        _make_section(1, "prompt", long_text, think_duration_ms=3000),
+        _make_section(2, "reveal", "Answer."),
+    ]
+    approved = _make_approved_script(sections=sections)
+    plan = build_production_plan(approved, max_segment_duration_s=5)
+
+    prompt_segments = [seg for seg in plan.segments if seg.section_type == "prompt"]
+    assert len(prompt_segments) > 1, "expected the long prompt section to split into chunks"
+    assert all(seg.think_duration_ms == 0 for seg in prompt_segments[:-1])
+    assert prompt_segments[-1].think_duration_ms == 3000
+
+
+def test_language_code_propagates_to_its_segment() -> None:
+    """Phase 7B.1, §1/§2 — a quiz round's language pair (source on prompt,
+    target on reveal) must survive into the production plan."""
+    sections = [
+        _make_section(0, "hook", "Test your Spanish!"),
+        _make_section(
+            1, "prompt", "How do you say 'window'?", think_duration_ms=3000, language_code="en"
+        ),
+        _make_section(2, "reveal", "La ventana.", language_code="es"),
+        _make_section(3, "cta", "Follow for more!"),
+    ]
+    approved = _make_approved_script(sections=sections)
+    plan = build_production_plan(approved)
+
+    by_section_type = {seg.section_type: seg for seg in plan.segments}
+    assert by_section_type["prompt"].language_code == "en"
+    assert by_section_type["reveal"].language_code == "es"
+    assert by_section_type["hook"].language_code is None
+    assert by_section_type["cta"].language_code is None
+
+
+def test_language_code_propagates_to_every_chunk_when_a_section_is_split() -> None:
+    """Unlike think_duration_ms (time-bound, last chunk only), a language
+    override is a content/voice property of the whole section and must
+    apply to every chunk if the section is split."""
+    long_text = " ".join(f"This is sentence number {i}." for i in range(30))
+    sections = [
+        _make_section(0, "hook", "Hook."),
+        _make_section(1, "explanation", long_text, language_code="fr"),
+        _make_section(2, "takeaway", "Answer."),
+    ]
+    approved = _make_approved_script(sections=sections)
+    plan = build_production_plan(approved, max_segment_duration_s=5)
+
+    explanation_segments = [seg for seg in plan.segments if seg.section_type == "explanation"]
+    assert len(explanation_segments) > 1, "expected the long section to split into chunks"
+    assert all(seg.language_code == "fr" for seg in explanation_segments)
 
 
 # ---------------------------------------------------------------------------

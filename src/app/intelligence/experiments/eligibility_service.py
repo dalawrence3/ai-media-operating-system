@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.intelligence.experiments.eligibility import (
     EligibilityFinding,
@@ -29,6 +29,7 @@ from app.intelligence.experiments.eligibility import (
     MarketFreshnessClass,
 )
 from app.intelligence.market.interpretation_models import SIGNAL_MATURITY_ORDERED
+from app.learning.topic_attributes import TopicAttributeValues
 
 
 def _now_utc() -> str:
@@ -572,20 +573,71 @@ def save_semantic_fit_result(
     provider_name: str,
     model: str,
     specificity: TopicSpecificityResult | None = None,
+    attributes: TopicAttributeValues | None = None,
 ) -> None:
     """Persist a successful semantic-fit evaluation. No-ops if the cache
     table doesn't exist (older DB / minimal test fixture) rather than
     raising — caching is an optimization, never a hard dependency.
 
-    The Phase 18E specificity fields are written on the same row because they
-    came from the same call; a row cached before those columns existed simply
-    leaves them NULL, which reads as "not evaluated".
+    The Phase 18E specificity fields and the Phase 18H.C descriptive
+    attribute fields are written on the SAME row because they all come from
+    the same structured call; a row cached before a given set of columns
+    existed simply leaves them NULL, which reads as "not evaluated" rather
+    than a failing/zero value.
     """
     if not _table_exists(conn, _SEMANTIC_FIT_CACHE_TABLE):
         return
     spec = specificity or TopicSpecificityResult()
+    attrs = attributes or TopicAttributeValues()
     columns = {r["name"] for r in conn.execute(f"PRAGMA table_info('{_SEMANTIC_FIT_CACHE_TABLE}')")}
     has_spec_columns = "topic_specificity" in columns
+    has_attribute_columns = "practical_utility" in columns
+
+    if has_spec_columns and has_attribute_columns:
+        conn.execute(
+            f"""
+            INSERT INTO {_SEMANTIC_FIT_CACHE_TABLE}
+                (opportunity_id, channel_id, channel_profile_version_id, prompt_version,
+                 input_hash, score, fit_label, rationale, provider_name, model, evaluated_at,
+                 topic_specificity, specificity_label, visual_groundability,
+                 concrete_subjects_json, viewer_promise, refined_topic,
+                 practical_utility, immediate_payoff, curiosity, personal_relevance,
+                 surprise, broad_accessibility, niche_technicality, attribute_rationale,
+                 domain_family)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (opportunity_id, input_hash) DO NOTHING
+            """,
+            (
+                opportunity_id,
+                channel_id,
+                channel_profile_version_id,
+                prompt_version,
+                input_hash,
+                score,
+                fit_label,
+                rationale,
+                provider_name,
+                model,
+                _now_utc(),
+                spec.topic_specificity,
+                spec.specificity_label,
+                spec.visual_groundability,
+                json.dumps(spec.concrete_subjects) if spec.evaluated else None,
+                spec.viewer_promise,
+                spec.refined_topic,
+                attrs.practical_utility,
+                attrs.immediate_payoff,
+                attrs.curiosity,
+                attrs.personal_relevance,
+                attrs.surprise,
+                attrs.broad_accessibility,
+                attrs.niche_technicality,
+                attrs.attribute_rationale,
+                attrs.domain_family,
+            ),
+        )
+        conn.commit()
+        return
 
     if has_spec_columns:
         conn.execute(
@@ -666,7 +718,52 @@ class _SemanticFitOutput(BaseModel):
     viewer_promise: str | None = None
     refined_topic: str | None = None
 
+    # Phase 18H.C — descriptive topic attributes (prompt v3+). Purely
+    # descriptive: never read by the eligibility gate, fit_label, or either
+    # of the two 18E specificity gates. Optional so a v1/v2 response, a
+    # replayed call, or a fake provider still validates.
+    practical_utility: float | None = None
+    immediate_payoff: float | None = None
+    curiosity: float | None = None
+    personal_relevance: float | None = None
+    surprise: float | None = None
+    broad_accessibility: float | None = None
+    niche_technicality: float | None = None
+    attribute_rationale: str | None = None
+
+    # Closure-audit addition: a topic-level SEMANTIC domain family (distinct
+    # from, and never conflated with, Phase 18H.B.1's market-region
+    # domain_family — see topic_attributes.py's module docstring). Optional
+    # for the same v1/v2-compat reason as the other 18H.C fields.
+    domain_family: str | None = None
+
     model_config = {"extra": "forbid"}
+
+    @field_validator(
+        "practical_utility",
+        "immediate_payoff",
+        "curiosity",
+        "personal_relevance",
+        "surprise",
+        "broad_accessibility",
+        "niche_technicality",
+        mode="before",
+    )
+    @classmethod
+    def _tolerate_malformed_attribute(cls, v: object) -> object:
+        """A malformed descriptive attribute (Phase 18H.C) must never fail
+        the whole semantic-fit response — these are purely descriptive, and
+        the eligibility gate (score/fit_label/specificity) must remain
+        available even when the model emits a non-numeric attribute value.
+        Degrades to None ('not evaluated'), never crashes validation and
+        never becomes 0.0 ('lowest score', a different meaning entirely).
+        """
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
 
 
 @dataclass
@@ -701,15 +798,21 @@ def assess_semantic_fit(
     excluded_topics: list[str],
     ai_provider: Any,
     policy: EligibilityPolicy,
-) -> tuple[float | None, str | None, list[EligibilityFinding], TopicSpecificityResult]:
-    """LLM-based semantic audience fit AND topic-specificity assessment.
+) -> tuple[
+    float | None, str | None, list[EligibilityFinding], TopicSpecificityResult, TopicAttributeValues
+]:
+    """LLM-based semantic audience fit, topic-specificity, AND descriptive
+    topic-attribute assessment.
 
-    Returns (score_or_None, fit_label_or_None, findings, specificity).
+    Returns (score_or_None, fit_label_or_None, findings, specificity, attributes).
 
     Phase 18E folded topic specificity into this call rather than adding a
     second one: it is a judgement about the same opportunity, from the same
-    context, and the prompt already had the channel niche it needs. Two calls
-    would have doubled the cost to ask one more question.
+    context, and the prompt already had the channel niche it needs. Phase
+    18H.C folds the seven descriptive topic attributes in the same way, for
+    the same reason — zero incremental provider calls. The attributes are
+    purely descriptive and never influence score, fit_label, or either
+    specificity gate.
 
     Uses FakeProvider in tests.  This function never constructs a provider —
     the caller passes one in.  If ai_provider is None, skips with a warn finding.
@@ -727,7 +830,7 @@ def assess_semantic_fit(
                 message="No AI provider supplied; semantic audience fit was not evaluated.",
             )
         )
-        return None, None, findings, TopicSpecificityResult()
+        return None, None, findings, TopicSpecificityResult(), TopicAttributeValues()
 
     registry = PromptRegistry()
     try:
@@ -740,7 +843,7 @@ def assess_semantic_fit(
                 message=f"Semantic fit prompt not found: {exc}",
             )
         )
-        return None, None, findings, TopicSpecificityResult()
+        return None, None, findings, TopicSpecificityResult(), TopicAttributeValues()
 
     excluded_str = ", ".join(excluded_topics) if excluded_topics else "(none)"
     user_text = prompt.format_user(
@@ -754,6 +857,7 @@ def assess_semantic_fit(
 
     rationale: str = ""
     specificity = TopicSpecificityResult()
+    attributes = TopicAttributeValues()
     try:
         request = AIRequest(
             system=prompt.system,
@@ -768,12 +872,15 @@ def assess_semantic_fit(
             fit_label = output.fit_label
             rationale = output.rationale
             specificity = _specificity_from_output(output)
+            attributes = _attributes_from_output(output)
         else:
             raw: dict[str, Any] = json.loads(response.raw_text)
             score = max(0.0, min(1.0, float(raw.get("score", 0.0))))
             fit_label = str(raw.get("fit_label", ""))
             rationale = str(raw.get("rationale", ""))
-            specificity = _specificity_from_output(_SemanticFitOutput(**raw))
+            parsed_raw = _SemanticFitOutput(**raw)
+            specificity = _specificity_from_output(parsed_raw)
+            attributes = _attributes_from_output(parsed_raw)
     except Exception as exc:
         findings.append(
             EligibilityFinding(
@@ -782,7 +889,7 @@ def assess_semantic_fit(
                 message=f"Semantic fit LLM call failed: {exc}",
             )
         )
-        return None, None, findings, TopicSpecificityResult()
+        return None, None, findings, TopicSpecificityResult(), TopicAttributeValues()
 
     score = max(0.0, min(1.0, score))
 
@@ -810,7 +917,7 @@ def assess_semantic_fit(
 
     findings.extend(evaluate_topic_specificity(specificity, policy=policy))
 
-    return score, fit_label, findings, specificity
+    return score, fit_label, findings, specificity, attributes
 
 
 def _specificity_from_cache_row(row: Any) -> TopicSpecificityResult:
@@ -902,6 +1009,43 @@ def _specificity_from_output(output: _SemanticFitOutput) -> TopicSpecificityResu
         concrete_subjects=list(output.concrete_subjects or []),
         viewer_promise=output.viewer_promise,
         refined_topic=output.refined_topic,
+    )
+
+
+def _attributes_from_output(output: _SemanticFitOutput) -> TopicAttributeValues:
+    """Read the Phase 18H.C descriptive attribute fields out of a structured
+    response. A response that omits them (prompt v1/v2, or a fake provider
+    using an older fixture) yields evaluated=False, not zeros."""
+    if all(
+        getattr(output, name) is None
+        for name in (
+            "practical_utility",
+            "immediate_payoff",
+            "curiosity",
+            "personal_relevance",
+            "surprise",
+            "broad_accessibility",
+            "niche_technicality",
+        )
+    ):
+        return TopicAttributeValues()
+
+    def _clamp(v: float | None) -> float | None:
+        return None if v is None else max(0.0, min(1.0, float(v)))
+
+    domain_family = (output.domain_family or "").strip() or None
+
+    return TopicAttributeValues(
+        evaluated=True,
+        practical_utility=_clamp(output.practical_utility),
+        immediate_payoff=_clamp(output.immediate_payoff),
+        curiosity=_clamp(output.curiosity),
+        personal_relevance=_clamp(output.personal_relevance),
+        surprise=_clamp(output.surprise),
+        broad_accessibility=_clamp(output.broad_accessibility),
+        niche_technicality=_clamp(output.niche_technicality),
+        attribute_rationale=output.attribute_rationale,
+        domain_family=domain_family,
     )
 
 
@@ -1167,6 +1311,22 @@ def _latest_semantic_fit_row(conn: sqlite3.Connection, opportunity_id: int) -> A
     ).fetchone()
 
 
+def get_concrete_subjects_for_opportunity(
+    conn: sqlite3.Connection, opportunity_id: int
+) -> list[str]:
+    """Concrete visual subjects from the most recent semantic-fit evaluation
+    for this opportunity, or [] if none was ever evaluated.
+
+    Read-only reuse of the same cache _latest_semantic_fit_row/
+    select_production_topic already use — no new evaluation, no provider
+    call.
+    """
+    row = _latest_semantic_fit_row(conn, opportunity_id)
+    if row is None:
+        return []
+    return list(_specificity_from_cache_row(row).concrete_subjects)
+
+
 # ---------------------------------------------------------------------------
 # Classification roll-up
 # ---------------------------------------------------------------------------
@@ -1225,8 +1385,26 @@ def assess_experiment_eligibility(
     channel_id: int,
     ai_provider: Any = None,
     policy: EligibilityPolicy | None = None,
+    *,
+    exploration_cell: bool = False,
 ) -> ExperimentEligibilityAssessment:
     """Deterministic eligibility gate for autonomous experiment planning.
+
+    ``exploration_cell`` (Phase 7A, §1/§9): default False, so every existing
+    caller sees byte-identical behavior. The audit that motivated this
+    parameter found `semantic_fit_below_threshold` (the niche-nativeness
+    check) was the single highest-leverage reason genuinely diverse
+    opportunities never survive eligibility — it hard-blocks to INELIGIBLE
+    unconditionally, undoing Market Intelligence's own domain-diversity
+    engineering upstream. When True, an opportunity that was deliberately
+    discovered to test an under-explored exploration cell (never opportunities
+    discovered through the ordinary path) gets that ONE finding downgraded
+    from "block" to "warn" before roll-up — low niche-fit is the expected,
+    intended shape of a deliberate exploration probe, not a defect. Every
+    OTHER block condition (market freshness, topic specificity/groundability,
+    active conflict, analytics readiness, missing opportunity) is completely
+    unaffected — this narrows one specific gate, it does not weaken the gate
+    in general or bypass eligibility altogether.
 
     This function is read-only — it never mutates the DB, never calls YouTube,
     and never triggers content generation.  The ai_provider is used only for
@@ -1450,15 +1628,17 @@ def assess_experiment_eligibility(
                 semantic_fit_disposition = "replay_prior_real_call"
             else:
                 semantic_fit_disposition = "provider_called"
-            fit_score, fit_label, fit_findings, fit_specificity = assess_semantic_fit(
-                opportunity_normalized_topic=opportunity.normalized_topic,
-                opportunity_title=opportunity.title or "",
-                opportunity_topic_summary=opportunity.topic_summary or "",
-                primary_niche=primary_niche,
-                audience_description=audience_description,
-                excluded_topics=excluded_topics,
-                ai_provider=ai_provider,
-                policy=policy,
+            fit_score, fit_label, fit_findings, fit_specificity, fit_attributes = (
+                assess_semantic_fit(
+                    opportunity_normalized_topic=opportunity.normalized_topic,
+                    opportunity_title=opportunity.title or "",
+                    opportunity_topic_summary=opportunity.topic_summary or "",
+                    primary_niche=primary_niche,
+                    audience_description=audience_description,
+                    excluded_topics=excluded_topics,
+                    ai_provider=ai_provider,
+                    policy=policy,
+                )
             )
             all_findings.extend(fit_findings)
             # Only successful, real (non-fake/replay) calls are cached — a
@@ -1489,6 +1669,7 @@ def assess_experiment_eligibility(
                     provider_name=_provider_name or "unknown",
                     model=_SEMANTIC_FIT_MODEL,
                     specificity=fit_specificity,
+                    attributes=fit_attributes,
                 )
         else:
             # Ambiguous fit + no provider = UNRESOLVED.
@@ -1516,6 +1697,25 @@ def assess_experiment_eligibility(
     # ── 10. Phase 12C maturity summary ────────────────────────────────────
     pub_count, p12c_findings = assess_phase12c_maturity(conn, opportunity_id)
     all_findings.extend(p12c_findings)
+
+    # ── 10b. Exploration-cell niche-fit carve-out (Phase 7A, §1/§9) ─────────
+    # Opt-in only (see docstring). Downgrades ONLY the niche-fit block, and
+    # only when it is present — every other block finding is untouched.
+    if exploration_cell:
+        all_findings = [
+            (
+                EligibilityFinding(
+                    code=f.code,
+                    severity="warn",
+                    message=f"{f.message} (deliberate exploration cell — niche-fit "
+                    "is not enforced as a hard block here).",
+                    detail=f.detail,
+                )
+                if f.code == "semantic_fit_below_threshold" and f.severity == "block"
+                else f
+            )
+            for f in all_findings
+        ]
 
     # ── 11. Roll-up classification ─────────────────────────────────────────
     classification = _roll_up_classification(

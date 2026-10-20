@@ -386,7 +386,69 @@ class ScriptGenerationExecutor:
             if audience:
                 script_kwargs["audience"] = audience
 
+            # Phase 7B, §15/§16/§17 — format-aware prompt selection. A
+            # topic never linked to an exploration cell (the vast majority
+            # today) resolves to None here and falls straight through to
+            # the exact pre-Phase-7B explainer prompt/behavior — this
+            # entire block is a no-op for every existing caller.
+            exploration_format = "curiosity_explainer"
+            try:
+                from app.intelligence.exploration.format_contract import resolve_format_spec
+                from app.intelligence.exploration.repository import resolve_cell_for_topic
+
+                cell = resolve_cell_for_topic(conn, req.topic_id)
+                if cell is not None:
+                    spec = resolve_format_spec(cell.format)
+                    # Phase 7C, §1 — persist what was ACTUALLY generated
+                    # (spec.name), never the raw cell.format. resolve_format_spec
+                    # silently falls back to the default explainer for any
+                    # format with no production contract; if exploration_format
+                    # instead recorded cell.format verbatim, a cell selected for
+                    # e.g. "myth_bust" (a valid exploration concept with no
+                    # production support yet) would leave a script actually
+                    # generated via the explainer prompt mislabeled as
+                    # "myth_bust" in scripts.exploration_format — a misleading
+                    # publication lineage. spec.name is always one of
+                    # known_format_specs(), so this can never lie.
+                    exploration_format = spec.name
+                    script_kwargs["prompt_name"] = spec.prompt_name
+                    script_kwargs["prompt_version"] = spec.prompt_version
+                    script_kwargs["extra_context"] = {
+                        "domain": cell.domain,
+                        "audience_value": cell.audience_value,
+                    }
+            except Exception:
+                # Format resolution must never block script generation —
+                # fall back to the default explainer prompt exactly as if
+                # no exploration cell existed.
+                exploration_format = "curiosity_explainer"
+
             result = generate_script(conn, provider, topic, evidence, **script_kwargs)
+
+            # Phase 7B, §11/§19 — format-specific structural validation,
+            # additive to (never replacing) content.validator's citation/
+            # duration checks that already ran inside generate_script().
+            # A no-op for the default explainer (validate_format_script
+            # only ever adds constraints for formats it has a validator
+            # for — see its own docstring).
+            from app.content.schemas import GeneratedScript as _GeneratedScript
+            from app.intelligence.exploration.format_validation import validate_format_script
+
+            body_row = conn.execute(
+                "SELECT body_json FROM scripts WHERE id = ?", (result.script_id,)
+            ).fetchone()
+            generated_script = _GeneratedScript.model_validate_json(body_row[0])
+            format_check = validate_format_script(generated_script, exploration_format)
+            if not format_check.valid:
+                raise ValueError(
+                    f"Generated {exploration_format} script failed format validation: "
+                    f"{'; '.join(format_check.violations)}"
+                )
+
+            conn.execute(
+                "UPDATE scripts SET exploration_format = ? WHERE id = ?",
+                (exploration_format, result.script_id),
+            )
             conn.commit()
 
         except Exception as exc:
@@ -895,17 +957,54 @@ class RenderingExecutor:
         import logging as _logging
 
         from app.captions.repository import get_caption_cues
+        from app.core.repository import get_topic
+        from app.intelligence.experiments.eligibility_service import (
+            get_concrete_subjects_for_opportunity,
+        )
         from app.media.models import RenderVisualBeat, ResolvedAsset
         from app.visuals.beats import BeatPlannerInput, CueWindow, plan_beats
         from app.visuals.composition import composition_from_plan
         from app.visuals.engine import VisualEngine, VisualEngineConfig
         from app.visuals.policy import policy_from_config
         from app.visuals.qa import audit_visual_plan
-        from app.visuals.quality import assess_composition
+        from app.visuals.quality import assess_composition, quality_profile_for
         from app.visuals.repository import save_visual_plan
+        from app.visuals.verification import (
+            DEFAULT_VERIFICATION_MODEL,
+            ENV_VERIFICATION_MODEL,
+            get_content_verifier,
+        )
+        from app.visuals.verification_repository import verify_plan_with_cache
 
         log = _logging.getLogger(__name__)
         policy = policy_from_config(req.effective_config)
+
+        # Phase 7C.1, Part C — format-aware quality profile. A topic never
+        # linked to an exploration cell (or one whose script predates the
+        # exploration_format column) reads NULL/'curiosity_explainer' here
+        # and resolves to DEFAULT_THRESHOLDS via quality_profile_for's own
+        # fallback — byte-identical to pre-Phase-7C.1 behavior.
+        exploration_format_row = conn.execute(
+            "SELECT exploration_format FROM scripts WHERE id = ?", (approved.script_id,)
+        ).fetchone()
+        exploration_format = exploration_format_row[0] if exploration_format_row else None
+        quality_thresholds = quality_profile_for(exploration_format)
+
+        # Concrete visual subjects from the topic-level semantic-fit
+        # evaluation (Phase 18E.1), when one exists for this opportunity.
+        # Any failure (topic missing, no promoted opportunity, no cached
+        # evaluation) yields [] — identical to pre-18G narration-only
+        # behaviour, and no new provider call is made.
+        concrete_subjects: list[str] = []
+        try:
+            topic = get_topic(conn, approved.topic_id) if approved.topic_id else None
+            if topic is not None and topic.promoted_opportunity_id is not None:
+                concrete_subjects = get_concrete_subjects_for_opportunity(
+                    conn, topic.promoted_opportunity_id
+                )
+        except Exception:
+            log.debug("could not resolve concrete_subjects for topic %s", approved.topic_id)
+            concrete_subjects = []
 
         # Caption cues give clause-shaped, already-timed beat boundaries.
         cues_by_segment: dict[int, list[CueWindow]] = {}
@@ -935,7 +1034,43 @@ class RenderingExecutor:
             target_beat_ms=policy.target_beat_ms,
             min_beat_ms=policy.min_beat_ms,
             max_beat_ms=policy.max_beat_ms,
+            concrete_subjects=concrete_subjects,
         )
+
+        # Narration -> literal visual meaning translation (Phase 5, §5-9).
+        # Off by default; any failure (disabled, no credentials, malformed
+        # response) leaves `beats` exactly as `plan_beats()` produced them —
+        # identical to pre-Phase-5 behaviour, no new provider call unless
+        # explicitly enabled.
+        from app.visuals import intent_translation
+
+        if intent_translation.translation_enabled():
+            try:
+                from app.core.config import get_config
+
+                cfg = get_config()
+                api_key = (
+                    _cfg_str(req.effective_config, "anthropic_api_key") or cfg.anthropic_api_key
+                )
+                if api_key and topic is not None:
+                    from app.ai.claude import ClaudeProvider
+
+                    translation_provider = ClaudeProvider(
+                        api_key=api_key, model=intent_translation.translation_model()
+                    )
+                    translations = intent_translation.translate_visual_intents(
+                        beats,
+                        topic_title=topic.title,
+                        topic_angle=topic.angle,
+                        ai_provider=translation_provider,
+                    )
+                    beats = intent_translation.apply_visual_intent_translation(beats, translations)
+            except Exception:
+                log.warning(
+                    "visual intent translation failed; continuing with "
+                    "untranslated deterministic beats",
+                    exc_info=True,
+                )
 
         engine = VisualEngine(
             VisualEngineConfig(
@@ -951,39 +1086,120 @@ class RenderingExecutor:
                 / "visuals"
                 / "graphics"
                 / f"manifest_{approved.manifest_id}",
+                concrete_subjects=concrete_subjects,
             ),
             conn=conn,
         )
         plan = engine.resolve(beats)
 
-        # ── Bounded visual remediation (Phase 18E) ─────────────────────────
-        # One pass, targeting only beats that fell back because a PROVIDER
-        # failed. A beat that chose a diagram on purpose is never touched, and
-        # a beat that still finds nothing keeps the card it already has, so
-        # this can improve a plan but never damage one.
+        # ── Actual-content verification (Phase 2/3/4, §7-9) ─────────────────
+        # Off unless the channel/policy explicitly opts in AND the
+        # deployment-level switch + credentials are present (see
+        # verification.get_content_verifier — two independent gates so a
+        # single missing flag can never unexpectedly start provider
+        # spending). Without both, get_content_verifier() returns
+        # NullVerifier, which marks every beat "unavailable" at zero cost —
+        # the quality gate already treats that as "no evidence of a
+        # problem" rather than a pass or a block.
+        import os
+
+        verification_model = (
+            os.environ.get(ENV_VERIFICATION_MODEL, "").strip() or DEFAULT_VERIFICATION_MODEL
+        )
+        if policy.enable_content_verification:
+            verifier = get_content_verifier()
+
+            # Phase 4, §6: vision rescue runs BEFORE a deficient beat's
+            # text-card fallback is treated as final — textually-inconclusive
+            # candidates (scoring.REASON_NEEDS_VERIFICATION) get one bounded,
+            # real look rather than being discarded on metadata sparseness
+            # alone. Beats it cannot rescue keep exactly the resolution they
+            # already had — this can only improve the plan, never damage it.
+            deficient_before_rescue = composition_from_plan(plan).deficient_beat_indexes()
+            if deficient_before_rescue:
+                rescue_stats = engine.vision_rescue(plan, deficient_before_rescue, verifier)
+                plan = rescue_stats.plan or plan
+                if rescue_stats.candidates_considered:
+                    log.info(
+                        "Vision rescue: %d/%d deficient beat(s) saved from text-card fallback "
+                        "(%d contact sheet(s), %d verified, %d rejected, %d questionable, "
+                        "%d unavailable)",
+                        rescue_stats.beats_saved,
+                        len(deficient_before_rescue),
+                        rescue_stats.contact_sheets,
+                        rescue_stats.verified,
+                        rescue_stats.rejected,
+                        rescue_stats.questionable,
+                        rescue_stats.unavailable,
+                    )
+
+            # Whatever pass 1 (or vision rescue) already accepted without a
+            # verify_eligible detour is still unverified — check it now, once,
+            # before it can be counted as "meaningful" runtime unchecked.
+            verify_plan_with_cache(conn, plan.resolutions, verifier, model=verification_model)
+
+        # ── Bounded visual remediation (Phase 18E, extended Phase 2/3) ──────
+        # One pass, targeting beats that fell back because a PROVIDER failed,
+        # beats a verification pass confirmed are a severe mismatch, and (only
+        # once a pass is already running for one of those reasons) beats
+        # flagged merely "questionable" — three independent sets, since a
+        # verified-but-weak asset is a resolved, "meaningful" one and would
+        # never appear in the provider-fallback set. A beat that chose a
+        # diagram on purpose is never touched, and a beat that still finds
+        # nothing keeps the card it already has, so this can improve a plan
+        # but never damage one.
         composition = composition_from_plan(plan)
-        assessment = assess_composition(composition, visual_style=policy.style)
+        assessment = assess_composition(
+            composition,
+            visual_style=policy.style,
+            thresholds=quality_thresholds,
+            verification_required=policy.enable_content_verification,
+        )
         remediated = False
-        if assessment.blocked and bool(
-            req.effective_config.get("visual_remediation_enabled", True)
-        ):
-            deficient = composition.deficient_beat_indexes()
+        needs_repair = assessment.blocked or composition.severe_mismatch_count > 0
+        if needs_repair and bool(req.effective_config.get("visual_remediation_enabled", True)):
+            deficient = list(
+                dict.fromkeys(
+                    [
+                        *composition.deficient_beat_indexes(),
+                        *composition.severe_mismatch_beat_indexes(),
+                        *composition.questionable_beat_indexes(),
+                    ]
+                )
+            )
             if deficient:
                 log.info(
-                    "Visual quality %s before remediation (%.0f%% meaningful runtime); "
-                    "attempting to repair %d beat(s)",
+                    "Visual quality %s before remediation (%.0f%% meaningful runtime, "
+                    "%d severe mismatch(es)); attempting to repair %d beat(s)",
                     assessment.status,
                     composition.meaningful_runtime_pct * 100,
+                    composition.severe_mismatch_count,
                     len(deficient),
                 )
                 plan = engine.remediate(plan, deficient)
+                if policy.enable_content_verification:
+                    # Re-verify only what was actually replaced — bounded,
+                    # not a second full-plan pass.
+                    verify_plan_with_cache(
+                        conn,
+                        [r for r in plan.resolutions if r.remediated],
+                        get_content_verifier(),
+                        model=verification_model,
+                    )
                 composition = composition_from_plan(plan)
-                assessment = assess_composition(composition, visual_style=policy.style)
+                assessment = assess_composition(
+                    composition,
+                    visual_style=policy.style,
+                    thresholds=quality_thresholds,
+                    verification_required=policy.enable_content_verification,
+                )
                 remediated = True
                 log.info(
-                    "Visual quality %s after remediation (%.0f%% meaningful runtime)",
+                    "Visual quality %s after remediation (%.0f%% meaningful runtime, "
+                    "%d severe mismatch(es))",
                     assessment.status,
                     composition.meaningful_runtime_pct * 100,
+                    composition.severe_mismatch_count,
                 )
 
         save_visual_plan(conn, plan, workspace_id=req.workspace_id)
@@ -1170,6 +1386,7 @@ class RenderingExecutor:
                     channel_id=req.channel_id,
                     experiment_id=approved.experiment_id,
                     remediated=visual_outcome.remediation_attempted,
+                    visualizability_score=visual_outcome.assessment.composition.visualizability_score,
                 )
                 if visual_outcome.remediation_attempted:
                     record_remediation_attempt(conn, manifest.id)

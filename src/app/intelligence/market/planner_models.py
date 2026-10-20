@@ -10,7 +10,7 @@ import json
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 # ---------------------------------------------------------------------------
 # Enumerations
@@ -218,6 +218,7 @@ class ExplorationProbe(BaseModel):
     semantic_fit_status: str | None = None
 
     market_region_label: str | None = None  # LLM-generated descriptive label (Phase 13E.1)
+    domain_family: str | None = None  # LLM-generated broad subject category (Phase 18H.B.1)
     decision_reason: str | None = None
     corroboration_count: int = 0
 
@@ -237,10 +238,27 @@ class ExplorationProbe(BaseModel):
         return CollectionPolicy(**data)
 
     def priority_components(self) -> PriorityComponents | None:
+        """Best-effort reinterpretation of this probe's persisted components
+        as the canonical PriorityComponents shape.
+
+        Returns None — not an exception — when priority_components_json is
+        absent, unparseable, or shaped differently than PriorityComponents
+        expects (e.g. Phase 18H.B.1's market_region-specific
+        {format_fit, distance_from_current_subjects, novelty}). Callers
+        (selector.py's _compute_components) already treat None as the
+        expected, handled case for "no reusable prior components" — the
+        comment there is literally "None for cold-start probes" — so
+        degrading gracefully here changes no behavior for any existing
+        caller, it only stops a differently-shaped-but-legitimate JSON blob
+        from crashing a later, unrelated selection pass.
+        """
         if self.priority_components_json is None:
             return None
-        data = json.loads(self.priority_components_json)
-        return PriorityComponents(**data)
+        try:
+            data = json.loads(self.priority_components_json)
+            return PriorityComponents(**data)
+        except (json.JSONDecodeError, ValidationError):
+            return None
 
 
 class ProbeEvidence(BaseModel):

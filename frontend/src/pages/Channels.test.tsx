@@ -12,7 +12,8 @@ import { server } from '@/test/server'
 import { Channels } from './Channels'
 import {
   WS_ID, CH_ID, cpChannel, cpAccount1, channelStrategyResponse, autonomyReadinessResponse,
-  channelAutomationPolicyResponse, publishingAuthorizationAuthorized,
+  channelAutomationPolicyResponse, publishingAuthorizationAuthorized, autonomyPolicyEnabled,
+  publishingSlotMissedReady, publishingSlotFilled,
 } from '@/test/fixtures'
 
 const B = 'http://localhost:5173/api/v1'
@@ -370,6 +371,148 @@ describe('Channels', () => {
         usePolicy()
         renderChannels()
         await waitFor(() => screen.getByRole('button', { name: /edit automation policy/i }))
+      })
+
+      it('pre-fills the edit form with the current policy, not stale/default values', async () => {
+        // Regression test: AutomationPolicyEditModal's local form state used to
+        // lock in at mount time, before this query resolved, so opening the
+        // form later showed the false/'daily'/''/9/1 fallback defaults instead
+        // of the real saved policy — even though the metric cards above it
+        // correctly showed the real values the whole time.
+        usePolicy()
+        const { user } = renderChannels()
+        await waitFor(() => screen.getByRole('button', { name: /edit automation policy/i }))
+        await user.click(screen.getByRole('button', { name: /edit automation policy/i }))
+        await waitFor(() => screen.getByRole('dialog'))
+
+        expect((screen.getByLabelText(/timezone/i) as HTMLInputElement).value).toBe('America/New_York')
+        expect(
+          (screen.getByRole('checkbox', { name: /decision automation enabled/i }) as HTMLInputElement).checked,
+        ).toBe(true)
+        expect(
+          (screen.getByRole('checkbox', { name: /production automation enabled/i }) as HTMLInputElement).checked,
+        ).toBe(true)
+      })
+
+      it('does not overwrite untouched fields with defaults when only one field is changed', async () => {
+        // Regression test for the same bug: saving used to send the stale
+        // locked-in defaults for every field the user didn't touch, silently
+        // reverting them on the server even though the user only meant to
+        // change one setting.
+        usePolicy()
+        let putBody: Record<string, unknown> | null = null
+        server.use(
+          http.put(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/automation-policy`, async ({ request }) => {
+            putBody = (await request.json()) as Record<string, unknown>
+            return HttpResponse.json({ ...autonomyPolicyEnabled, ...putBody })
+          }),
+        )
+        const { user } = renderChannels()
+        await waitFor(() => screen.getByRole('button', { name: /edit automation policy/i }))
+        await user.click(screen.getByRole('button', { name: /edit automation policy/i }))
+        await waitFor(() => screen.getByRole('dialog'))
+
+        // Only touch the preferred-hour field.
+        const hourInput = screen.getByLabelText(/preferred local hour/i)
+        await user.clear(hourInput)
+        await user.type(hourInput, '14')
+        await user.click(screen.getByRole('button', { name: /^save$/i }))
+
+        await waitFor(() => expect(putBody).not.toBeNull())
+        expect(putBody).toMatchObject({
+          decision_automation_enabled: true,
+          production_automation_enabled: true,
+          cadence_type: 'daily',
+          timezone: 'America/New_York',
+          preferred_local_hour: 14,
+          queue_target: 1,
+        })
+      })
+    })
+
+    describe('missed-slot reschedule', () => {
+      const RESCHEDULE_BUTTON = /publish at a different time instead/i
+
+      it('shows no reschedule card when nothing is overdue', async () => {
+        server.use(
+          http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/publishing-slots`, () =>
+            HttpResponse.json([publishingSlotFilled]),
+          ),
+        )
+        renderChannels()
+        await waitFor(() => screen.getByRole('heading', { level: 1 }))
+        expect(screen.queryByText(/awaiting next publishing opportunity/i)).not.toBeInTheDocument()
+      })
+
+      it('offers to move an overdue, produced, ready artifact — framed as automatic and optional', async () => {
+        server.use(
+          http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/publishing-slots`, () =>
+            HttpResponse.json([publishingSlotMissedReady]),
+          ),
+        )
+        renderChannels()
+        await waitFor(() => screen.getByText(/awaiting next publishing opportunity/i))
+        expect(screen.getByText('exp-slot-6')).toBeInTheDocument()
+        expect(screen.getByText(/will publish automatically/i)).toBeInTheDocument()
+        expect(screen.getByRole('button', { name: RESCHEDULE_BUTTON })).toBeDisabled()
+      })
+
+      it('submits the chosen local time and confirms success without re-showing the form', async () => {
+        let putBody: Record<string, unknown> | null = null
+        let calledSlotId: string | null = null
+        server.use(
+          http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/publishing-slots`, () =>
+            HttpResponse.json([publishingSlotMissedReady]),
+          ),
+          http.post(
+            `${B}/workspaces/${WS_ID}/channels/${CH_ID}/publishing-slots/:slotId/reschedule`,
+            async ({ request, params }) => {
+              calledSlotId = params.slotId as string
+              putBody = (await request.json()) as Record<string, unknown>
+              return HttpResponse.json({
+                ...publishingSlotMissedReady,
+                id: 7,
+                publish_status: null,
+                publish_retry_count: 0,
+                scheduled_for_local: putBody.scheduled_for_local,
+                rescheduled_from_slot_id: publishingSlotMissedReady.id,
+              })
+            },
+          ),
+        )
+        const { user } = renderChannels()
+        await waitFor(() => screen.getByText(/awaiting next publishing opportunity/i))
+
+        const input = screen.getByLabelText(/new local date/i)
+        await user.type(input, '2026-09-10T12:00')
+        await user.click(screen.getByRole('button', { name: RESCHEDULE_BUTTON }))
+
+        await waitFor(() => screen.getByText(/new preferred publishing time/i))
+        expect(calledSlotId).toBe(String(publishingSlotMissedReady.id))
+        expect(putBody).toMatchObject({ scheduled_for_local: '2026-09-10T12:00' })
+        expect(screen.queryByRole('button', { name: RESCHEDULE_BUTTON })).not.toBeInTheDocument()
+      })
+
+      it('surfaces a rejected reschedule instead of showing false success', async () => {
+        server.use(
+          http.get(`${B}/workspaces/${WS_ID}/channels/${CH_ID}/publishing-slots`, () =>
+            HttpResponse.json([publishingSlotMissedReady]),
+          ),
+          http.post(
+            `${B}/workspaces/${WS_ID}/channels/${CH_ID}/publishing-slots/:slotId/reschedule`,
+            () => HttpResponse.json({ detail: 'The new scheduled time must be in the future.' }, { status: 422 }),
+          ),
+        )
+        const { user } = renderChannels()
+        await waitFor(() => screen.getByText(/awaiting next publishing opportunity/i))
+
+        const input = screen.getByLabelText(/new local date/i)
+        await user.type(input, '2020-01-01T12:00')
+        await user.click(screen.getByRole('button', { name: RESCHEDULE_BUTTON }))
+
+        await waitFor(() => screen.getByRole('alert'))
+        expect(screen.getByRole('alert')).toHaveTextContent(/must be in the future/i)
+        expect(screen.getByRole('button', { name: RESCHEDULE_BUTTON })).toBeInTheDocument()
       })
     })
 

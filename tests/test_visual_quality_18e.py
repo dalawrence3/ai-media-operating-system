@@ -59,6 +59,9 @@ def _beat(
     provider: str = "pexels",
     fallback_reason: str | None = None,
     scene_index: int = 0,
+    resolved_score: float | None = None,
+    had_relevance_rejection: bool = False,
+    verification_status: str | None = None,
 ) -> BeatComposition:
     return BeatComposition(
         beat_index=index,
@@ -73,6 +76,9 @@ def _beat(
         provider=provider,
         fallback_reason=fallback_reason,
         fallback_class=classify_fallback(fallback_reason),
+        resolved_score=resolved_score,
+        had_relevance_rejection=had_relevance_rejection,
+        verification_status=verification_status,
     )
 
 
@@ -184,6 +190,7 @@ class TestFallbackAttribution:
             engine.FALLBACK_ALL_REJECTED,
             engine.FALLBACK_DOWNLOAD_FAILED,
             engine.FALLBACK_STRUCTURAL_PREFERENCE,
+            engine.FALLBACK_RELEVANT_STILL_RELAXED_FLOOR,
         ):
             from app.visuals.composition import _FALLBACK_CLASS
 
@@ -442,6 +449,196 @@ class TestQualityPolicy:
         second = assess_composition(comp)
         assert first.status == second.status
         assert [f.code for f in first.findings] == [f.code for f in second.findings]
+
+
+# ── Phase 2 — relevance/engagement metrics & the severe-mismatch floor ────────
+
+
+class TestRelevanceEngagementMetrics:
+    def test_moving_visual_runtime_counts_only_motion_footage(self):
+        beats = [
+            _beat(0, start_ms=0, duration_ms=4_000, family=FAMILY_MOTION_FOOTAGE),
+            _beat(1, start_ms=4_000, duration_ms=4_000, family=FAMILY_PHOTOGRAPHIC),
+            _beat(2, start_ms=8_000, duration_ms=4_000, family=FAMILY_GENERATED_DIAGRAM),
+        ]
+        comp = compose(beats)
+        assert comp.moving_visual_runtime_ms == 4_000
+        assert comp.moving_visual_runtime_pct == pytest.approx(4_000 / 12_000)
+
+    def test_low_confidence_beat_is_excluded_from_relevant_runtime_but_not_meaningful(self):
+        beats = [
+            _beat(0, start_ms=0, duration_ms=4_000, resolved_score=0.9),
+            _beat(1, start_ms=4_000, duration_ms=4_000, resolved_score=0.2),  # low confidence
+        ]
+        comp = compose(beats)
+        assert comp.meaningful_runtime_ms == 8_000  # both are real, resolved visuals
+        assert comp.relevant_visual_runtime_ms == 4_000  # only the confident one
+        assert comp.low_confidence_scene_count == 1
+
+    def test_resolved_score_is_ignored_for_a_generated_graphic(self):
+        """A graphic's `.score` field carries the best *considered* candidate's
+        score, not its own — composition_from_plan already guards this, but
+        compose() itself must not be fooled if a caller passes one anyway."""
+        beat = _beat(
+            0,
+            start_ms=0,
+            duration_ms=4_000,
+            family=FAMILY_TEXT_CARD,
+            provider="programmatic",
+            fallback_reason="all_candidates_rejected",
+            resolved_score=0.1,
+        )
+        comp = compose([beat])
+        # Not meaningful at all (text card), so low_confidence can never be
+        # true regardless of what resolved_score carries.
+        assert comp.low_confidence_scene_count == 0
+
+    def test_verified_rejection_counts_as_a_severe_mismatch(self):
+        beats = [
+            _beat(0, start_ms=0, duration_ms=4_000),
+            _beat(1, start_ms=4_000, duration_ms=4_000, verification_status="rejected"),
+        ]
+        comp = compose(beats)
+        assert comp.severe_mismatch_count == 1
+        assert comp.relevant_visual_runtime_ms == 4_000
+
+    def test_unverified_beat_is_never_counted_as_a_severe_mismatch(self):
+        """None/"unavailable" must never be treated as evidence of a problem —
+        that would fabricate a verdict verification never reached."""
+        beats = [_beat(0, start_ms=0, duration_ms=4_000, verification_status=None)]
+        comp = compose(beats)
+        assert comp.severe_mismatch_count == 0
+        assert comp.relevant_visual_runtime_ms == 4_000
+
+    def test_relevance_rejected_candidate_increments_rejected_scene_count(self):
+        beats = [_beat(0, start_ms=0, duration_ms=4_000, had_relevance_rejection=True)]
+        comp = compose(beats)
+        assert comp.rejected_scene_count == 1
+
+    def test_severe_mismatch_always_blocks_preflight_regardless_of_composition_strength(self):
+        """The hard rule (§10): even one confirmed mismatch inside an
+        otherwise strong render must block — never diluted into a percentage."""
+        beats = _healthy_beats(20)
+        beats[0].verification_status = "rejected"
+        result = assess_composition(compose(beats))
+        assert result.status == VQ_BLOCKED
+        assert any(f.code == "visual_severe_mismatch" for f in result.blocking)
+
+    def test_healthy_render_with_no_verification_run_is_never_blocked_by_it(self):
+        """Verification defaulting to "not run" must never itself become a
+        block — that would make the whole pipeline depend on an optional,
+        off-by-default feature (§20)."""
+        result = assess_composition(compose(_healthy_beats()))
+        assert not any(f.code == "visual_severe_mismatch" for f in result.findings)
+
+    def test_low_relevant_coverage_warns_but_does_not_block(self):
+        beats = [
+            _beat(i, start_ms=i * 4_000, duration_ms=4_000, resolved_score=0.2) for i in range(10)
+        ]
+        result = assess_composition(compose(beats))
+        assert result.status != VQ_BLOCKED
+        assert any(f.code == "visual_relevant_coverage_low" for f in result.warnings)
+
+
+class TestVisualizabilitySignal:
+    """§17 — observational only: never gates the verdict."""
+
+    def test_strong_diverse_render_scores_higher_than_a_text_heavy_one(self):
+        strong = compose(_healthy_beats()).visualizability_score
+        weak = compose(_fallback_dominated_beats()).visualizability_score
+        assert strong > weak
+
+    def test_score_is_bounded_zero_to_one(self):
+        for beats in (_healthy_beats(), _fallback_dominated_beats(), []):
+            score = compose(beats).visualizability_score
+            assert 0.0 <= score <= 1.0
+
+    def test_score_never_affects_the_pass_block_verdict(self):
+        """A brand-new, unvalidated signal must never gate publishing —
+        matching the same reasoning min_meaningful_runtime_pct's own
+        docstring gives for its conservative floor."""
+        comp = compose(_healthy_beats())
+        result = assess_composition(comp)
+        assert result.status == VQ_PASS
+        assert comp.visualizability_score >= 0  # computed, but not consulted above
+
+
+class TestVerificationRequiredHoldPolicy:
+    """Phase 3, §9 — hold/repair rather than publish an unchecked visual
+    while verification is actually enabled for this render."""
+
+    def test_disabled_by_default_never_blocks_on_unmeasured_verification(self):
+        """A render where verification was never turned on has every beat's
+        verification_status at None too — that must never be mistaken for
+        "checked and fine", but it also must never spuriously block."""
+        result = assess_composition(compose(_healthy_beats()))
+        assert not any(f.code == "visual_verification_incomplete" for f in result.findings)
+
+    def test_enabled_and_unchecked_low_confidence_beat_blocks(self):
+        beats = [_beat(0, start_ms=0, duration_ms=4_000, resolved_score=0.3)]
+        result = assess_composition(compose(beats), verification_required=True)
+        assert result.status == VQ_BLOCKED
+        assert any(f.code == "visual_verification_incomplete" for f in result.blocking)
+
+    def test_enabled_but_extremely_high_deterministic_confidence_uses_fast_path(self):
+        """§9's exemption: an unchecked beat the deterministic scorer was
+        already extremely confident about does not need to hold."""
+        beats = [_beat(0, start_ms=0, duration_ms=4_000, resolved_score=0.95)]
+        result = assess_composition(compose(beats), verification_required=True)
+        assert not any(f.code == "visual_verification_incomplete" for f in result.findings)
+
+    def test_enabled_and_confirmed_verified_beat_never_blocks(self):
+        beats = [
+            _beat(
+                0, start_ms=0, duration_ms=4_000, resolved_score=0.3, verification_status="verified"
+            )
+        ]
+        result = assess_composition(compose(beats), verification_required=True)
+        assert not any(f.code == "visual_verification_incomplete" for f in result.findings)
+
+    def test_enabled_and_questionable_beat_does_not_trigger_this_specific_finding(self):
+        """Questionable is handled by the relevant-coverage warning path
+        (low_confidence), not by the hold-for-unchecked block — it WAS
+        checked, just not confidently confirmed."""
+        beats = [
+            _beat(
+                0,
+                start_ms=0,
+                duration_ms=4_000,
+                resolved_score=0.3,
+                verification_status="questionable",
+            )
+        ]
+        result = assess_composition(compose(beats), verification_required=True)
+        assert not any(f.code == "visual_verification_incomplete" for f in result.findings)
+
+    def test_generated_graphics_are_never_subject_to_the_hold_policy(self):
+        """A graphic was never a verification candidate in the first place
+        (verification.py skips `provider == "programmatic"` entirely) —
+        `resolved_score`/`verification_status` are only ever set for a
+        retrieved candidate, so a graphic is never "meaningful and
+        unchecked" in the first place."""
+        beats = [
+            _beat(
+                i,
+                start_ms=i * 4_000,
+                family=FAMILY_GENERATED_DIAGRAM,
+                planned=FAMILY_GENERATED_DIAGRAM,
+                intent="timeline",
+                provider="programmatic",
+                fallback_reason="structural_intent_prefers_graphic",
+            )
+            for i in range(5)
+        ]
+        result = assess_composition(compose(beats), verification_required=True)
+        assert not any(f.code == "visual_verification_incomplete" for f in result.findings)
+
+    def test_rejected_still_blocks_via_severe_mismatch_regardless_of_this_flag(self):
+        beats = [_beat(0, start_ms=0, duration_ms=4_000, verification_status="rejected")]
+        without_flag = assess_composition(compose(beats), verification_required=False)
+        with_flag = assess_composition(compose(beats), verification_required=True)
+        assert without_flag.status == VQ_BLOCKED
+        assert with_flag.status == VQ_BLOCKED
 
 
 class TestIntentionalMinimalismIsNotABypass:

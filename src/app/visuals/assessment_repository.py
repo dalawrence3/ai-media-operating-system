@@ -92,6 +92,11 @@ class RenderVisualAssessment:
     scene_count: int
     meaningful_beat_count: int
     meaningful_runtime_ms: int
+    moving_visual_runtime_ms: int
+    relevant_visual_runtime_ms: int
+    low_confidence_scene_count: int
+    rejected_scene_count: int
+    severe_mismatch_count: int
     text_card_beat_count: int
     text_card_runtime_ms: int
     unresolved_beat_count: int
@@ -124,6 +129,8 @@ class RenderVisualAssessment:
     input_hash: str
     created_at: str
     updated_at: str
+    # Observational only (§17) — None until a render has been characterized.
+    visualizability_score: float | None = None
 
     @property
     def blocked(self) -> bool:
@@ -133,6 +140,22 @@ class RenderVisualAssessment:
     def meaningful_runtime_pct(self) -> float:
         return (
             self.meaningful_runtime_ms / self.total_duration_ms if self.total_duration_ms else 0.0
+        )
+
+    @property
+    def moving_visual_runtime_pct(self) -> float:
+        return (
+            self.moving_visual_runtime_ms / self.total_duration_ms
+            if self.total_duration_ms
+            else 0.0
+        )
+
+    @property
+    def relevant_visual_runtime_pct(self) -> float:
+        return (
+            self.relevant_visual_runtime_ms / self.total_duration_ms
+            if self.total_duration_ms
+            else 0.0
         )
 
     @property
@@ -155,6 +178,16 @@ def _loads(raw: Any, default: Any) -> Any:
         return default
 
 
+def _col(row: sqlite3.Row, name: str, default: Any) -> Any:
+    """Read an additive column that may not exist on an older test fixture's
+    table (the real migration always adds it — see _apply_v55_...)."""
+    try:
+        value = row[name]
+    except (IndexError, KeyError):
+        return default
+    return default if value is None else value
+
+
 def _row_to_assessment(row: sqlite3.Row) -> RenderVisualAssessment:
     return RenderVisualAssessment(
         id=row["id"],
@@ -173,6 +206,11 @@ def _row_to_assessment(row: sqlite3.Row) -> RenderVisualAssessment:
         scene_count=row["scene_count"],
         meaningful_beat_count=row["meaningful_beat_count"],
         meaningful_runtime_ms=row["meaningful_runtime_ms"],
+        moving_visual_runtime_ms=_col(row, "moving_visual_runtime_ms", 0),
+        relevant_visual_runtime_ms=_col(row, "relevant_visual_runtime_ms", 0),
+        low_confidence_scene_count=_col(row, "low_confidence_scene_count", 0),
+        rejected_scene_count=_col(row, "rejected_scene_count", 0),
+        severe_mismatch_count=_col(row, "severe_mismatch_count", 0),
         text_card_beat_count=row["text_card_beat_count"],
         text_card_runtime_ms=row["text_card_runtime_ms"],
         unresolved_beat_count=row["unresolved_beat_count"],
@@ -205,6 +243,7 @@ def _row_to_assessment(row: sqlite3.Row) -> RenderVisualAssessment:
         input_hash=row["input_hash"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        visualizability_score=_col(row, "visualizability_score", None),
     )
 
 
@@ -220,6 +259,7 @@ def save_assessment(
     publication_id: int | None = None,
     remediation_attempts: int | None = None,
     remediated: bool | None = None,
+    visualizability_score: float | None = None,
 ) -> RenderVisualAssessment | None:
     """Upsert the assessment for one render manifest.
 
@@ -266,6 +306,8 @@ def save_assessment(
             assessment_version, composition_version, policy_version, status,
             total_beat_count, total_duration_ms, scene_count,
             meaningful_beat_count, meaningful_runtime_ms,
+            moving_visual_runtime_ms, relevant_visual_runtime_ms,
+            low_confidence_scene_count, rejected_scene_count, severe_mismatch_count,
             text_card_beat_count, text_card_runtime_ms, unresolved_beat_count,
             family_runtime_json, family_beat_count_json,
             dominant_family, dominant_family_share, family_diversity,
@@ -276,10 +318,11 @@ def save_assessment(
             fallback_beat_count, fallback_runtime_ms,
             provider_fallback_beats, creative_fallback_beats, provider_fallback_rate,
             fallback_reasons_json, findings_json, scene_diagnostics_json,
-            remediation_attempts, remediated, input_hash, created_at, updated_at
+            remediation_attempts, remediated, input_hash, created_at, updated_at,
+            visualizability_score
         ) VALUES (
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         ON CONFLICT(render_manifest_id) DO UPDATE SET
             scene_manifest_id = excluded.scene_manifest_id,
@@ -298,6 +341,11 @@ def save_assessment(
             scene_count = excluded.scene_count,
             meaningful_beat_count = excluded.meaningful_beat_count,
             meaningful_runtime_ms = excluded.meaningful_runtime_ms,
+            moving_visual_runtime_ms = excluded.moving_visual_runtime_ms,
+            relevant_visual_runtime_ms = excluded.relevant_visual_runtime_ms,
+            low_confidence_scene_count = excluded.low_confidence_scene_count,
+            rejected_scene_count = excluded.rejected_scene_count,
+            severe_mismatch_count = excluded.severe_mismatch_count,
             text_card_beat_count = excluded.text_card_beat_count,
             text_card_runtime_ms = excluded.text_card_runtime_ms,
             unresolved_beat_count = excluded.unresolved_beat_count,
@@ -328,7 +376,9 @@ def save_assessment(
             remediation_attempts = excluded.remediation_attempts,
             remediated = excluded.remediated,
             input_hash = excluded.input_hash,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            visualizability_score = COALESCE(excluded.visualizability_score,
+                                              render_visual_assessments.visualizability_score)
         """,
         (
             render_manifest_id,
@@ -346,6 +396,11 @@ def save_assessment(
             comp.scene_count,
             comp.meaningful_beat_count,
             comp.meaningful_runtime_ms,
+            comp.moving_visual_runtime_ms,
+            comp.relevant_visual_runtime_ms,
+            comp.low_confidence_scene_count,
+            comp.rejected_scene_count,
+            comp.severe_mismatch_count,
             comp.text_card_beat_count,
             comp.text_card_runtime_ms,
             comp.unresolved_beat_count,
@@ -378,6 +433,7 @@ def save_assessment(
             input_hash,
             created_at,
             now,
+            visualizability_score,
         ),
     )
     conn.commit()
@@ -482,5 +538,6 @@ def assess_render(
             workspace_id=workspace_id,
             channel_id=channel_id,
             experiment_id=experiment_id,
+            visualizability_score=composition.visualizability_score,
         )
     return assessment, stored

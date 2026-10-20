@@ -190,7 +190,7 @@ def _make_run(conn: sqlite3.Connection, channel_id: int, profile_version_id: int
 
 
 def test_schema_version_is_36():
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 # ---------------------------------------------------------------------------
@@ -939,7 +939,7 @@ def test_r_v35_database_migrates_to_v36(tmp_path):
     # Now open via open_db — should migrate to 36
     conn2 = open_db(db_path)
     assert _get_version(conn2) == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
     # All rows preserved
     count = conn2.execute("SELECT COUNT(*) FROM opportunities").fetchone()[0]

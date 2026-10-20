@@ -42,8 +42,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import sqlite3
 from datetime import UTC, datetime
+from textwrap import shorten
 from typing import Any
 
 from app.intelligence.autonomy.models import (
@@ -555,7 +557,15 @@ def _build_topic_angle(*, brief: Any, decision: Any) -> str:
     if subjects:
         parts.append("Concrete subjects to show: " + "; ".join(subjects[:6]) + ".")
 
-    return " ".join(parts).strip() or base
+    composed = " ".join(parts).strip() or base
+    # Phase 7C.1 — a real viewer_promise + concrete_subjects combination
+    # (confirmed: a real practical_micro_lesson evaluation) can genuinely
+    # exceed Topic.angle's 500-char schema limit; a longer richer format
+    # produces more content here than the explainer path this was
+    # originally tuned against. Truncate at a word boundary rather than
+    # let topic materialization crash outright — the prompt still reaches
+    # script generation with the strongest (earliest) signal intact.
+    return shorten(composed, width=500, placeholder="...")
 
 
 def _materialize_topic(
@@ -697,6 +707,23 @@ def _build_effective_config(
     style = _visual_style_from_brief(brief)
     if style:
         config["visual_style"] = style
+
+    # ── Actual-content verification (Phase 3, §7-9) ─────────────────────────
+    # The deployment-level switch (see verification.get_content_verifier —
+    # same env var, same default-off contract) was previously read only by
+    # the manual/test entry points into the visual stage, never by the
+    # autonomous path: `policy_from_config` already looks for
+    # `visual_enable_content_verification` in effective_config, but nothing
+    # here ever set it, so an autonomous production could never turn
+    # verification on regardless of the env var. This is that missing wire,
+    # not a new gate — the two-layer safety (this env var AND
+    # get_content_verifier()'s own credential check) is unchanged.
+    if os.environ.get("ACE_VISUAL_VERIFICATION_ENABLED", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        config["visual_enable_content_verification"] = True
     return config
 
 

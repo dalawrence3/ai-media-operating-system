@@ -1533,7 +1533,7 @@ def test_BS_policy_version_present_in_output(db):
 
 def test_BT_schema_version_is_41(db):
     """SCHEMA_VERSION is 41 (Phase 14G added experiment_outcomes)."""
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 def test_BU_experiment_outcomes_table_exists(db):

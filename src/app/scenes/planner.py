@@ -80,6 +80,16 @@ def _visual_objective(section_type: str, narration_text: str) -> str:
         "evidence": f"Visually support the cited evidence: {snippet}",
         "outro": f"Close with memorable imagery for: {snippet}",
         "cta": f"Drive viewer action with clear visual prompt: {snippet}",
+        # Phase 7B, §10 — interactive_recall_quiz beats.
+        "prompt": f"Put the question front and center, giving the viewer "
+        f"visual space to think during the pause: {snippet}",
+        "reveal": f"Deliver the answer with a clear, legible payoff visual: {snippet}",
+        "next_challenge": f"Signal forward momentum into the next round: {snippet}",
+        # Phase 7B, §10 — practical_micro_lesson beats.
+        "problem": f"Make the problem feel personally relevant to the viewer: {snippet}",
+        "explanation": f"Visually clarify the underlying concept: {snippet}",
+        "example": f"Ground the concept in a concrete, specific scenario: {snippet}",
+        "takeaway": f"Close with the one action or idea to remember: {snippet}",
     }
     return objectives.get(section_type, f"Visually complement: {snippet}")
 
@@ -103,6 +113,13 @@ def _compute_confidence(section_type: str, claim_count: int, cue_count: int) -> 
         "evidence": 0.75,
         "outro": 0.85,
         "cta": 0.9,
+        "prompt": 0.85,
+        "reveal": 0.85,
+        "next_challenge": 0.8,
+        "problem": 0.85,
+        "explanation": 0.8,
+        "example": 0.8,
+        "takeaway": 0.85,
     }
     score = base.get(section_type, 0.75)
     if claim_count > 0:

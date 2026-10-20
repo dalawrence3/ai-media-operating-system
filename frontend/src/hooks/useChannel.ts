@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type {
+  RescheduleSlotRequest,
   StrategyConfig,
   UpdateAutomationPolicyRequest,
   UpdatePublishingAuthorizationRequest,
@@ -61,6 +62,27 @@ export function useUpdateAutomationPolicy(workspaceId: string, channelId: string
     mutationFn: (body: UpdateAutomationPolicyRequest) =>
       api.updateChannelAutomationPolicy(workspaceId, channelId, body),
     onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['channel-automation-policy', workspaceId, channelId] })
+      void qc.invalidateQueries({ queryKey: ['channel-readiness', workspaceId, channelId] })
+    },
+  })
+}
+
+export function useChannelPublishingSlots(workspaceId: string, channelId: string) {
+  return useQuery({
+    queryKey: ['channel-publishing-slots', workspaceId, channelId],
+    queryFn: () => api.listChannelPublishingSlots(workspaceId, channelId),
+    enabled: !!(workspaceId && channelId),
+  })
+}
+
+export function useRescheduleSlot(workspaceId: string, channelId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ slotId, body }: { slotId: number; body: RescheduleSlotRequest }) =>
+      api.rescheduleChannelPublishingSlot(workspaceId, channelId, slotId, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['channel-publishing-slots', workspaceId, channelId] })
       void qc.invalidateQueries({ queryKey: ['channel-automation-policy', workspaceId, channelId] })
       void qc.invalidateQueries({ queryKey: ['channel-readiness', workspaceId, channelId] })
     },

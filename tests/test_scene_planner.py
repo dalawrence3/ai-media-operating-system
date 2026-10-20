@@ -129,6 +129,7 @@ def _make_narration_run() -> ApprovedNarrationRun:
             provider="fake",
             model="fm",
             voice_id="fv",
+            language="en-US",
         )
         for i in range(1, 4)
     )
@@ -206,6 +207,14 @@ def _make_production_plan() -> ApprovedProductionPlan:
         ("outro", "medium"),
         ("cta", "close_up"),
         ("unknown_type", "medium"),  # falls back to DEFAULT
+        # Phase 7B, §10 — quiz and micro-lesson section types.
+        ("prompt", "close_up"),
+        ("reveal", "close_up"),
+        ("next_challenge", "medium"),
+        ("problem", "close_up"),
+        ("explanation", "wide"),
+        ("example", "cutaway"),
+        ("takeaway", "medium"),
     ],
 )
 def test_shot_type_mapping(section_type, expected):
@@ -263,10 +272,48 @@ def test_visual_rationale_contains_section_and_shot():
     assert "zoom_in" in r
 
 
-@pytest.mark.parametrize("section_type", ["hook", "intro", "body", "evidence", "outro"])
+@pytest.mark.parametrize(
+    "section_type",
+    ["hook", "intro", "body", "evidence", "outro", "prompt", "reveal", "problem", "example"],
+)
 def test_compute_confidence_in_range(section_type):
     c = _compute_confidence(section_type, claim_count=2, cue_count=3)
     assert 0.0 <= c <= 1.0
+
+
+# ── Phase 7B, §10: quiz question → think → reveal visual distinctness ────────
+
+
+class TestQuizVisualSequenceIsDistinguishable:
+    """The pause (think_duration_ms) lives on the narration/timing layer;
+    this only asserts the VISUAL treatment of prompt vs. reveal vs.
+    next_challenge is actually distinct, not a silent fallback to
+    DEFAULT_SHOT_TYPE/DEFAULT_CAMERA_MOVEMENT for every quiz section."""
+
+    def test_prompt_and_reveal_share_close_up_intimacy_but_differ_in_camera_motion(self):
+        assert _shot_type("prompt") == _shot_type("reveal") == "close_up"
+        assert _camera_movement("prompt", 0, 5) == "zoom_in"
+        assert _camera_movement("reveal", 0, 5) == "static"
+
+    def test_next_challenge_is_visually_transitional_not_close_up(self):
+        assert _shot_type("next_challenge") != _shot_type("prompt")
+        assert _shot_type("next_challenge") == "medium"
+
+    def test_prompt_reveal_asset_preferences_are_graphic_forward(self):
+        assert plan_assets("prompt", "Question text?", [], 0)[0].category == "icon"
+        assert plan_assets("reveal", "Answer text.", [], 0)[0].category == "icon"
+
+
+class TestMicroLessonVisualSequenceIsDistinguishable:
+    def test_problem_mirrors_hook_intimacy(self):
+        assert _shot_type("problem") == _shot_type("hook") == "close_up"
+
+    def test_example_mirrors_evidence_concreteness(self):
+        assert _shot_type("example") == _shot_type("evidence") == "cutaway"
+
+    def test_explanation_and_example_are_visually_distinct(self):
+        assert _shot_type("explanation") != _shot_type("example")
+        assert _camera_movement("problem", 0, 5) != _camera_movement("takeaway", 0, 5)
 
 
 def test_compute_confidence_increases_with_evidence():

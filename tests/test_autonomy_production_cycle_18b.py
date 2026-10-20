@@ -41,6 +41,9 @@ from app.intelligence.channel_bridge import (
     bootstrap_intelligence_channel,
     get_intelligence_channel_id,
 )
+from app.visuals.constants import LICENSE_VERIFIED, MEDIA_PHOTO
+from app.visuals.models import VisualCandidate
+from app.visuals.providers.base import ProviderCapability
 
 
 def _uid() -> str:
@@ -102,6 +105,110 @@ def _fake_tts(monkeypatch):
     reset_config()
     yield
     reset_config()
+
+
+class _AlwaysRelevantStubProvider:
+    """Deterministic, local stand-in for real footage retrieval — no network.
+
+    Every candidate it returns echoes the exact query it was searched with,
+    as both its tags and its provider_asset_id: whatever vocabulary a beat
+    or the video's topic anchored the query on, the "footage" is guaranteed
+    to carry it back as evidence. That is what makes candidates clear
+    scoring's relevance floors (MIN_EVIDENCE_WEIGHT, MIN_ACCEPTABLE_SCORE)
+    deterministically, the same way real footage happened to for this
+    file's fake script before the safety guard existed — an empty provider
+    list is not equivalent: it forces every beat to a generated graphic,
+    which Phase 18E's own preflight correctly rejects as low-quality, so a
+    real (if synthetic) "found something relevant" provider is required to
+    reach ProductionOutcome.READY at all.
+
+    asset ids are a pure function of the query text (no counters, no
+    per-instance state), so the same query always yields the same asset
+    across separate VisualEngine/provider constructions — required for the
+    restart-recovery tests in this file, which assert that re-running the
+    same stage never regenerates a previously produced artifact.
+    """
+
+    identity = "stub-footage"
+    # Photo only, deliberately mirroring WikimediaProvider's own real
+    # capability (MEDIA_PHOTO, MEDIA_ILLUSTRATION) — this file's tests
+    # genuinely invoke FFmpeg (only Claude/TTS/visual providers are faked),
+    # and a still image is what this stub can actually produce a real,
+    # FFmpeg-decodable file for; a fabricated ".mp4" of placeholder bytes
+    # is not a valid video and made ffmpeg fail outright.
+    capability = ProviderCapability(
+        media_types=(MEDIA_PHOTO,),
+        tier=1,
+        cost_units=0,
+        supports_orientation=True,
+    )
+
+    def available(self) -> bool:
+        return True
+
+    def search(self, query, *, media_type, limit=10, orientation=None):
+        words = (query or "").split() or ["stub"]
+        base_id = "-".join(words)[:70]
+        # Several distinct candidates per query, not one: two beats whose
+        # narration happens to produce the identical query (real for a
+        # tiny, generic fake script) share ONE memoised search result by
+        # VisualEngine's own design (real providers have finite quota) —
+        # a single-candidate result would then force both beats onto the
+        # same asset_key and trip the dominant-asset quality floor. With
+        # several candidates available, the engine's own repetition
+        # penalty naturally steers a later beat onto a still-unused one.
+        count = min(max(limit, 1), 3)
+        return [
+            VisualCandidate(
+                provider=self.identity,
+                provider_asset_id=f"{base_id}-{i}",
+                media_type=media_type,
+                query=query,
+                provider_rank=i,
+                width=1080,
+                height=1920,
+                duration_s=6.0,
+                license_status=LICENSE_VERIFIED,
+                commercial_safe=True,
+                tags=list(words),
+                title=" ".join(words),
+            )
+            for i in range(count)
+        ]
+
+    def download(self, candidate, cache_dir):
+        from PIL import Image
+
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        dest = cache_dir / f"{candidate.asset_key.replace(':', '_')}.jpg"
+        if not dest.exists():
+            Image.new(
+                "RGB", (candidate.width or 1080, candidate.height or 1920), color=(40, 60, 90)
+            ).save(dest, format="JPEG")
+        return dest
+
+
+@pytest.fixture(autouse=True)
+def _fake_visual_providers(monkeypatch):
+    """Explicit opt-in past tests/conftest.py's default-visual-provider guard.
+
+    run_production_cycle drives the real RenderingExecutor, which calls
+    VisualEngine(VisualEngineConfig(...)) with no providers= override — the
+    exact path the global guard forbids by default (see the Phase 18G
+    investigation report: this file previously made a genuine HTTPS request
+    to commons.wikimedia.org via WikimediaProvider, the one keyless provider
+    that is always .available()).
+
+    A deterministic, always-relevant local stub (not a live network-backed
+    provider, and not an empty list — see _AlwaysRelevantStubProvider's own
+    docstring for why an empty list isn't sufficient here) replaces the real
+    provider list for every test in this file.
+    """
+    import app.visuals.engine as engine_mod
+
+    monkeypatch.setattr(
+        engine_mod, "build_default_providers", lambda: [_AlwaysRelevantStubProvider()]
+    )
 
 
 @pytest.fixture()
@@ -177,7 +284,9 @@ def _seed_filled_slot_via_decision_cycle(
     intel_channel_id = get_intelligence_channel_id(db, channel.id)
     _seed_opportunity(db, intel_channel_id, opp_id=opp_id)
 
-    def _fake_assess(conn, opportunity_id, ch_id, ai_provider=None, policy=None):
+    def _fake_assess(
+        conn, opportunity_id, ch_id, ai_provider=None, policy=None, exploration_cell=False
+    ):
         return ExperimentEligibilityAssessment(
             opportunity_id=opportunity_id,
             channel_id=ch_id,
@@ -917,6 +1026,71 @@ def test_failed_slot_is_retried_up_to_the_bound_then_stops(db, channel, workspac
     # picked up at all (NO_SLOT_TO_PRODUCE), never retried indefinitely.
     assert ProductionOutcome.NO_SLOT_TO_PRODUCE in outcomes
     assert outcomes[-1] == ProductionOutcome.NO_SLOT_TO_PRODUCE
+
+
+def test_narration_provider_failure_then_retry_reaches_ready(db, channel, workspace, monkeypatch):
+    """Phase 7C.4, §8 — the actual shadow-canary scenario, reproduced with a
+    deterministic mocked provider failure (no real ElevenLabs call, per
+    §9): the first production attempt fails at the narration stage (a
+    stand-in for a real ElevenLabs quota_exceeded error); the second
+    attempt, using the SAME slot/plan/voice-profile inputs, succeeds all
+    the way to READY with NO manual DB cleanup -- no deleted narration_run
+    row, no cleared idempotency state, no retry-limit override. Before the
+    Phase 7C.4 fix this second attempt would have raised
+    DuplicateNarrationInputHashError against the first attempt's failed
+    narration run."""
+    from app.application.stage_executors import NarrationExecutor
+    from app.narration.fake import FakeTTSProvider
+
+    _seed_filled_slot_via_decision_cycle(db, channel, workspace, monkeypatch=monkeypatch)
+    _enable_production(db, channel, workspace)
+
+    attempt = {"n": 0}
+    real_build_provider = NarrationExecutor._build_provider
+
+    def _flaky_build_provider(effective_config, cfg):
+        attempt["n"] += 1
+        if attempt["n"] == 1:
+            return FakeTTSProvider(fail_on={1})
+        return real_build_provider(effective_config, cfg)
+
+    monkeypatch.setattr(NarrationExecutor, "_build_provider", staticmethod(_flaky_build_provider))
+
+    first = run_production_cycle(
+        db,
+        cp_channel_id=channel.id,
+        workspace_id=workspace.id,
+        voice_profile_id=1,
+        anthropic_api_key="fake-test-key-not-real",
+    )
+    assert first.outcome == ProductionOutcome.FAILED
+    assert first.failed_stage == "narration"
+
+    failed_runs = db.execute("SELECT id, status FROM narration_runs").fetchall()
+    assert len(failed_runs) == 1
+    assert failed_runs[0]["status"] == "failed"
+    original_failed_run_id = failed_runs[0]["id"]
+
+    # No manual cleanup here -- straight into the retry, exactly as the
+    # scheduler's next tick would do.
+    second = run_production_cycle(
+        db,
+        cp_channel_id=channel.id,
+        workspace_id=workspace.id,
+        voice_profile_id=1,
+        anthropic_api_key="fake-test-key-not-real",
+    )
+
+    assert second.outcome == ProductionOutcome.READY
+    assert second.preflight_passed is True
+    assert second.slot_id == first.slot_id
+    assert second.retry_count == 1
+
+    all_runs = db.execute("SELECT id, status FROM narration_runs ORDER BY id").fetchall()
+    assert len(all_runs) == 2
+    assert all_runs[0]["id"] == original_failed_run_id
+    assert all_runs[0]["status"] == "failed"
+    assert all_runs[1]["status"] in ("completed", "approved")
 
 
 # ---------------------------------------------------------------------------

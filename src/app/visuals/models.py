@@ -53,6 +53,22 @@ class VisualBeat:
     preferred_motion: str = MOTION_NONE
     importance: float = 0.5
     confidence: float = 0.5
+    # Phase 5 — narration→literal-visual-meaning translation (§3). Empty
+    # strings/False are the untranslated default: a beat plan_beats() alone
+    # produced, or one a translation call skipped/failed for, behaves exactly
+    # as before this field existed. When populated, `literal_visual_subject`
+    # is what the viewer should literally see once any metaphor has been
+    # resolved against the video's real topic — never a restatement of
+    # `narration_text` itself (see intent_translation.py).
+    literal_visual_subject: str = ""
+    visual_setting: str = ""
+    topic_context: str = ""
+    # True when translation grouped this beat with its immediate predecessor
+    # as part of one continuous process/explanation (§8-9) — a hint that
+    # visual retrieval may reuse or thematically match the previous beat's
+    # asset rather than searching cold. Reported/consulted only; never
+    # changes beat timing.
+    continues_sequence: bool = False
 
     @property
     def primary_query(self) -> str:
@@ -109,6 +125,59 @@ class ScoredCandidate:
     def accepted(self) -> bool:
         return self.rejected_reason is None
 
+    @property
+    def verify_eligible(self) -> bool:
+        """Tri-state candidate disposition (Phase 4, §2): deferred to
+        actual-content verification rather than accepted or rejected
+        outright. The reason string is duplicated as a literal rather than
+        imported from scoring.py — scoring.py already imports FROM this
+        module, so importing back would be circular; composition.py's
+        RELEVANCE_REJECTION_REASONS uses the identical pattern for the same
+        reason."""
+        return self.rejected_reason == "needs_verification"
+
+    @property
+    def disposition(self) -> str:
+        """ "accept" | "verify" | "reject" — the definitive three-way read."""
+        if self.accepted:
+            return "accept"
+        if self.verify_eligible:
+            return "verify"
+        return "reject"
+
+
+@dataclass
+class CandidateEvidence:
+    """A bounded, auditable record of one candidate considered for a beat.
+
+    Three-way ``decision``, not a binary accepted/rejected label: at
+    selection time multiple candidates can genuinely clear every threshold
+    simultaneously, and only one becomes the resolution. Persisting every
+    non-selected-but-otherwise-fine candidate as "rejected" would fabricate
+    a reason it never had.
+
+    - "selected"            — this is the candidate actually used.
+    - "eligible_not_selected" — cleared every threshold (rejection_reason is
+      None) but wasn't the one chosen — ranked lower, or its own download
+      failed.
+    - "rejected"            — failed a real, already-computed threshold;
+      rejection_reason carries that verbatim REASON_* constant.
+    """
+
+    provider: str
+    provider_asset_id: str
+    asset_key: str
+    title: str
+    tags: list[str] = field(default_factory=list)
+    query: str = ""
+    score: float = 0.0
+    semantic_score: float = 0.0
+    topic_score: float = 0.0
+    evidence_score: float = 0.0
+    decision: str = "rejected"  # "selected" | "eligible_not_selected" | "rejected"
+    rejection_reason: str | None = None
+    provider_rank: int = 0
+
 
 @dataclass
 class BeatResolution:
@@ -139,6 +208,43 @@ class BeatResolution:
     # than the ordinary first pass. Reported, never used for scoring: a
     # remediated visual is an ordinary visual once it is on screen.
     remediated: bool = False
+    # Set when a graphic fallback borrowed a structural sibling's renderer
+    # (Phase 18G diagram-continuation routing) instead of the beat's own
+    # visual_intent. None means the beat's own intent drove rendering, same
+    # as before this field existed.
+    render_intent_override: str | None = None
+    # Bounded, auditable record of every candidate this beat actually
+    # retrieved and scored this run — the selected one plus up to
+    # MAX_REJECTED_CANDIDATES_PERSISTED runners-up/rejects. Never a new
+    # provider call; only what was already in hand.
+    candidate_evidence: list[CandidateEvidence] = field(default_factory=list)
+    # True when this beat's visual was NOT resolved on its own but borrowed
+    # from an earlier beat in the same run of adjacent, unplanned text-card
+    # fallbacks (Phase 2 cascade mitigation) — one card held across the run
+    # rather than a rapid flash of several unrelated ones. Reported only;
+    # never affects scoring or timing.
+    held_visual: bool = False
+    # Actual-content verification (Phase 2, §7-9). None/"unavailable" means
+    # verification never ran for this beat — never fabricated as "verified".
+    # "verified" | "questionable" | "rejected" | "unavailable" | None.
+    verification_status: str | None = None
+    verification_reason: str | None = None
+    # 0..1 confidence from the verification pass specifically (distinct from
+    # `score`, which is the lexical/metadata relevance score). None when
+    # verification did not run.
+    visual_relevance_confidence: float | None = None
+    # True when this beat's asset came from vision-assisted candidate rescue
+    # (Phase 4, §6) — a textually-inconclusive candidate a vision check
+    # confirmed, tried BEFORE this beat would have fallen back to a text
+    # card. Distinct from `remediated` (Phase 18E's alternate-query
+    # broadening pass): reported only, never used for scoring.
+    vision_rescued: bool = False
+    # True when this beat reused its immediate predecessor's already-verified
+    # real asset instead of searching cold (Phase 5, §8-9 — visual sequence
+    # continuity). Only ever set when `beat.continues_sequence` was true AND
+    # the predecessor's asset was still within its normal repetition budget;
+    # never changes beat timing. Reported only, never used for scoring.
+    continued_from_previous: bool = False
 
     @property
     def resolved(self) -> bool:
@@ -268,6 +374,12 @@ class VisualBeatRecord(BaseModel):
     engine_version: str
     planner_version: str
     created_at: datetime
+    # Additive (schema v55). None on any row from before this column existed
+    # or on a database not yet migrated — never fabricated as "unavailable"
+    # vs. simply absent; both read as None here.
+    verification_status: str | None = None
+    verification_reason: str | None = None
+    visual_relevance_confidence: float | None = None
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> VisualBeatRecord:

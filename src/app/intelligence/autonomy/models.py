@@ -109,11 +109,38 @@ class PublishFailureCategory(StrEnum):
     ARTIFACT_QUALITY_BLOCKED = "ARTIFACT_QUALITY_BLOCKED"
 
 
+# A configured publication time is a PREFERRED time, not an expiration. A
+# category in this set describes an ATTEMPT that might succeed differently
+# next time — a network blip, a transient provider outage, a revalidation
+# that could pass once conditions change — so it must never cause the slot
+# to become permanently ineligible merely because a short retry budget was
+# spent. PROVIDER_HEALTH_BLOCKED belongs here even though its name says
+# "blocked": it is raised from an upload-time provider/token-refresh
+# failure (see publishing_cycle._do_upload), and the DNS/OAuth-refresh
+# incident that first surfaced this exact bug is the textbook case — it
+# self-healed within hours with zero code change once network reachability
+# returned. See find_slot_ready_to_publish's cooldown clause.
 RETRYABLE_PUBLISH_FAILURES = frozenset(
     {
         PublishFailureCategory.UPLOAD_FAILED_RETRYABLE,
         PublishFailureCategory.RELEASE_FAILED_RETRYABLE,
         PublishFailureCategory.PREUPLOAD_VALIDATION_FAILED,
+        PublishFailureCategory.PROVIDER_HEALTH_BLOCKED,
+    }
+)
+
+# The opposite case: an attempt outcome that will not change no matter how
+# many times or how late it is retried, because it demonstrably requires a
+# human to fix something (credentials, the artifact itself, a provider
+# rejection that cannot safely be repeated). Once the short retry budget is
+# spent for one of these, run_publishing_cycle retires the slot (see
+# find_slot_with_permanent_failure) — preserving the artifact and its
+# history, but freeing the queue and requiring an operator to act, rather
+# than hammering a known-dead error forever.
+PERMANENT_PUBLISH_FAILURES: frozenset[PublishFailureCategory] = frozenset(
+    {
+        PublishFailureCategory.UPLOAD_FAILED_TERMINAL,
+        PublishFailureCategory.RELEASE_FAILED_TERMINAL,
     }
 )
 
@@ -303,6 +330,9 @@ class DecisionCycleResult:
     cross_pub_learning_ran: bool = False
     cross_pub_learning_publication_count: int = 0
 
+    topic_attribute_learning_ran: bool = False
+    topic_attribute_learning_observation_count: int = 0
+
     semantic_fit_considered: int = 0
     semantic_fit_evaluated: int = 0
     semantic_fit_cache_hits: int = 0
@@ -320,6 +350,14 @@ class DecisionCycleResult:
     # case; a non-zero value means the reserved slot is deliberately later
     # than the cadence alone would have chosen.
     rate_limited_slot_shift: int = 0
+
+    # Phase 7A, §9 — bounded no-eligible-candidate recovery. False/None for
+    # every cycle that never hit NO_ELIGIBLE_CANDIDATE with eligible_count==0,
+    # and for any such cycle where the recovery cooldown/streak floor wasn't
+    # yet met — recovery_attempted only ever means a discovery call actually
+    # ran this tick, never merely "was considered".
+    recovery_attempted: bool = False
+    recovery_reason: str | None = None
 
     errors: list[str] = field(default_factory=list)
 

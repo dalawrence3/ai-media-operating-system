@@ -28,7 +28,26 @@ class TransientProviderError(AIError):
 
 
 class InvalidStructuredResponseError(AIError):
-    """The provider response could not be parsed or did not match the schema."""
+    """The provider response could not be parsed or did not match the schema.
+
+    raw_text_excerpt and stop_reason are optional bounded diagnostics — never
+    an unbounded dump of provider output, and never a credential — so a
+    structured-response failure remains diagnosable (was it truncated? was it
+    prose? malformed syntax?) without a second, un-audited copy of raw model
+    output living anywhere. Callers that only pass a message (e.g. FakeProvider,
+    ReplayEligibilityProvider) leave both as None; that is expected, not a bug.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_text_excerpt: str | None = None,
+        stop_reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.raw_text_excerpt = raw_text_excerpt
+        self.stop_reason = stop_reason
 
 
 class PromptNotFoundError(AIError):

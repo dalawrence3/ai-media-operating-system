@@ -2025,6 +2025,27 @@ def promote_opportunity(
         topic_id,
         title,
     )
+
+    # Phase 18H.C — snapshot any cached semantic-fit topic-attribute
+    # evaluation onto the newly-materialized topic. Deliberately OUTSIDE the
+    # promotion SAVEPOINT above and independently try/excepted: the topic is
+    # already committed at this point, and a missing/failed attribute
+    # snapshot (no cached evaluation, older DB, etc.) must never be able to
+    # undo or block a successful promotion.
+    try:
+        from app.learning.topic_attributes import snapshot_semantic_fit_attributes_to_topic
+
+        snapshot_semantic_fit_attributes_to_topic(
+            conn, topic_id=topic_id, opportunity_id=opportunity_id
+        )
+    except Exception as exc:  # noqa: BLE001 — attribute snapshotting is never load-bearing
+        logger.warning(
+            "Topic-attribute snapshot failed for topic id=%d opportunity id=%d: %s",
+            topic_id,
+            opportunity_id,
+            exc,
+        )
+
     return (topic, event)
 
 

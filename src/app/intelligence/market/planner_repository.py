@@ -11,7 +11,10 @@ from datetime import UTC, datetime
 from app.intelligence.market.planner_models import (
     CollectionPolicy,
     ExplorationProbe,
+    ExplorationProbeStatus,
+    ExplorationProbeType,
     ExplorationRun,
+    ExplorationRunStatus,
     ProbeEvidence,
     make_probe_input_hash,
     make_run_input_hash,
@@ -195,6 +198,7 @@ def create_exploration_probe(
     collection_policy: CollectionPolicy | None = None,
     planner_version: str = "v1",
     market_region_label: str | None = None,
+    domain_family: str | None = None,
 ) -> ExplorationProbe:
     policy = collection_policy or CollectionPolicy()
     policy_json = policy.model_dump_json()
@@ -217,8 +221,8 @@ def create_exploration_probe(
              normalized_query, probe_type, parent_probe_id, parent_job_id,
              exploration_depth, region_code, language_code,
              collection_policy_json, status, corroboration_count,
-             planner_version, market_region_label, input_hash, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', 0, ?, ?, ?, ?)
+             planner_version, market_region_label, domain_family, input_hash, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'candidate', 0, ?, ?, ?, ?, ?)
         """,
         (
             run_id,
@@ -235,6 +239,7 @@ def create_exploration_probe(
             policy_json,
             planner_version,
             market_region_label,
+            domain_family,
             input_hash,
             now,
         ),
@@ -489,6 +494,90 @@ def count_dispatched_probes(
             (channel_id,),
         ).fetchone()
     return row[0] if row else 0
+
+
+def broad_discovery_complete(
+    conn: sqlite3.Connection,
+    channel_id: int | None,
+) -> bool:
+    """Phase 18H.B — True iff broad-domain cold-start discovery has ever actually
+    produced a usable market region for this channel.
+
+    Deliberately narrower than count_dispatched_probes(): channel_bootstrap
+    probes (direct echoes of the channel's own niche), adjacent_topic probes
+    (which by design stay close to an existing probe/cluster), and validation
+    probes never satisfy this — only a MARKET_REGION probe that made it past
+    selection (status SELECTED or DISPATCHED) counts as evidence the cold-start
+    LLM call has ever genuinely proposed and used a broad, cross-niche region.
+    """
+    ok_statuses = (
+        ExplorationProbeStatus.SELECTED.value,
+        ExplorationProbeStatus.DISPATCHED.value,
+    )
+    placeholders = ", ".join("?" for _ in ok_statuses)
+    if channel_id is None:
+        row = conn.execute(
+            f"""SELECT 1 FROM market_exploration_probes
+                WHERE channel_id IS NULL AND probe_type = ?
+                  AND status IN ({placeholders}) LIMIT 1""",
+            (ExplorationProbeType.MARKET_REGION.value, *ok_statuses),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            f"""SELECT 1 FROM market_exploration_probes
+                WHERE channel_id = ? AND probe_type = ?
+                  AND status IN ({placeholders}) LIMIT 1""",
+            (channel_id, ExplorationProbeType.MARKET_REGION.value, *ok_statuses),
+        ).fetchone()
+    return row is not None
+
+
+def has_running_exploration_run(
+    conn: sqlite3.Connection,
+    channel_id: int | None,
+) -> bool:
+    """Phase 18H.B — True iff this channel has an exploration run still RUNNING.
+
+    State-based mutual exclusion for the (human-triggered, not scheduler-
+    triggered) cold-start CLI gate — no time-based cooldown exists or is
+    invented here; a run that is genuinely mid-flight is the only condition
+    that should defer a fresh attempt.
+    """
+    if channel_id is None:
+        row = conn.execute(
+            "SELECT 1 FROM market_exploration_runs WHERE channel_id IS NULL AND status = ? LIMIT 1",
+            (ExplorationRunStatus.RUNNING.value,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT 1 FROM market_exploration_runs WHERE channel_id = ? AND status = ? LIMIT 1",
+            (channel_id, ExplorationRunStatus.RUNNING.value),
+        ).fetchone()
+    return row is not None
+
+
+def list_current_opportunity_topics(
+    conn: sqlite3.Connection,
+    channel_id: int | None,
+) -> list[str]:
+    """Phase 18H.B — Return this channel's current live opportunity topics.
+
+    Cheap, local (no provider call): feeds the cold-start prompt's "avoid
+    repeating" context alongside prior_regions, so a broad-region proposal is
+    steered away from domains the channel's opportunity inventory already
+    substantially covers — without adding a second LLM call or a new table.
+    """
+    if channel_id is None:
+        return []
+    rows = conn.execute(
+        """SELECT DISTINCT normalized_topic FROM opportunities
+            WHERE channel_id = ?
+              AND current_lifecycle_state NOT IN ('rejected', 'archived')
+            ORDER BY created_at DESC
+            LIMIT 30""",
+        (channel_id,),
+    ).fetchall()
+    return [r[0] for r in rows if r[0]]
 
 
 def list_expandable_parent_probes(
@@ -751,6 +840,50 @@ def list_prior_market_region_labels(
              WHERE channel_id = ?
                AND probe_type = 'market_region'
                AND status IN ('selected', 'dispatched', 'deferred')
+            ORDER BY created_at DESC
+            LIMIT 30
+            """,
+            (channel_id,),
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def list_prior_market_region_domain_families(
+    conn: sqlite3.Connection,
+    channel_id: int | None,
+) -> list[str]:
+    """Phase 18H.B.1 — Return distinct, non-null domain_family values from
+    prior market_region probes for this channel.
+
+    Historical probes predating this design (including the real run #10)
+    have domain_family = NULL and are simply absent from this list — no
+    backfill, no rewrite. Used to add prior-run subject-family context to
+    the v3 cold-start prompt alongside the existing prior-region-label
+    context (list_prior_market_region_labels), which remains the sole
+    context source for pre-18H.B.1 runs.
+    """
+    if channel_id is None:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT domain_family
+              FROM market_exploration_probes
+             WHERE channel_id IS NULL
+               AND probe_type = 'market_region'
+               AND status IN ('selected', 'dispatched', 'deferred')
+               AND domain_family IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT 30
+            """
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT domain_family
+              FROM market_exploration_probes
+             WHERE channel_id = ?
+               AND probe_type = 'market_region'
+               AND status IN ('selected', 'dispatched', 'deferred')
+               AND domain_family IS NOT NULL
             ORDER BY created_at DESC
             LIMIT 30
             """,

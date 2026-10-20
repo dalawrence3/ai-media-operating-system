@@ -828,7 +828,7 @@ def test_l_matching_canonical_identity_succeeds(tmp_path):
 
 
 def test_schema_version_is_35():
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 # ---------------------------------------------------------------------------

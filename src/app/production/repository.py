@@ -268,8 +268,8 @@ def create_production_plan(conn: sqlite3.Connection, draft: ProductionPlanDraft)
                 INSERT INTO production_segments (
                     plan_id, segment_index, section_index, section_type,
                     narration_text, estimated_duration_s, estimated_word_count,
-                    created_at
-                ) VALUES (?,?,?,?,?,?,?,?)
+                    think_duration_ms, language_code, created_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     plan_id,
@@ -279,6 +279,8 @@ def create_production_plan(conn: sqlite3.Connection, draft: ProductionPlanDraft)
                     seg.narration_text,
                     seg.estimated_duration_s,
                     seg.estimated_word_count,
+                    seg.think_duration_ms,
+                    seg.language_code,
                     now,
                 ),
             )

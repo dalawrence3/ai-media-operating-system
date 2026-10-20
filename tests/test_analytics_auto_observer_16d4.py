@@ -138,7 +138,7 @@ def _seed_publication(
 
 
 def test_schema_version_is_45() -> None:
-    assert SCHEMA_VERSION == 51
+    assert SCHEMA_VERSION == 60
 
 
 def test_analytics_observation_state_table_created(db: sqlite3.Connection) -> None:

@@ -47,15 +47,19 @@ _LLM_TWO = json.dumps(
             {
                 "query": "retirement savings planning",
                 "market_region_label": "Retirement Planning",
+                "domain_family": "personal finance",
                 "rationale": "High-relevance adjacent region",
-                "semantic_fit_score_estimate": 0.88,
+                "format_fit_score": 0.88,
+                "distance_from_current_subjects": 0.7,
                 "distinctiveness_rationale": "Long-term vs day-to-day finance",
             },
             {
                 "query": "stock market beginner guide",
                 "market_region_label": "Stock Investing",
+                "domain_family": "career skills",
                 "rationale": "Natural next step after budgeting",
-                "semantic_fit_score_estimate": 0.75,
+                "format_fit_score": 0.75,
+                "distance_from_current_subjects": 0.65,
                 "distinctiveness_rationale": "Wealth-building vs expense reduction",
             },
         ]

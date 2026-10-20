@@ -134,6 +134,24 @@ MIN_EVIDENCE_WEIGHT: Final[float] = 0.9
 # Below this, the beat is flagged low-confidence for QA even if it resolved.
 LOW_CONFIDENCE_SCORE: Final[float] = 0.48
 
+# Phase 4 — the floor a textually-inconclusive candidate's aggregate score
+# must still clear to be worth an actual-content verification call at all
+# (scoring.REASON_NEEDS_VERIFICATION). Deliberately reuses the exact value
+# already calibrated for Phase 18E's bounded remediation pass
+# (engine.REMEDIATION_MIN_SCORE) rather than inventing a new number from one
+# video's observed range (0.39-0.55): that value was chosen for the same
+# underlying judgment call — "thin evidence, but worth one more look before
+# giving up" — and a single shared, already-reasoned constant is safer than
+# two independently-tuned thresholds drifting apart for no principled reason.
+# Below it, a candidate is not "plausible enough to spend a vision call on";
+# REASON_WEAK_EVIDENCE still applies and the candidate is discarded outright.
+VISION_RESCUE_MIN_SCORE: Final[float] = 0.34
+
+# Maximum number of non-selected candidates persisted per beat as evidence
+# (whatever mix of eligible_not_selected/rejected), bounding table growth
+# regardless of how many candidates a provider search actually returned.
+MAX_REJECTED_CANDIDATES_PERSISTED: Final[int] = 3
+
 # ── License / commercial safety ──────────────────────────────────────────────
 
 LICENSE_VERIFIED: Final[str] = "verified"

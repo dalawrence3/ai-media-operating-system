@@ -15,6 +15,9 @@ import {
   publicationAnalytics,
   publicationAnalyticsHistory,
   recommendation,
+  recommendationRejected,
+  recommendationSupersededV1,
+  recommendationAcceptedStale,
 } from '@/test/fixtures'
 
 const B = 'http://localhost:5173/api/v1'
@@ -113,6 +116,25 @@ describe('VideoAnalytics', () => {
     expect(screen.getByText(recommendation.title)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /view in learn/i }))
     await waitFor(() => screen.getByTestId('learn-page'))
+  })
+
+  it('excludes rejected, superseded, and stale-accepted recommendations (Phase 18F)', async () => {
+    server.use(
+      http.get(`${B}/workspaces/${WS_ID}/recommendations`, () =>
+        HttpResponse.json([
+          recommendation,
+          recommendationRejected,
+          recommendationSupersededV1,
+          recommendationAcceptedStale,
+        ]),
+      ),
+    )
+    renderPage()
+    await waitFor(() => screen.getByText('Context'))
+    expect(screen.getByText(recommendation.title)).toBeInTheDocument()
+    expect(screen.queryByText(recommendationRejected.title)).not.toBeInTheDocument()
+    expect(screen.queryByText(recommendationSupersededV1.title)).not.toBeInTheDocument()
+    expect(screen.queryByText(recommendationAcceptedStale.title)).not.toBeInTheDocument()
   })
 
   it('links back to the analytics landing page', async () => {

@@ -21,8 +21,13 @@ effects. Its design is therefore organized around three rules:
 
 3. THE SLOT DECIDES WHEN, NOT THE ARTIFACT.
    A READY video does not publish because it is ready. It publishes because
-   its reserved slot is due, within its grace window, and everything else
-   agrees (sections 9 and 10).
+   its reserved slot is due — and, once due, STAYS due. A configured
+   publication time is a preferred time, not an expiration: this cycle will
+   keep attempting a ready, unpublished artifact regardless of how late it
+   is, until it succeeds, an operator explicitly moves or cancels it, or its
+   failure history proves permanent (section 10, and see
+   app.intelligence.autonomy.models.RETRYABLE_PUBLISH_FAILURES /
+   PERMANENT_PUBLISH_FAILURES).
 
 The upload/release split mirrors the provider's own two-step API and gives
 the state machine a durable resting point at `uploaded` — the one state from
@@ -33,7 +38,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from app.intelligence.autonomy.models import (
@@ -46,19 +51,15 @@ from app.intelligence.autonomy.models import (
 from app.intelligence.autonomy.repository import (
     MAX_PUBLISH_RETRIES,
     find_slot_ready_to_publish,
+    find_slot_with_permanent_failure,
     get_slot,
-    mark_slot_missed,
     mark_slot_publish_blocked,
     mark_slot_publish_failed,
     mark_slot_released,
     mark_slot_uploaded,
     start_slot_publishing,
 )
-from app.publishing.authorization import (
-    DEFAULT_MISSED_SLOT_GRACE_MINUTES,
-    evaluate_publishing_authorization,
-    get_channel_publishing_authorization,
-)
+from app.publishing.authorization import evaluate_publishing_authorization
 
 logger = logging.getLogger(__name__)
 
@@ -151,8 +152,42 @@ def run_publishing_cycle(
     )
 
     # ── Cheapest possible check: is there anything at all to publish? ─────
-    slot = find_slot_ready_to_publish(conn, cp_channel_id)
+    slot = find_slot_ready_to_publish(conn, cp_channel_id, now=current_time)
     if slot is None:
+        # find_slot_ready_to_publish() stops returning a slot once its retry
+        # budget is spent on a PERMANENT failure category — correctly, since
+        # retrying a known-permanent error is pointless (a RETRYABLE category
+        # instead cools down and stays eligible forever; it would already
+        # have been returned above). That exclusion alone leaves the slot
+        # stuck: still state='filled', publish_status='failed' isn't a
+        # terminal status. Retire it here so the queue can refill and the
+        # artifact's history is preserved for an operator to inspect.
+        permanently_failed = find_slot_with_permanent_failure(conn, cp_channel_id)
+        if permanently_failed is not None:
+            reason = (
+                f"Slot {permanently_failed.id} exhausted its publish retry budget "
+                f"({permanently_failed.publish_retry_count} attempt(s), max "
+                f"{MAX_PUBLISH_RETRIES}) on a permanent failure category "
+                f"({permanently_failed.publish_failure_category}) that will not resolve by "
+                f"retrying; last failure: {permanently_failed.publish_error or 'unknown'}. "
+                "Retiring — the produced artifact and its history are preserved for review."
+            )
+            _retire(
+                conn,
+                permanently_failed.id,
+                result,
+                category=PublishFailureCategory(
+                    permanently_failed.publish_failure_category or "UPLOAD_FAILED_TERMINAL"
+                ),
+                reason=reason,
+            )
+            result.slot_id = permanently_failed.id
+            result.experiment_id = permanently_failed.experiment_id
+            result.publishing_plan_id = permanently_failed.production_publishing_plan_id
+            result.retry_count = permanently_failed.publish_retry_count
+            logger.info("publishing cycle: %s", reason)
+            return result
+
         result.outcome = PublishOutcome.NO_SLOT_TO_PUBLISH
         result.reason = "No READY slot is awaiting publication for this channel."
         result.completed_at = _now_iso()
@@ -162,13 +197,11 @@ def run_publishing_cycle(
     result.experiment_id = slot.experiment_id
     result.publishing_plan_id = slot.production_publishing_plan_id
     result.retry_count = slot.publish_retry_count
+    # Informational only (section 9's UI wording, section 3's analytics) —
+    # never gates whether this cycle attempts to publish. See the module
+    # docstring: a configured time is preferred, not an expiration.
     result.deadline_status = _deadline_status(slot.scheduled_for_utc, current_time)
 
-    # ── Due-ness and the missed-slot policy (sections 9 and 10) ──────────
-    auth_row = get_channel_publishing_authorization(conn, cp_channel_id)
-    grace_minutes = (
-        auth_row.missed_slot_grace_minutes if auth_row else DEFAULT_MISSED_SLOT_GRACE_MINUTES
-    )
     try:
         scheduled = _parse_utc(slot.scheduled_for_utc)
     except ValueError:
@@ -188,23 +221,10 @@ def run_publishing_cycle(
         result.completed_at = _now_iso()
         return result
 
-    grace_deadline = scheduled + timedelta(minutes=grace_minutes)
-    if current_time > grace_deadline and slot.publish_status != PublishStatus.uploaded:
-        # Past the grace window and nothing has been uploaded yet. Publishing
-        # now would put out a video hours or days late with no human aware of
-        # it. Mark it and require an explicit reschedule.
-        reason = (
-            f"Slot {slot.id} was scheduled for {slot.scheduled_for_utc}Z and its "
-            f"{grace_minutes}-minute grace window has elapsed. Not publishing late; "
-            "the produced artifact is preserved and can be rescheduled to a new slot."
-        )
-        mark_slot_missed(conn, slot.id, reason=reason)
-        result.outcome = PublishOutcome.MISSED
-        result.failure_category = PublishFailureCategory.MISSED_SLOT.value
-        result.reason = reason
-        result.completed_at = _now_iso()
-        logger.info("publishing cycle: %s", reason)
-        return result
+    # No matter how overdue `scheduled` is — minutes, hours, or days — a due,
+    # ready, unpublished artifact keeps attempting publication here. See the
+    # module docstring and result.deadline_status above for the lateness
+    # label; it is informational only.
 
     # ── Authorization gate #1, before any external side effect ───────────
     # A slot resuming after its own earlier upload already owns a Publication

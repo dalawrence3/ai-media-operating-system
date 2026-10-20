@@ -240,8 +240,10 @@ class FakeAIProvider:
                 SeedExpansionCandidate(
                     query=q,
                     market_region_label=q,
+                    domain_family="test family",
                     rationale="test",
-                    semantic_fit_score_estimate=0.8,
+                    format_fit_score=0.8,
+                    distance_from_current_subjects=0.7,
                     distinctiveness_rationale="distinct from existing",
                 )
                 for q in self.candidates

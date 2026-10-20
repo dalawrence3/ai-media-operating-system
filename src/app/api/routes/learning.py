@@ -10,8 +10,16 @@ from app.api.deps import get_db, require_workspace_permission, workspace_topic_i
 from app.api.jwt_auth import CurrentUser, get_current_user
 from app.learning import repository as learning_repo
 from app.learning.orchestrator import accept_recommendation, reject_recommendation
+from app.learning.validation import compute_evidence_validity
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/recommendations", tags=["learning"])
+
+
+def _dump_with_validity(conn: Any, rec: Any) -> dict[str, Any]:
+    """Serialize a recommendation with a read-only, additive validity check
+    (Phase 18F) — never mutates the row; see compute_evidence_validity."""
+    is_valid, reason = compute_evidence_validity(conn, rec)
+    return {**rec.model_dump(), "evidence_valid": is_valid, "validity_reason": reason}
 
 
 @router.get("")
@@ -41,7 +49,7 @@ def list_recommendations(
             status=status,
             limit=limit,
         )
-        return [r.model_dump() for r in results]
+        return [_dump_with_validity(conn, r) for r in results]
 
     topic_ids = workspace_topic_ids(conn, workspace_id)
     if not topic_ids:
@@ -58,7 +66,7 @@ def list_recommendations(
             )
         )
     results.sort(key=lambda r: r.created_at, reverse=True)
-    return [r.model_dump() for r in results[:limit]]
+    return [_dump_with_validity(conn, r) for r in results[:limit]]
 
 
 @router.post("/{recommendation_id}/accept")

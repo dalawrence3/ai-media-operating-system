@@ -26,12 +26,17 @@ import pytest
 from app.control_plane import repository as cp_repo
 from app.control_plane.models import ChannelDraft, WorkspaceDraft
 from app.core.database import open_db
-from app.intelligence.autonomy.models import PublishOutcome, PublishStatus
+from app.intelligence.autonomy.models import DeadlineStatus, PublishOutcome, PublishStatus
 from app.intelligence.autonomy.publishing_cycle import run_publishing_cycle
 from app.intelligence.autonomy.repository import (
+    MAX_PUBLISH_RETRIES,
+    SlotNotRescheduleEligibleError,
+    compute_queue_occupancy,
     find_slot_ready_to_publish,
     get_slot,
+    reschedule_missed_slot,
     reschedule_slot_to_new_time,
+    retire_slot,
 )
 from app.publishing.authorization import (
     BlockReason,
@@ -726,76 +731,441 @@ def test_due_slot_within_grace_window_publishes(db, channel, workspace, tmp_path
     assert get_slot(db, slot_id).publish_status is PublishStatus.released
 
 
-def test_slot_past_grace_window_is_marked_missed_not_published(db, channel, workspace, tmp_path):
-    _authorize(db, channel, workspace, missed_slot_grace_minutes=30)
+# ── Catch-up publishing: a configured time is preferred, not an expiration ────
+#
+# A ready, unpublished artifact stays eligible for publication indefinitely —
+# lateness alone never removes it from consideration. Sections 2, 3, 6, 13.
+
+
+def _run_with_factory(db, channel, workspace, provider_factory, *, yt_client=None, now=None):
+    yt = yt_client if yt_client is not None else _FakeYTClient()
+    return run_publishing_cycle(
+        db,
+        cp_channel_id=channel.id,
+        workspace_id=workspace.id,
+        provider_factory=provider_factory,
+        yt_client_factory=lambda conn, **kw: yt,
+        now=now,
+    )
+
+
+@pytest.mark.parametrize(
+    "lateness",
+    [timedelta(minutes=5), timedelta(hours=3), timedelta(days=2)],
+    ids=["5min", "3h", "2d"],
+)
+def test_a_ready_slot_remains_eligible_no_matter_how_late(
+    db, channel, workspace, tmp_path, lateness
+):
+    """Section 13.A/B/C: 5 minutes, 3 hours, or 2 days late — all equally
+    eligible and all equally publishable. No lateness threshold exists."""
+    _authorize(db, channel, workspace)
     slot_id, _ = _seed_ready_slot(
         db,
         channel.id,
         workspace.id,
-        scheduled_for_utc=_iso(datetime.now(UTC) - timedelta(hours=5)),
+        scheduled_for_utc=_iso(datetime.now(UTC) - lateness),
         tmp_path=tmp_path,
     )
     provider = _FakeProvider()
     result = _run(db, channel, workspace, provider=provider)
 
-    assert result.outcome is PublishOutcome.MISSED
-    assert result.failure_category == "MISSED_SLOT"
-    assert provider.upload_calls == []
-    assert get_slot(db, slot_id).publish_status is PublishStatus.skipped_missed
+    assert result.outcome is PublishOutcome.RELEASED, result.reason
+    assert get_slot(db, slot_id).publish_status is PublishStatus.released
+    # The lateness is still visible for diagnostics/UI — it just never gated
+    # whether the cycle attempted to publish.
+    assert result.deadline_status is not None
 
 
-def test_a_missed_slot_is_never_picked_up_again(db, channel, workspace, tmp_path):
-    """The Phase 18B slot's exact situation: already missed, must not publish
-    just because publishing became enabled."""
-    _authorize(db, channel, workspace, missed_slot_grace_minutes=30)
+def test_observer_resuming_after_multi_day_downtime_selects_the_due_slot_immediately(
+    db, channel, workspace, tmp_path
+):
+    """Section 6/13.D: the laptop was closed Monday noon through Wednesday
+    morning; the slot was due Monday 1pm. The very first cycle after resume
+    must pick it up — no waiting for the next scheduled slot."""
+    _authorize(db, channel, workspace)
+    monday_1pm = datetime(2026, 1, 5, 13, 0, 0, tzinfo=UTC)
+    slot_id, _ = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_iso(monday_1pm), tmp_path=tmp_path
+    )
+    wednesday_10am = datetime(2026, 1, 7, 10, 0, 0, tzinfo=UTC)
+
+    found = find_slot_ready_to_publish(db, channel.id, now=wednesday_10am)
+    assert found is not None
+    assert found.id == slot_id
+
+    provider = _FakeProvider()
+    result = _run(db, channel, workspace, provider=provider, now=wednesday_10am)
+    assert result.outcome is PublishOutcome.RELEASED, result.reason
+
+
+def test_transient_provider_failure_past_short_retry_limit_stays_eligible(
+    db, channel, workspace, tmp_path
+):
+    """Section 13.E: PROVIDER_HEALTH_BLOCKED (the exact live DNS/OAuth
+    incident) reaching the short retry limit must NOT permanently exclude
+    the slot — it must still be findable once cooled down, unlike a genuine
+    PERMANENT failure (see test_permanent_failure_retires_after_short_budget)."""
+    _authorize(db, channel, workspace)
+    slot_id, _ = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path
+    )
+    failing_factory = lambda conn, **kw: (_ for _ in ()).throw(  # noqa: E731
+        RuntimeError(
+            "Token refresh could not reach the provider (transient): "
+            "NameResolutionError('oauth2.googleapis.com')"
+        )
+    )
+
+    for _ in range(MAX_PUBLISH_RETRIES):
+        result = _run_with_factory(db, channel, workspace, failing_factory)
+        assert result.outcome is PublishOutcome.FAILED
+        assert result.failure_category == "PROVIDER_HEALTH_BLOCKED"
+
+    slot = get_slot(db, slot_id)
+    assert slot.publish_status is PublishStatus.failed
+    assert slot.publish_retry_count == MAX_PUBLISH_RETRIES
+
+    # Still eligible right now — never retired, never removed from the queue —
+    # just not selected again inside the cooldown window (section 13.F).
+    assert find_slot_ready_to_publish(db, channel.id) is None
+    occ = compute_queue_occupancy(db, channel.id)
+    assert occ.satisfied, "an overdue-but-retrying artifact should keep occupying the queue"
+
+
+def test_cooldown_prevents_a_retry_storm(db, channel, workspace, tmp_path):
+    """Section 13.F: immediately after the short budget is spent, the next
+    tick (a minute later, say) must NOT attempt again."""
+    _authorize(db, channel, workspace)
+    slot_id, _ = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path
+    )
+    failing_factory = lambda conn, **kw: (_ for _ in ()).throw(  # noqa: E731
+        RuntimeError("provider unreachable")
+    )
+    for _ in range(MAX_PUBLISH_RETRIES):
+        _run_with_factory(db, channel, workspace, failing_factory)
+
+    just_after = datetime.now(UTC) + timedelta(minutes=1)
+    assert find_slot_ready_to_publish(db, channel.id, now=just_after) is None
+
+    attempts_before = get_slot(db, slot_id).publish_retry_count
+    result = _run_with_factory(db, channel, workspace, failing_factory, now=just_after)
+    assert result.outcome is PublishOutcome.NO_SLOT_TO_PUBLISH
+    assert get_slot(db, slot_id).publish_retry_count == attempts_before, (
+        "a tick inside the cooldown window must not spend another attempt"
+    )
+
+
+def test_after_cooldown_the_same_artifact_is_eligible_again_and_catches_up(
+    db, channel, workspace, tmp_path
+):
+    """Section 13.G/H: once the cooldown window elapses, the exact same
+    artifact (no re-render, no new experiment) becomes selectable again and,
+    once the provider recovers, actually publishes — freeing the queue."""
+    from app.intelligence.autonomy.repository import PUBLISH_RETRY_COOLDOWN_MINUTES
+
+    _authorize(db, channel, workspace)
+    slot_id, _ = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path
+    )
+    original = get_slot(db, slot_id)
+    failing_factory = lambda conn, **kw: (_ for _ in ()).throw(  # noqa: E731
+        RuntimeError("provider unreachable")
+    )
+    for _ in range(MAX_PUBLISH_RETRIES):
+        _run_with_factory(db, channel, workspace, failing_factory)
+
+    after_cooldown = datetime.now(UTC) + timedelta(minutes=PUBLISH_RETRY_COOLDOWN_MINUTES + 1)
+    found = find_slot_ready_to_publish(db, channel.id, now=after_cooldown)
+    assert found is not None
+    assert found.id == slot_id
+    assert found.experiment_id == original.experiment_id
+    assert found.production_publishing_plan_id == original.production_publishing_plan_id
+
+    provider = _FakeProvider()  # the provider has recovered
+    result = _run(db, channel, workspace, provider=provider, now=after_cooldown)
+    assert result.outcome is PublishOutcome.RELEASED, result.reason
+    assert get_slot(db, slot_id).publish_status is PublishStatus.released
+
+    occ = compute_queue_occupancy(db, channel.id)
+    assert not occ.satisfied, "a released slot must free the queue for a new candidate"
+
+
+def test_catchup_never_creates_a_second_render_experiment_or_topic(
+    db, channel, workspace, tmp_path
+):
+    """Section 13.I: repeated transient failures and an eventual catch-up
+    publish must reuse the same one topic/script/render/experiment created
+    at seed time — never a second one."""
+    _authorize(db, channel, workspace)
+    _seed_ready_slot(db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path)
+    topics_before = db.execute("SELECT COUNT(*) AS n FROM topics").fetchone()["n"]
+    scripts_before = db.execute("SELECT COUNT(*) AS n FROM scripts").fetchone()["n"]
+
+    failing_factory = lambda conn, **kw: (_ for _ in ()).throw(  # noqa: E731
+        RuntimeError("provider unreachable")
+    )
+    for _ in range(MAX_PUBLISH_RETRIES):
+        _run_with_factory(db, channel, workspace, failing_factory)
+    from app.intelligence.autonomy.repository import PUBLISH_RETRY_COOLDOWN_MINUTES
+
+    after_cooldown = datetime.now(UTC) + timedelta(minutes=PUBLISH_RETRY_COOLDOWN_MINUTES + 1)
+    _run(db, channel, workspace, provider=_FakeProvider(), now=after_cooldown)
+
+    assert db.execute("SELECT COUNT(*) AS n FROM topics").fetchone()["n"] == topics_before
+    assert db.execute("SELECT COUNT(*) AS n FROM scripts").fetchone()["n"] == scripts_before
+
+
+# ── Permanent failures — genuinely require an operator, never retried forever ─
+
+
+def test_permanent_failure_retires_after_short_budget_instead_of_looping_forever(
+    db, channel, workspace, tmp_path
+):
+    """Section 5/14: a category that demonstrably requires human correction
+    (here: an OAuth grant that was actually revoked, not merely unreachable)
+    must stop after the short retry budget — it is retired, not endlessly
+    retried, and never silently stuck either."""
+    _authorize(db, channel, workspace)
+    slot_id, _ = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path
+    )
+    provider = _FakeProvider(raise_on_upload=Exception("invalid_grant: token has been revoked"))
+
+    for _ in range(MAX_PUBLISH_RETRIES):
+        result = _run(db, channel, workspace, provider=provider)
+        assert result.outcome is PublishOutcome.FAILED
+        assert result.failure_category == "UPLOAD_FAILED_TERMINAL"
+
+    slot = get_slot(db, slot_id)
+    assert slot.publish_retry_count == MAX_PUBLISH_RETRIES
+    assert slot.retired_at is None  # not yet — the retiring tick is next
+
+    retiring = _run(db, channel, workspace, provider=provider)
+    assert retiring.outcome is PublishOutcome.RETIRED
+    assert retiring.slot_id == slot_id
+
+    retired = get_slot(db, slot_id)
+    assert retired.retired_at is not None
+    assert retired.state == "filled"  # history preserved, never rewritten
+    assert retired.experiment_id == slot.experiment_id  # artifact/lineage preserved
+
+    occ = compute_queue_occupancy(db, channel.id)
+    assert not occ.satisfied, "a retired slot must free the queue"
+
+    # And it never becomes eligible again on a later tick, no matter the cooldown.
+    much_later = datetime.now(UTC) + timedelta(days=30)
+    assert find_slot_ready_to_publish(db, channel.id, now=much_later) is None
+    assert provider.upload_calls == [] or len(provider.upload_calls) == MAX_PUBLISH_RETRIES
+
+
+def test_permanent_failure_preserves_artifact_for_operator_review(db, channel, workspace, tmp_path):
+    """A retired slot is not thrown away — the produced render, experiment,
+    and publishing plan lineage all remain readable for an operator."""
+    _authorize(db, channel, workspace)
+    slot_id, plan_id = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path
+    )
+    provider = _FakeProvider(raise_on_upload=Exception("forbidden: account suspended"))
+    for _ in range(MAX_PUBLISH_RETRIES + 1):
+        _run(db, channel, workspace, provider=provider)
+
+    retired = get_slot(db, slot_id)
+    assert retired.retired_at is not None
+    assert retired.production_publishing_plan_id == plan_id
+    assert retired.publish_error and "forbidden" in retired.publish_error.lower()
+
+
+# ── The 120-minute window is diagnostic only (sections 3, 15) ────────────────
+
+
+def test_120_minute_window_does_not_make_a_late_ready_artifact_unpublishable(
+    db, channel, workspace, tmp_path
+):
+    _authorize(db, channel, workspace, missed_slot_grace_minutes=120)
+    slot_id, _ = _seed_ready_slot(
+        db,
+        channel.id,
+        workspace.id,
+        scheduled_for_utc=_iso(datetime.now(UTC) - timedelta(hours=5)),  # well past 120 minutes
+        tmp_path=tmp_path,
+    )
+    result = _run(db, channel, workspace)
+    assert result.outcome is PublishOutcome.RELEASED, result.reason
+    assert get_slot(db, slot_id).publish_status is PublishStatus.released
+
+
+def test_deadline_status_still_classifies_lateness_for_diagnostics(
+    db, channel, workspace, tmp_path
+):
+    """The window's remaining, legitimate job: an informational label on the
+    result, independent of whether the cycle actually attempts to publish."""
+    _authorize(db, channel, workspace)
     _seed_ready_slot(
+        db,
+        channel.id,
+        workspace.id,
+        scheduled_for_utc=_iso(datetime.now(UTC) - timedelta(days=1)),
+        tmp_path=tmp_path,
+    )
+    result = _run(db, channel, workspace)
+    assert result.deadline_status == DeadlineStatus.missed
+    assert result.outcome is PublishOutcome.RELEASED
+
+
+# ── Operator-facing reschedule (sections 8, 12-14, 16) ─────────────────────────
+#
+# An intentional override, independent of lateness: an operator can move a
+# still-active, ready artifact to a different future time at any point, but
+# is never required to merely because it is overdue (automatic catch-up
+# above handles that on its own).
+
+
+def test_reschedule_moves_a_still_active_overdue_artifact_to_a_new_future_slot(
+    db, channel, workspace, tmp_path
+):
+    _authorize(db, channel, workspace)
+    old_time = _iso(datetime.now(UTC) - timedelta(days=2))
+    slot_id, plan_id = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=old_time, tmp_path=tmp_path
+    )
+    # Still just overdue, never touched by the publishing cycle — catch-up
+    # would happily publish it; the operator chooses to move it instead.
+    assert get_slot(db, slot_id).publish_status is None
+
+    new_local = datetime.now(UTC) + timedelta(days=1)
+    new_slot = reschedule_missed_slot(
+        db, slot_id, new_local_datetime=new_local, timezone="UTC", actor="operator"
+    )
+
+    assert new_slot.id != slot_id
+    assert new_slot.rescheduled_from_slot_id == slot_id
+    assert new_slot.production_publishing_plan_id == plan_id
+    assert new_slot.publish_status is None
+    assert find_slot_ready_to_publish(db, channel.id).id == new_slot.id
+    # Original keeps its honest history — never rewritten.
+    old = get_slot(db, slot_id)
+    assert old.scheduled_for_utc == old_time
+    assert old.publish_status is PublishStatus.skipped_missed
+
+
+def test_reschedule_also_works_on_a_slot_mid_transient_retry(db, channel, workspace, tmp_path):
+    """Lateness is not a prerequisite for reschedule, and neither is a
+    particular publish_status — an operator can redirect an artifact that is
+    actively cooling down from a transient failure just as easily as a
+    fresh one."""
+    _authorize(db, channel, workspace)
+    slot_id, _ = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path
+    )
+    failing_factory = lambda conn, **kw: (_ for _ in ()).throw(  # noqa: E731
+        RuntimeError("provider unreachable")
+    )
+    _run_with_factory(db, channel, workspace, failing_factory)
+    assert get_slot(db, slot_id).publish_status is PublishStatus.failed
+
+    new_slot = reschedule_missed_slot(
+        db,
+        slot_id,
+        new_local_datetime=datetime.now(UTC) + timedelta(days=1),
+        timezone="UTC",
+        actor="operator",
+    )
+    assert new_slot.rescheduled_from_slot_id == slot_id
+    assert new_slot.publish_status is None
+
+
+def test_reschedule_missed_slot_is_idempotent(db, channel, workspace, tmp_path):
+    """Calling it twice on the same old slot must not create two active
+    future slots — the second call returns the first call's new slot."""
+    _authorize(db, channel, workspace)
+    slot_id, _ = _seed_ready_slot(
         db,
         channel.id,
         workspace.id,
         scheduled_for_utc=_iso(datetime.now(UTC) - timedelta(days=2)),
         tmp_path=tmp_path,
     )
-    _run(db, channel, workspace)  # marks it missed
 
-    provider = _FakeProvider()
-    second = _run(db, channel, workspace, provider=provider)
-    assert second.outcome is PublishOutcome.NO_SLOT_TO_PUBLISH
-    assert provider.upload_calls == []
-
-
-def test_rescheduling_preserves_missed_history_and_creates_a_new_slot(
-    db, channel, workspace, tmp_path
-):
-    _authorize(db, channel, workspace, missed_slot_grace_minutes=30)
-    old_time = _iso(datetime.now(UTC) - timedelta(days=2))
-    slot_id, plan_id = _seed_ready_slot(
-        db, channel.id, workspace.id, scheduled_for_utc=old_time, tmp_path=tmp_path
+    new_local = datetime.now(UTC) + timedelta(days=1)
+    first = reschedule_missed_slot(
+        db, slot_id, new_local_datetime=new_local, timezone="UTC", actor="operator"
     )
-    _run(db, channel, workspace)
-    assert get_slot(db, slot_id).publish_status is PublishStatus.skipped_missed
-
-    new_time = _future_time(3)
-    new_slot = reschedule_slot_to_new_time(
+    second = reschedule_missed_slot(
         db,
         slot_id,
-        new_scheduled_for_utc=new_time,
-        new_scheduled_for_local=new_time,
-        new_slot_key="verification-slot",
+        new_local_datetime=new_local + timedelta(hours=5),  # a different time, ignored
         timezone="UTC",
         actor="operator",
     )
 
-    # Original keeps its honest history.
-    old = get_slot(db, slot_id)
-    assert old.scheduled_for_utc == old_time
-    assert old.publish_status is PublishStatus.skipped_missed
+    assert second.id == first.id
+    assert second.scheduled_for_utc == first.scheduled_for_utc
+    from app.intelligence.autonomy.repository import list_slots_for_channel
 
-    # New slot carries the production lineage forward and is publishable.
-    assert new_slot.id != slot_id
-    assert new_slot.rescheduled_from_slot_id == slot_id
-    assert new_slot.production_publishing_plan_id == plan_id
-    assert new_slot.publish_status is None
-    assert find_slot_ready_to_publish(db, channel.id).id == new_slot.id
+    successors = [
+        s for s in list_slots_for_channel(db, channel.id) if s.rescheduled_from_slot_id == slot_id
+    ]
+    assert len(successors) == 1
+
+
+def test_reschedule_rejects_an_already_released_slot(db, channel, workspace, tmp_path):
+    _authorize(db, channel, workspace)
+    slot_id, _ = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path
+    )
+    _run(db, channel, workspace)  # publishes it
+    assert get_slot(db, slot_id).publish_status is PublishStatus.released
+
+    with pytest.raises(SlotNotRescheduleEligibleError):
+        reschedule_missed_slot(
+            db,
+            slot_id,
+            new_local_datetime=datetime.now(UTC) + timedelta(days=1),
+            timezone="UTC",
+            actor="operator",
+        )
+
+
+def test_reschedule_rejects_a_retired_slot(db, channel, workspace, tmp_path):
+    """retire_slot (unpublishable artifact) has no reschedule counterpart —
+    moving a retired artifact to a later slot would publish exactly the
+    thing that was refused."""
+    _authorize(db, channel, workspace)
+    slot_id, _ = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path
+    )
+    retire_slot(db, slot_id, category="UPLOAD_FAILED_TERMINAL", reason="artifact unpublishable")
+
+    with pytest.raises(SlotNotRescheduleEligibleError):
+        reschedule_missed_slot(
+            db,
+            slot_id,
+            new_local_datetime=datetime.now(UTC) + timedelta(days=1),
+            timezone="UTC",
+            actor="operator",
+        )
+
+
+def test_reschedule_rejects_a_past_time(db, channel, workspace, tmp_path):
+    _authorize(db, channel, workspace)
+    slot_id, _ = _seed_ready_slot(
+        db,
+        channel.id,
+        workspace.id,
+        scheduled_for_utc=_iso(datetime.now(UTC) - timedelta(days=2)),
+        tmp_path=tmp_path,
+    )
+
+    with pytest.raises(ValueError, match="future"):
+        reschedule_missed_slot(
+            db,
+            slot_id,
+            new_local_datetime=datetime.now(UTC) - timedelta(hours=1),
+            timezone="UTC",
+            actor="operator",
+        )
 
 
 # ── The upload/release split and the re-check between them ────────────────────
@@ -1050,23 +1420,40 @@ def test_concurrent_worker_is_blocked_by_the_slot_lease(db, channel, workspace, 
     assert provider.upload_calls == []
 
 
-def test_retries_are_bounded(db, channel, workspace, tmp_path):
+def test_quick_retries_are_bounded_then_the_slot_cools_down_not_dies(
+    db, channel, workspace, tmp_path
+):
+    """PREUPLOAD_VALIDATION_FAILED is a RETRYABLE category (existing repo
+    taxonomy — a revalidation might pass once conditions change): the tight
+    quick-retry loop still stops at MAX_PUBLISH_RETRIES so a scheduler tick
+    never hammers the same failing check every minute, but the artifact is
+    never declared dead — it becomes eligible again once cooled down."""
     _authorize(db, channel, workspace)
-    _seed_ready_slot(db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path)
+    slot_id, _ = _seed_ready_slot(
+        db, channel.id, workspace.id, scheduled_for_utc=_due_time(), tmp_path=tmp_path
+    )
     db.execute("UPDATE render_manifests SET status = 'rejected'")  # always fails preflight
     db.commit()
-
-    from app.intelligence.autonomy.repository import MAX_PUBLISH_RETRIES
 
     attempts = 0
     for _ in range(MAX_PUBLISH_RETRIES + 3):
         result = _run(db, channel, workspace)
         if result.outcome is PublishOutcome.NO_SLOT_TO_PUBLISH:
             break
+        assert result.outcome is PublishOutcome.FAILED
+        assert result.failure_category == "PREUPLOAD_VALIDATION_FAILED"
         attempts += 1
-    assert attempts == MAX_PUBLISH_RETRIES, (
-        "a permanently failing slot must stop being retried at the bound"
-    )
+    assert attempts == MAX_PUBLISH_RETRIES, "the tight quick-retry loop must still be bounded"
+
+    slot = get_slot(db, slot_id)
+    assert slot.publish_status is PublishStatus.failed
+    assert slot.retired_at is None, "a retryable category must never retire the slot"
+
+    from app.intelligence.autonomy.repository import PUBLISH_RETRY_COOLDOWN_MINUTES
+
+    after_cooldown = datetime.now(UTC) + timedelta(minutes=PUBLISH_RETRY_COOLDOWN_MINUTES + 1)
+    found = find_slot_ready_to_publish(db, channel.id, now=after_cooldown)
+    assert found is not None and found.id == slot_id
 
 
 def test_blocking_does_not_consume_retry_budget(db, channel, workspace, tmp_path):

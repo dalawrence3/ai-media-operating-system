@@ -70,7 +70,7 @@ class EligibilityPolicy:
     # Semantic audience fit (LLM-based, distinct from Phase 13F lexical fit)
     semantic_fit_min_score: float = 0.55
     semantic_fit_provider_timeout_s: int = 30
-    semantic_fit_prompt_version: str = "2"
+    semantic_fit_prompt_version: str = "3"
 
     # Phase 18E — topic specificity / visual groundability.
     #
